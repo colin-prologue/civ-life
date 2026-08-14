@@ -1,0 +1,23 @@
+# Godot 4
+.godot/
+/android/
+*.translation
+
+# Export artifacts
+build/
+export/
+*.pck
+*.zip
+
+# Switchboard worker handoff evidence (per-workspace, never committed)
+.run/
+
+# Test reports
+reports/
+*.xml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
