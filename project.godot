@@ -1,0 +1,15 @@
+; Engine configuration file.
+; Generated for civ-life. See README.md for the sim/game split.
+
+config_version=5
+
+[application]
+
+config/name="civ-life"
+config/description="Hex-based turn-based 4X with an authoritative living-world simulation."
+config/features=PackedStringArray("4.3", "GDScript")
+run/main_scene="res://game/main.tscn"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg")
