@@ -99,6 +99,34 @@ if [ -z "${ran:-}" ] || [ "$ran" -lt "$MIN_TESTS" ]; then
   exit 1
 fi
 
+# --- 3c. every script on disk must actually have run -------------------------
+# A wording-independent backstop for the guard above. 3b recognises GUT's
+# current phrasing; this one just counts, so a future GUT that skips a script
+# with different wording still fails the command instead of passing quietly.
+# The glob mirrors GUT's discovery (prefix `test_`, this directory only), so
+# the two sides agree by construction and a non-test helper dropped in `test/`
+# is invisible to both. Verified to fire: a `test_`-prefixed file GUT declines
+# to load leaves 5 scripts on disk against 4 run.
+#
+# What this deliberately does NOT catch: a test file that is *deleted*. Both
+# sides of the comparison are derived from the same tree, so a removed file
+# lowers the expectation with it. Detecting that needs an expectation stored
+# outside the tree — a committed script count, which then has to be bumped by
+# hand on every added test and quietly lowered whenever it gets in the way.
+# Not worth it: unlike a script that fails to load while looking perfectly
+# fine, a deleted test file is loud in a diff, and review is the check for it.
+shopt -s nullglob
+on_disk=(test/test_*.gd)
+shopt -u nullglob
+expected="${#on_disk[@]}"
+
+loaded="$(awk '/^Scripts +[0-9]+/ {print $2; exit}' "$out")"
+if [ -z "${loaded:-}" ] || [ "$loaded" -ne "$expected" ]; then
+  echo "ERROR: $expected test script(s) on disk, GUT ran '${loaded:-none}'." >&2
+  echo "       A test file that disappears is not a test file that passes." >&2
+  exit 1
+fi
+
 [ "$status" -eq 0 ] || exit "$status"
 
 # --- 4. determinism across processes, not just within one -------------------
