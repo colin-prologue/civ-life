@@ -1,15 +1,15 @@
 # AgDR-004 — Understandings: knowledge is held by factions, not by civilizations
 
 **Status:** accepted
+**Date:** 2026-08-15
+**Parent intent:** `world-growth-tone`
+**Depends on:** `AgDR-003` (the player is a faction)
 
 > **Provisional.** This record describes a layer roughly ten tickets out, and it
 > rests on a premise the build has not yet tested: that watching a world grow is
 > compelling. That is `world-growth-tone`'s own stated refutation, and it is first
 > answerable when the renderer lands. Until then treat this as recorded thinking,
 > not settled architecture — cheap to retract, and expected to be revisited.
-**Date:** 2026-08-15
-**Parent intent:** `world-growth-tone`
-**Depends on:** `AgDR-003` (the player is a faction)
 
 Named for the inherited knowledge in Adrian Tchaikovsky's *Children of Time*,
 which is the reference this borrows its shape from: knowledge carried by
