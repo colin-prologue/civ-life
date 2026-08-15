@@ -92,8 +92,10 @@ static var InputSender = LazyLoader.new("res://addons/gut/input_sender.gd"):
 static var JunitXmlExport = LazyLoader.new('res://addons/gut/junit_xml_export.gd'):
 	get: return JunitXmlExport.get_loaded()
 	set(val): pass
-static var Logger = LazyLoader.new('res://addons/gut/logger.gd') : # everything should use get_logger
-	get: return Logger.get_loaded()
+# Renamed from `Logger` for Godot 4.7, which added a native `Logger` class that
+# the original name shadows — a parse error that stops GUT loading at all.
+static var GutLogger = LazyLoader.new('res://addons/gut/logger.gd') : # everything should use get_logger
+	get: return GutLogger.get_loaded()
 	set(val): pass
 static var MethodMaker = LazyLoader.new('res://addons/gut/method_maker.gd'):
 	get: return MethodMaker.get_loaded()
@@ -174,10 +176,10 @@ static var _test_mode = false
 static var _lgr = null
 static func get_logger():
 	if(_test_mode):
-		return Logger.new()
+		return GutLogger.new()
 	else:
 		if(_lgr == null):
-			_lgr = Logger.new()
+			_lgr = GutLogger.new()
 		return _lgr
 
 

@@ -80,10 +80,91 @@ if grep -q "Nothing was run" "$out"; then
   exit 1
 fi
 
+# --- 3b. refuse a partial pass ----------------------------------------------
+# A test script with a parse error is not a failing test — GUT logs a warning,
+# skips the whole file, and derives a green exit code from the scripts that did
+# load. Observed: an entire determinism suite vanished this way while the
+# command still reported success. The empty-suite guard above does not catch it
+# because the remaining scripts run fine. Silently running fewer tests than the
+# repo contains is the same lie as running none.
+if grep -qE "Ignoring script .* because it does not extend GutTest|Failed to load script .*res://test/" "$out"; then
+  echo "ERROR: GUT skipped at least one test script (see 'Ignoring script' above)." >&2
+  echo "       A script that fails to load is a broken test, not an absent one." >&2
+  exit 1
+fi
+
 ran="$(awk '/^Tests +[0-9]+/ {print $2; exit}' "$out")"
 if [ -z "${ran:-}" ] || [ "$ran" -lt "$MIN_TESTS" ]; then
   echo "ERROR: expected at least $MIN_TESTS test(s), GUT reported '${ran:-none}'." >&2
   exit 1
 fi
 
-exit "$status"
+# --- 3c. every script on disk must actually have run -------------------------
+# A wording-independent backstop for the guard above. 3b recognises GUT's
+# current phrasing; this one just counts, so a future GUT that skips a script
+# with different wording still fails the command instead of passing quietly.
+# The glob mirrors GUT's discovery (prefix `test_`, this directory only), so
+# the two sides agree by construction and a non-test helper dropped in `test/`
+# is invisible to both. Verified to fire: a `test_`-prefixed file GUT declines
+# to load leaves 5 scripts on disk against 4 run.
+#
+# What this deliberately does NOT catch: a test file that is *deleted*. Both
+# sides of the comparison are derived from the same tree, so a removed file
+# lowers the expectation with it. Detecting that needs an expectation stored
+# outside the tree — a committed script count, which then has to be bumped by
+# hand on every added test and quietly lowered whenever it gets in the way.
+# Not worth it: unlike a script that fails to load while looking perfectly
+# fine, a deleted test file is loud in a diff, and review is the check for it.
+shopt -s nullglob
+on_disk=(test/test_*.gd)
+shopt -u nullglob
+expected="${#on_disk[@]}"
+
+loaded="$(awk '/^Scripts +[0-9]+/ {print $2; exit}' "$out")"
+if [ -z "${loaded:-}" ] || [ "$loaded" -ne "$expected" ]; then
+  echo "ERROR: $expected test script(s) on disk, GUT ran '${loaded:-none}'." >&2
+  echo "       A test file that disappears is not a test file that passes." >&2
+  exit 1
+fi
+
+[ "$status" -eq 0 ] || exit "$status"
+
+# --- 4. determinism across processes, not just within one -------------------
+# The suite's determinism test generates the same seed twice inside a single
+# Godot process. That catches a generator leaning on shared RNG state, but it
+# structurally cannot catch a value that is constant within a process and
+# differs between them — a per-process hash salt, an instance id folded into a
+# draw, an engine value read once at startup. Each of those reproduces
+# perfectly when you generate twice in one run.
+#
+# So: generate the same seeds in two separate processes and diff. No golden
+# constant is stored, so the generator stays free to change and the check makes
+# no claim about CPU architecture.
+echo "[test] checking determinism across two processes"
+fp1="$(mktemp)"; fp2="$(mktemp)"
+trap 'rm -f "$out" "$fp1" "$fp2"' EXIT
+
+run_fingerprints() {
+  "$GODOT" --headless -s tools/world_fingerprint.gd 2>/dev/null \
+    | grep -E '^-?[0-9]+ [0-9]+$'
+}
+
+run_fingerprints > "$fp1"
+run_fingerprints > "$fp2"
+
+if [ ! -s "$fp1" ]; then
+  echo "ERROR: the fingerprint pass produced no output. A silent no-op here" >&2
+  echo "       would make the cross-process check vacuously green." >&2
+  exit 1
+fi
+
+if ! diff -u "$fp1" "$fp2" >/dev/null; then
+  echo "ERROR: the same seeds produced different maps in two separate processes." >&2
+  echo "       Generation is reading something outside the seed." >&2
+  diff -u "$fp1" "$fp2" >&2 || true
+  exit 1
+fi
+
+echo "[test] $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
+
+exit 0
