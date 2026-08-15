@@ -98,6 +98,19 @@ These are hard. A ticket that violates one is wrong even if it is well built.
    player cannot explain is a bug in this game regardless of whether the code is
    correct.
 
+6. **Fewer and chunkier, always.** (added 2026-08-15)
+   Where a system could be many small granular pieces or few large legible ones,
+   choose few. Chunky nodes over many small buildings (`AgDR-002`); discrete
+   Understandings over a granular tech tree (`AgDR-004`); a handful of named
+   opinion modifiers over thirty stacking ones (`AgDR-005`).
+
+   This was not designed — it emerged, having independently decided three
+   separate questions the same way, and it is written down here so the fourth
+   one does not go the other way. **Granularity is the thing that converts
+   tending into optimising.** A player who can name every input to a decision is
+   playing this game; one who has to total up a column is playing a different
+   one.
+
 ## What would make this intent wrong
 
 Watching is not automatically interesting. If a world with no threat turns out

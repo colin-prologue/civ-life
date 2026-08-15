@@ -112,7 +112,10 @@ Early signal for both: the first time a player loses a polity-level vote they
 cared about. If that reads as interesting, this works. If it reads as pointless,
 the two-scale split is wrong.
 
-## Open
+## Resolved
 
-Whether the player may voluntarily splinter **outside** an era turn, and at what
-cost. Left open deliberately; it is tuning, not architecture.
+**Whether the player may voluntarily splinter outside an era turn, and at what
+cost** — answered by `AgDR-005`. Yes, at any time, and the cost is *relational
+rather than material*: the faction you leave forms a lasting negative opinion,
+scaling with what you took. A material cost decays and would not have held the
+loop together; a remembered one does.
