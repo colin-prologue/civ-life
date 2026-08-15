@@ -36,16 +36,23 @@ that is interesting under plenty.
 ## Where the tension lives
 
 A game with no fail state still needs choices to matter. The pressure here is
-**attention, not survival**.
+**attention and influence, not survival**.
 
-The world is generous and busy — more is happening than one player can attend
-to. You cannot shape everything at once, opportunities appear faster than you
-can take them, and the cost of any choice is the other thing you were not
-watching. The garden grows whether or not you tend it; tending decides *what it
-becomes*.
+**Attention.** The world is generous and busy — more is happening than one
+player can attend to. You cannot shape everything at once, opportunities appear
+faster than you can take them, and the cost of any choice is the other thing you
+were not watching. The garden grows whether or not you tend it; tending decides
+*what it becomes*.
 
-That is the entire source of tension. It does not need supplementing with
-threat.
+**Influence** (added 2026-08-15, `AgDR-003`). The player is a faction inside a
+larger polity, not its ruler. At your own scale you act directly; at the
+polity's scale you can only persuade, invest, and spend standing. You will want
+things you cannot simply cause. That is agency without control, and it is a
+stronger source of pressure than attention alone — it makes the limits on
+forcing change structural rather than a difficulty setting.
+
+Between them, that is the entire source of tension. Neither needs supplementing
+with threat.
 
 ## Rules
 
@@ -54,8 +61,15 @@ These are hard. A ticket that violates one is wrong even if it is well built.
 1. **Structures persist. Flows are what the world disturbs.**
    Bandits interrupt a shipment; they do not burn the granary. A herd tramples a
    season's yield; it does not remove the farm. No world-driven event deletes a
-   player-placed structure. Negative outcomes are *absence of growth*, never
-   *loss of what was built*.
+   built structure. Negative outcomes are *absence of growth*, never *loss of
+   what was built*.
+
+   **Amended 2026-08-15 (`AgDR-003`): structures change hands rather than being
+   destroyed.** Once conquest exists, "yours" is not permanent — but the
+   building still stands, now under someone else's name. This is stronger than
+   the original rule rather than weaker: the world visibly accumulates built
+   history across eras, and ruins and inherited roads are exactly the texture
+   this design wants. What is forbidden is *erasure*, not *transfer*.
 
 2. **Soft fail only, and only from sustained mismanagement.**
    A neglected district can be abandoned and revert toward wilderness — which
