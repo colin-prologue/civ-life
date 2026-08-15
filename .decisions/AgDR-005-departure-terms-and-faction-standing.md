@@ -1,6 +1,12 @@
 # AgDR-005 — Departure terms and faction standing
 
 **Status:** accepted (shape); thresholds open
+
+> **Provisional.** This record describes a layer roughly ten tickets out, and it
+> rests on a premise the build has not yet tested: that watching a world grow is
+> compelling. That is `world-growth-tone`'s own stated refutation, and it is first
+> answerable when the renderer lands. Until then treat this as recorded thinking,
+> not settled architecture — cheap to retract, and expected to be revisited.
 **Date:** 2026-08-15
 **Parent intent:** `world-growth-tone`
 **Resolves:** the open question in `AgDR-003`

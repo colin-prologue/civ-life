@@ -1,6 +1,12 @@
 # AgDR-003 — The player is a faction, not a civilization
 
 **Status:** accepted (direction; scoping notes below)
+
+> **Provisional.** This record describes a layer roughly ten tickets out, and it
+> rests on a premise the build has not yet tested: that watching a world grow is
+> compelling. That is `world-growth-tone`'s own stated refutation, and it is first
+> answerable when the renderer lands. Until then treat this as recorded thinking,
+> not settled architecture — cheap to retract, and expected to be revisited.
 **Date:** 2026-08-15
 **Parent intent:** `world-growth-tone`
 **Supersedes:** the "one civilization" framing in the project's opening pitch
