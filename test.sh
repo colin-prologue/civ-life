@@ -52,13 +52,38 @@ imports_ready() {
   return 0
 }
 
-if ! imports_ready; then
-  echo "[test] import cache missing or incomplete — rebuilding (two passes)"
+# A `class_name` declared since the cache was last built is not in it, and a
+# script referring to that class fails to parse — which lands as "GUT ignored a
+# test script", pointing at the test rather than at the cache. Observed on a warm
+# checkout the first time a new class was added: the guard below fired with a
+# message that described the symptom and not the cause. A fresh clone never hits
+# it, because it imports from nothing and picks everything up.
+classes_registered() {
+  local cache=".godot/global_script_class_cache.cfg"
+  [ -f "$cache" ] || return 1
+  local declared
+  declared="$(grep -rhoE '^class_name +[A-Za-z_][A-Za-z0-9_]*' sim game tools test 2>/dev/null \
+    | awk '{print $2}' | sort -u)"
+  local name
+  for name in $declared; do
+    grep -q "\"class\": &\"$name\"" "$cache" || return 1
+  done
+  return 0
+}
+
+if ! imports_ready || ! classes_registered; then
+  echo "[test] import cache missing, incomplete, or behind the sources — rebuilding (two passes)"
   "$GODOT" --headless --import >/dev/null 2>&1 || true
   "$GODOT" --headless --import >/dev/null 2>&1 || true
   imports_ready || {
     echo "ERROR: import cache still incomplete after two passes. The suite would" >&2
     echo "       hang rather than fail, so stopping here instead." >&2
+    exit 1
+  }
+  classes_registered || {
+    echo "ERROR: a class_name in the sources is still missing from the class cache." >&2
+    echo "       Scripts referring to it would fail to parse and be reported as" >&2
+    echo "       broken tests, which is the wrong place to look." >&2
     exit 1
   }
 fi
@@ -166,5 +191,38 @@ if ! diff -u "$fp1" "$fp2" >/dev/null; then
 fi
 
 echo "[test] $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
+
+# --- 5. the main scene actually launches ------------------------------------
+# The suite instantiates the scene itself, which proves the nodes wire up — but
+# it runs under GUT, not under the project's own startup path. A broken
+# `run/main_scene`, an autoload that only exists at launch, or a null deref in
+# `_ready` reached only on a real boot are all invisible to it and immediately
+# visible to anyone pressing play.
+#
+# Run for a bounded number of frames and treat any engine-level error as a
+# failure. Godot exits 0 on plenty of things it complains loudly about, so the
+# exit code alone is not the check.
+echo "[test] launching the main scene headless"
+launch="$(mktemp)"
+trap 'rm -f "$out" "$fp1" "$fp2" "$launch"' EXIT
+
+set +e
+"$GODOT" --headless --quit-after 120 >"$launch" 2>&1
+launch_status=$?
+set -e
+
+if [ "$launch_status" -ne 0 ]; then
+  echo "ERROR: the main scene exited $launch_status on a headless launch." >&2
+  cat "$launch" >&2
+  exit 1
+fi
+
+if grep -qE "^(ERROR|SCRIPT ERROR|USER ERROR)" "$launch"; then
+  echo "ERROR: the main scene launched but logged errors." >&2
+  grep -nE "^(ERROR|SCRIPT ERROR|USER ERROR)" "$launch" >&2
+  exit 1
+fi
+
+echo "[test] main scene ran 120 frames clean"
 
 exit 0

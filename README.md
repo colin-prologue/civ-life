@@ -106,9 +106,9 @@ unseeded random source is a bug, not a shortcut.
 
 ## Status
 
-Early. The project skeleton and headless test harness are in review; the hex
-grid, a minimal renderer, seasons, and the first living population are the
-opening tickets, in that order.
+Early. The project skeleton, headless test harness, hex grid and world
+generation are in; the map is now on screen and turns advance by hand. Seasons
+and the first living population are next.
 
 The renderer comes early on purpose. This design's value proposition is
 observational, and whether a growing world is worth watching is not a question a

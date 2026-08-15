@@ -8,9 +8,18 @@ extends RefCounted
 ## rather than a dictionary keyed by coordinate. Two maps from the same seed can
 ## then be compared with a single array equality, and nothing about the
 ## comparison depends on hash iteration order.
+##
+## This is also where the clock lives. `advance_turn()` currently does nothing
+## but count, and that is the point: it is the single place a turn happens, so
+## seasons, herds and everything after them extend one function rather than
+## racing to invent their own update path. The UI calls this; the tests call
+## this; there is no third way to move the world forward.
 
 var grid: HexGrid
 var world_seed: int
+
+## Turns elapsed since the world was generated. A fresh world is on turn 0.
+var turn: int
 
 var _terrain: PackedInt32Array
 
@@ -18,8 +27,15 @@ var _terrain: PackedInt32Array
 func _init(p_grid: HexGrid, p_seed: int) -> void:
 	grid = p_grid
 	world_seed = p_seed
+	turn = 0
 	_terrain = PackedInt32Array()
 	_terrain.resize(p_grid.tile_count())
+
+
+## Move the world forward one turn. Returns the turn just entered.
+func advance_turn() -> int:
+	turn += 1
+	return turn
 
 
 func set_terrain(coord: Vector2i, terrain: int) -> void:
