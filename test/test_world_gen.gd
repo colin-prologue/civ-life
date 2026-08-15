@@ -50,11 +50,28 @@ func test_generation_is_unaffected_by_what_ran_before_it() -> void:
 
 
 func test_different_seeds_produce_substantially_different_maps() -> void:
-	var a := WorldGen.generate(SEED_A)
-	var b := WorldGen.generate(SEED_B)
-	var differing := a.difference_count(b)
-	var ratio := float(differing) / float(a.grid.tile_count())
-	assert_gt(ratio, 0.10, "seeds drive generation (differing tiles: %.1f%%)" % [ratio * 100.0])
+	# Every pair of seeds, not one pair. The same argument the other tests in this
+	# file make: a property that holds for a single hand-picked pair is a coin
+	# toss about whether a weak seed path gets noticed. Two seeds that happened to
+	# land on similar lattices would pass a one-pair check while the generator was
+	# quietly collapsing some region of the seed space.
+	var worst_ratio := 1.0
+	var worst_pair := ""
+	for i in range(SEEDS.size()):
+		for j in range(i + 1, SEEDS.size()):
+			var a := WorldGen.generate(SEEDS[i])
+			var b := WorldGen.generate(SEEDS[j])
+			var ratio := float(a.difference_count(b)) / float(a.grid.tile_count())
+			if ratio < worst_ratio:
+				worst_ratio = ratio
+				worst_pair = "%d vs %d" % [SEEDS[i], SEEDS[j]]
+			assert_gt(
+				ratio,
+				0.10,
+				"seeds %d and %d drive generation apart (differing tiles: %.1f%%)"
+					% [SEEDS[i], SEEDS[j], ratio * 100.0]
+			)
+	gut.p("closest pair: %s at %.1f%% differing" % [worst_pair, worst_ratio * 100.0])
 
 
 func test_the_map_contains_both_land_and_water() -> void:

@@ -99,4 +99,44 @@ if [ -z "${ran:-}" ] || [ "$ran" -lt "$MIN_TESTS" ]; then
   exit 1
 fi
 
-exit "$status"
+[ "$status" -eq 0 ] || exit "$status"
+
+# --- 4. determinism across processes, not just within one -------------------
+# The suite's determinism test generates the same seed twice inside a single
+# Godot process. That catches a generator leaning on shared RNG state, but it
+# structurally cannot catch a value that is constant within a process and
+# differs between them — a per-process hash salt, an instance id folded into a
+# draw, an engine value read once at startup. Each of those reproduces
+# perfectly when you generate twice in one run.
+#
+# So: generate the same seeds in two separate processes and diff. No golden
+# constant is stored, so the generator stays free to change and the check makes
+# no claim about CPU architecture.
+echo "[test] checking determinism across two processes"
+fp1="$(mktemp)"; fp2="$(mktemp)"
+trap 'rm -f "$out" "$fp1" "$fp2"' EXIT
+
+run_fingerprints() {
+  "$GODOT" --headless -s tools/world_fingerprint.gd 2>/dev/null \
+    | grep -E '^-?[0-9]+ [0-9]+$'
+}
+
+run_fingerprints > "$fp1"
+run_fingerprints > "$fp2"
+
+if [ ! -s "$fp1" ]; then
+  echo "ERROR: the fingerprint pass produced no output. A silent no-op here" >&2
+  echo "       would make the cross-process check vacuously green." >&2
+  exit 1
+fi
+
+if ! diff -u "$fp1" "$fp2" >/dev/null; then
+  echo "ERROR: the same seeds produced different maps in two separate processes." >&2
+  echo "       Generation is reading something outside the seed." >&2
+  diff -u "$fp1" "$fp2" >&2 || true
+  exit 1
+fi
+
+echo "[test] $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
+
+exit 0
