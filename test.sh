@@ -80,6 +80,19 @@ if grep -q "Nothing was run" "$out"; then
   exit 1
 fi
 
+# --- 3b. refuse a partial pass ----------------------------------------------
+# A test script with a parse error is not a failing test — GUT logs a warning,
+# skips the whole file, and derives a green exit code from the scripts that did
+# load. Observed: an entire determinism suite vanished this way while the
+# command still reported success. The empty-suite guard above does not catch it
+# because the remaining scripts run fine. Silently running fewer tests than the
+# repo contains is the same lie as running none.
+if grep -qE "Ignoring script .* because it does not extend GutTest|Failed to load script .*res://test/" "$out"; then
+  echo "ERROR: GUT skipped at least one test script (see 'Ignoring script' above)." >&2
+  echo "       A script that fails to load is a broken test, not an absent one." >&2
+  exit 1
+fi
+
 ran="$(awk '/^Tests +[0-9]+/ {print $2; exit}' "$out")"
 if [ -z "${ran:-}" ] || [ "$ran" -lt "$MIN_TESTS" ]; then
   echo "ERROR: expected at least $MIN_TESTS test(s), GUT reported '${ran:-none}'." >&2
