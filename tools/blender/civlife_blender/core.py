@@ -40,6 +40,7 @@ PALETTE = {
     "wood":      _lin("#7a5c38"),
     "water":     _lin("#2e6d78"),
     "stone":     _lin("#8d8877"),
+    "hilltint":  _lin("#77714a"),
 }
 
 

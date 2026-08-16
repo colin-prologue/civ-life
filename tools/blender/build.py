@@ -205,6 +205,175 @@ def montage_sequence(tiles, out_path):
     print("montage:", out_path)
 
 
+
+# ---------------------------------------------------------- hex-world suite
+
+WORLD_CAM = dict(fov_deg=22.0, yaw_deg=-142.0)
+
+
+def _world_camera(world, pitch=36.0, distance=175.0):
+    cx, cy = world.center
+    return add_camera((cx, cy, 1.0), distance, fov_deg=WORLD_CAM["fov_deg"],
+                      pitch_deg=pitch, yaw_deg=WORLD_CAM["yaw_deg"])
+
+
+def sheet_hexcompare(seed):
+    """Closeups of the same world: does the hex data shape show?"""
+    from civlife_blender.hexworld import build_world
+    variants = [
+        ("smooth terrain + smoothed roads", "smooth", True, "hexcmp_a.png"),
+        ("hex-stepped terrain + smoothed roads", "hex", True, "hexcmp_b.png"),
+        ("smooth terrain + raw hex-line roads", "smooth", False, "hexcmp_c.png"),
+    ]
+    tiles = []
+    for label, mode, rsmooth, fname in variants:
+        fresh_scene()
+        world, f, sites = build_world(seed, terrain_mode=mode,
+                                      road_smooth=rsmooth)
+        add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+        add_fill()
+        x0, y0 = sites[0][0], sites[0][1]
+        add_camera((x0, y0, 0.8), 30.0, fov_deg=22, pitch_deg=35,
+                   yaw_deg=-140)
+        path = os.path.join(OUT, fname)
+        render(path, res=(1400, 900), samples=40)
+        tiles.append((label, path))
+    _label_montage(tiles, os.path.join(OUT, "hex_conformance.png"),
+                   cols=3, tw=900, th=579)
+
+
+def sheet_worldscale(seed):
+    """Full 40x30 slab + pitch sweep with ray-cast event salience."""
+    from civlife_blender.hexworld import (build_world, place_events,
+                                          salience_report)
+    from bpy_extras.object_utils import world_to_camera_view
+    import bpy
+    fresh_scene()
+    world, f, sites = build_world(seed)
+    events = place_events(world, f, n=12)
+    add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+    add_fill()
+    annotated = []
+    for pitch in (28.0, 38.0, 48.0):
+        _world_camera(world, pitch=pitch)
+        path = os.path.join(OUT, "world_pitch_%02d.png" % int(pitch))
+        render(path, res=(1800, 1100), samples=40)
+        results = salience_report(events)
+        vis = sum(1 for r in results if r[4])
+        print("pitch %.0f: %d/%d events visible" % (pitch, vis, len(results)))
+        # annotate
+        from PIL import Image, ImageDraw
+        img = Image.open(path).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        scene = bpy.context.scene
+        cam = scene.camera
+        W, H = img.size
+        for kind, x, y, z, visible in results:
+            from mathutils import Vector as _V
+            u, v, _ = world_to_camera_view(scene, cam, _V((x, y, z)))
+            px, py = u * W, (1 - v) * H
+            color = (110, 200, 110) if visible else (220, 90, 70)
+            draw.ellipse([px - 16, py - 16, px + 16, py + 16], outline=color,
+                         width=4)
+        apath = os.path.join(OUT, "world_salience_%02d.png" % int(pitch))
+        img.save(apath)
+        annotated.append(("pitch %.0f deg - %d/%d events visible"
+                          % (pitch, vis, len(results)), apath))
+    _label_montage(annotated, os.path.join(OUT, "world_salience.png"),
+                   cols=1, tw=1800, th=1100)
+
+
+def sheet_cartography(seed):
+    """Printed information on the sculpted world."""
+    from civlife_blender.hexworld import build_world
+    fresh_scene()
+    world, f, sites = build_world(seed, with_cartography=True)
+    add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+    add_fill()
+    _world_camera(world, pitch=38.0)
+    render(os.path.join(OUT, "world_cartography.png"), res=(1800, 1100),
+           samples=40)
+    # and a closeup of the capital where the marks are densest
+    x0, y0 = sites[0][0], sites[0][1]
+    add_camera((x0, y0, 0.8), 34.0, fov_deg=22, pitch_deg=36, yaw_deg=-140)
+    render(os.path.join(OUT, "cartography_close.png"), res=(1400, 900),
+           samples=40)
+
+
+SEASONS = {
+    "spring": {"moss": "#5f7247", "moss2": "#4a5c39", "water": "#2e6d78"},
+    "summer": {"moss": "#7d7f45", "moss2": "#61683c", "water": "#2e6d78"},
+    "autumn": {"moss": "#8a7440", "moss2": "#7a5638", "water": "#28606c"},
+    "winter": {"moss": "#a9b0ac", "moss2": "#8b9691", "water": "#1e4550",
+               "stone": "#d5dade"},
+}
+
+
+def sheet_seasons(seed):
+    """Same world, four palette re-grades. Plaster/brass stay invariant."""
+    from civlife_blender import core
+    from civlife_blender.hexworld import build_world
+    base = dict(core.PALETTE)
+    tiles = []
+    for name, overrides in SEASONS.items():
+        core.PALETTE.update({k: core._lin(v) for k, v in overrides.items()})
+        fresh_scene()
+        world, f, sites = build_world(seed)
+        add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+        add_fill()
+        _world_camera(world, pitch=38.0)
+        path = os.path.join(OUT, "season_%s.png" % name)
+        render(path, res=(1300, 800), samples=32)
+        tiles.append((name, path))
+        core.PALETTE.clear()
+        core.PALETTE.update(base)
+    _label_montage(tiles, os.path.join(OUT, "seasons.png"), cols=2,
+                   tw=1300, th=800)
+
+
+def sheet_reduce():
+    """Reduction pass on the world render: 6 colors, then greyscale."""
+    from PIL import Image, ImageOps
+    src_path = os.path.join(OUT, "world_pitch_38.png")
+    if not os.path.exists(src_path):
+        print("run worldscale first")
+        return
+    img = Image.open(src_path).convert("RGB")
+    six = img.quantize(colors=6, method=Image.MEDIANCUT).convert("RGB")
+    grey = ImageOps.grayscale(img).convert("RGB")
+    tiles = [("full render", src_path)]
+    six_p = os.path.join(OUT, "reduce_six.png")
+    grey_p = os.path.join(OUT, "reduce_grey.png")
+    six.save(six_p)
+    grey.save(grey_p)
+    tiles += [("six flat colors", six_p), ("value only", grey_p)]
+    _label_montage(tiles, os.path.join(OUT, "reduction.png"), cols=3,
+                   tw=900, th=550)
+
+
+def _label_montage(tiles, out_path, cols=3, tw=900, th=579):
+    from PIL import Image, ImageDraw, ImageFont
+    label_h = 44
+    rows = (len(tiles) + cols - 1) // cols
+    W, H = cols * tw, rows * (th + label_h)
+    sheet = Image.new("RGB", (W, H), (14, 16, 24))
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 20)
+    except OSError:
+        font = ImageFont.load_default()
+    draw = ImageDraw.Draw(sheet)
+    for idx, (label, path) in enumerate(tiles):
+        c, r = idx % cols, idx // cols
+        x0, y0 = c * tw, r * (th + label_h)
+        img = Image.open(path).convert("RGB").resize((tw, th), Image.LANCZOS)
+        sheet.paste(img, (x0, y0))
+        draw.text((x0 + 12, y0 + th + 10), label.upper(),
+                  fill=(201, 164, 74), font=font)
+    sheet.save(out_path)
+    print("montage:", out_path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--experiment", default="all")
@@ -223,6 +392,16 @@ def main():
         sheet_monuments(args.seed)
     if args.experiment in ("time", "all"):
         sheet_time(args.seed)
+    if args.experiment == "hexcompare":
+        sheet_hexcompare(args.seed)
+    if args.experiment == "worldscale":
+        sheet_worldscale(args.seed)
+    if args.experiment == "cartography":
+        sheet_cartography(args.seed)
+    if args.experiment == "seasons":
+        sheet_seasons(args.seed)
+    if args.experiment == "reduce":
+        sheet_reduce()
     if args.experiment == "sequence":
         sheet_sequence(args.seed)
     if args.experiment in ("diorama", "all"):
