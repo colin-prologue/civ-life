@@ -18,8 +18,16 @@ extends RefCounted
 ##
 ## Forage sits beside terrain, in a parallel array on the same index, and is
 ## recomputed from terrain and season on every turn rather than nudged. A world's
-## state is therefore fully determined by its seed and its turn number, which is
-## what lets two runs be compared after a hundred turns as easily as after one.
+## terrain and forage are therefore fully determined by its seed and its turn
+## number, which is what lets two runs be compared after a hundred turns as
+## easily as after one.
+##
+## Agents are the exception, and knowingly so: a herd's position and population
+## carry forward from turn to turn, so a world with living things in it is no
+## longer reconstructible from `(seed, turn)` alone. Determinism is unaffected —
+## the same seed advanced the same number of turns still produces the same
+## herds, in the same places, with the same numbers — but a save is now a state
+## rather than two integers.
 
 var grid: HexGrid
 var world_seed: int
@@ -27,8 +35,23 @@ var world_seed: int
 ## Turns elapsed since the world was generated. A fresh world is on turn 0.
 var turn: int
 
+## Everything alive in the world, in the order it was added and stepped in that
+## order every turn. Array order is load-bearing for determinism: two herds
+## reaching for the same tile must resolve the same way on every run, and this
+## is what decides it.
+var agents: Array[Agent] = []
+
 var _terrain: PackedInt32Array
 var _forage: PackedFloat32Array
+
+## Heads standing on each tile, by grid index. A cache, maintained by the
+## mutators below rather than recomputed, because the movement code asks for it
+## seven times per herd per turn and a scan of every agent per query is the
+## difference between a thousand-turn test and no thousand-turn test.
+##
+## Read for *decisions*, never for reporting: repeated add-and-subtract on
+## floats drifts, so anything quoting a total sums the agents themselves.
+var _herd_population: PackedFloat32Array
 
 
 func _init(p_grid: HexGrid, p_seed: int) -> void:
@@ -39,13 +62,89 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 	_terrain.resize(p_grid.tile_count())
 	_forage = PackedFloat32Array()
 	_forage.resize(p_grid.tile_count())
+	_herd_population = PackedFloat32Array()
+	_herd_population.resize(p_grid.tile_count())
 
 
 ## Move the world forward one turn. Returns the turn just entered.
+##
+## Forage first, then everything alive: an agent decides its turn against the
+## season it is actually standing in, never against last turn's.
 func advance_turn() -> int:
 	turn += 1
 	_recompute_forage()
+	for agent in agents:
+		agent.step(self)
 	return turn
+
+
+## Put an agent into the world. Generation calls this; nothing appends to
+## `agents` directly, because the per-tile census has to be told.
+func add_agent(agent: Agent) -> void:
+	assert(grid.has_coord(agent.coord), "an agent cannot stand off the map")
+	agents.append(agent)
+	if agent is Herd:
+		_herd_population[grid.index_of(agent.coord)] += (agent as Herd).population
+
+
+## Move an agent one or more tiles. The only way an agent's position changes.
+func move_agent(agent: Agent, to: Vector2i) -> void:
+	assert(grid.has_coord(to), "an agent cannot step off the map")
+	if agent is Herd:
+		var herd := agent as Herd
+		_herd_population[grid.index_of(herd.coord)] -= herd.population
+		_herd_population[grid.index_of(to)] += herd.population
+	agent.coord = to
+
+
+## Set a herd's population. The only way it changes, for the same reason.
+func set_herd_population(herd: Herd, value: float) -> void:
+	_herd_population[grid.index_of(herd.coord)] += value - herd.population
+	herd.population = value
+
+
+## Heads standing on this tile, across every herd on it.
+func herd_population_at(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read population off the map")
+	return _herd_population[i]
+
+
+## The same three fields by grid index rather than by coordinate.
+##
+## Not a convenience. A herd looking around asks for the terrain, the forage and
+## the crowd on each tile it can see, and going through coordinates means three
+## separate bounds-checked coordinate conversions for one tile — measured at
+## roughly a third of the whole turn loop once herds could see further than one
+## step. The caller resolves the index once and reads all three off it.
+func terrain_by_index(i: int) -> int:
+	return _terrain[i]
+
+
+func forage_by_index(i: int) -> float:
+	return _forage[i]
+
+
+func herd_population_by_index(i: int) -> float:
+	return _herd_population[i]
+
+
+## Every herd in the world, in step order.
+func herds() -> Array[Herd]:
+	var out: Array[Herd] = []
+	for agent in agents:
+		if agent is Herd:
+			out.append(agent as Herd)
+	return out
+
+
+## Total heads alive in the world. Summed from the herds rather than from the
+## per-tile cache, so it is exact however long the world has been running.
+func total_herd_population() -> float:
+	var total := 0.0
+	for herd in herds():
+		total += herd.population
+	return total
 
 
 ## The season the world is currently in. Derived from the turn rather than

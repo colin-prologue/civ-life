@@ -52,6 +52,25 @@ const SEASON_COLORS := {
 	Seasons.Season.WINTER: Color(0.72, 0.84, 0.95),
 }
 
+## Herd markers: a warm dot on cool ground, sized by population so a growing
+## herd is visible as growth rather than as a number that has to be read. Drawn
+## on top of the tiles rather than tinted into them — a herd is a thing standing
+## somewhere, not a property of the place.
+const _HERD_FILL := Color(0.96, 0.36, 0.22)
+const _HERD_EDGE := Color(0.15, 0.06, 0.03, 0.85)
+
+## Marker radius as a fraction of the hex radius, at the smallest and largest
+## populations the scale covers. Area, not radius, tracks population: a herd
+## four times the size looks four times as big rather than sixteen.
+const _HERD_MIN_SCALE := 0.22
+const _HERD_MAX_SCALE := 0.66
+
+## Population the marker reaches full size at. Everything above it draws the
+## same, which is the price of a fixed scale — chosen above the largest herd
+## observed over a thousand turns (see `test/test_herds.gd`) so the cap is a
+## backstop rather than a thing the eye meets.
+const _HERD_FULL_AT := 400.0
+
 ## Colour a tile fades toward as its forage falls — a pale, bleached version of
 ## itself rather than a darker one, because a winter map should read as drained
 ## rather than as a map at night.
@@ -208,10 +227,33 @@ func _draw() -> void:
 	for i in range(_polygons.size()):
 		draw_colored_polygon(_polygons[i], _fills[i])
 		draw_polyline(_outlines[i], _EDGE_COLOR, 1.0)
+	_draw_herds()
 	_draw_season()
 	_draw_legend()
 
 	last_draw_usec = Time.get_ticks_usec() - started
+
+
+## One dot per herd, at the centre of the tile it is standing on.
+##
+## Read straight off the world every frame rather than cached with the polygons:
+## herds move every turn while the tiles do not, and a cache of positions is a
+## cache that can be wrong about the only thing on screen that is going
+## anywhere.
+func _draw_herds() -> void:
+	for herd in _world.herds():
+		var centre := center_of(herd.coord)
+		var radius := _radius * herd_marker_scale(herd.population)
+		draw_circle(centre, radius, _HERD_FILL)
+		draw_arc(centre, radius, 0.0, TAU, 18, _HERD_EDGE, maxf(1.0, radius * 0.14))
+
+
+## Marker radius as a fraction of the hex radius, for a herd of this size.
+## Static and public so a test can check the scale without a viewport.
+static func herd_marker_scale(population: float) -> float:
+	var share := clampf(population / _HERD_FULL_AT, 0.0, 1.0)
+	# Square root, so the marker's *area* is proportional to the population.
+	return lerpf(_HERD_MIN_SCALE, _HERD_MAX_SCALE, sqrt(share))
 
 
 ## The year, drawn as four bars with the current season lit. A name alone tells
@@ -262,3 +304,16 @@ func _draw_legend() -> void:
 			Color(0.92, 0.92, 0.92)
 		)
 		pos.y += swatch.y + 6.0
+
+	# The herds get a line of their own, with the dot drawn at the size it is
+	# used on the map so "bigger means more" is stated rather than inferred.
+	draw_circle(pos + swatch * 0.5, swatch.x * 0.32, _HERD_FILL)
+	draw_string(
+		font,
+		pos + Vector2(swatch.x + 8.0, swatch.y - 3.0),
+		"herds (size=count)",
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		font_size,
+		Color(0.92, 0.92, 0.92)
+	)
