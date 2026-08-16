@@ -47,4 +47,9 @@ func _on_viewport_resized() -> void:
 
 
 func _update_status() -> void:
-	_status.text = "Turn %d — seed %d — press Space to advance" % [world.turn, world.world_seed]
+	_status.text = "Turn %d — %s, year %d — seed %d — press Space to advance" % [
+		world.turn,
+		Seasons.season_name(world.season()),
+		world.year(),
+		world.world_seed,
+	]

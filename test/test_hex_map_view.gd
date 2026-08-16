@@ -50,6 +50,70 @@ func test_no_two_terrains_share_a_colour() -> void:
 			)
 
 
+func test_every_season_has_an_accent_colour() -> void:
+	for season in Seasons.SEASON_ORDER:
+		assert_true(
+			HexMapView.SEASON_COLORS.has(season),
+			"season %s is drawn in a colour of its own" % Seasons.season_name(season)
+		)
+
+
+func test_a_tile_changes_colour_as_its_forage_falls() -> void:
+	# The one mechanical check that separates "seasons are visible" from "seasons
+	# are a caption": the same terrain must not render the same in a fed season
+	# and a lean one. What it cannot check is whether the difference reads as
+	# winter — that is the human criterion on the ticket.
+	var fed := HexMapView.tile_color(WorldGen.Terrain.GRASS, Seasons.MAX_FORAGE)
+	var lean := HexMapView.tile_color(WorldGen.Terrain.GRASS, Seasons.MIN_FORAGE)
+	var distance := Vector3(fed.r - lean.r, fed.g - lean.g, fed.b - lean.b).length()
+	assert_gt(distance, MIN_COLOR_DISTANCE, "a fed meadow and a bare one look different")
+
+	# Terrain still has to be legible underneath the seasonal wash, or the map
+	# has traded one thing the player needs to see for another.
+	var lean_forest := HexMapView.tile_color(WorldGen.Terrain.FOREST, Seasons.MIN_FORAGE)
+	var apart := Vector3(lean.r - lean_forest.r, lean.g - lean_forest.g, lean.b - lean_forest.b)
+	assert_gt(apart.length(), 0.05, "meadow and forest are still told apart at their leanest")
+
+	# Water has no forage in any season, so scaling it would bleach the sea
+	# permanently to say something true only about grazing.
+	assert_eq(
+		HexMapView.tile_color(WorldGen.Terrain.WATER, 0.0),
+		HexMapView.TERRAIN_COLORS[WorldGen.Terrain.WATER],
+		"the sea does not go dormant"
+	)
+
+
+func test_advancing_into_another_season_repaints_the_map() -> void:
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	var view: HexMapView = main.get_node("HexMapView")
+
+	assert_gt(view.tile_polygon_count(), 0, "the view is drawing the map it is being asked about")
+
+	var before := _fill_sample(main.world)
+	for i in range(Seasons.TURNS_PER_SEASON * 3):
+		main.advance_turn()
+	assert_ne(main.world.season(), Seasons.Season.SPRING, "the world moved to another season")
+
+	var after := _fill_sample(main.world)
+	assert_ne(before, after, "the fills the view draws changed with the season")
+
+
+## The colours the view would draw for a handful of land tiles. Sampled through
+## the same function `_rebuild()` uses, so this cannot pass while the map on
+## screen is painted some other way.
+func _fill_sample(world: WorldMap) -> Array[Color]:
+	var out: Array[Color] = []
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) == WorldGen.Terrain.WATER:
+			continue
+		out.append(HexMapView.tile_color(world.terrain_at(coord), world.forage_at(coord)))
+		if out.size() >= 20:
+			break
+	return out
+
+
 func test_neighbouring_hexes_are_adjacent_on_screen() -> void:
 	# The layout bug that survives a screenshot glance is a spacing constant that
 	# is nearly right: hexes overlap slightly, or leave hairline gaps, and it
