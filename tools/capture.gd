@@ -37,6 +37,16 @@ const SETTLE_FRAMES := 4
 ## `--write-movie` is running. Overridable with `--hold=`.
 const DEFAULT_HOLD_FRAMES := 12
 
+## How many main-loop iterations to wait for `RenderingServer.frame_post_draw`
+## before giving up on it and reading the viewport anyway.
+##
+## Under the `dummy` rendering driver that signal never arrives at all, so an
+## unbounded `await` on it hangs until the shell's watchdog kills the process —
+## which is the one outcome this harness must not have, because it means the
+## blank frame never reaches the guard and the guard is never seen to fire.
+## Counted in frames rather than seconds so the wait is the same on every host.
+const POST_DRAW_WAIT_FRAMES := 120
+
 var _mode := "stills"
 var _seed := 20260815
 var _turns: Array[int] = [0]
@@ -50,9 +60,11 @@ var _height := 720
 var _main: Node = null
 var _view: Node = null
 var _written := 0
+var _drew := false
 
 
 func _initialize() -> void:
+	RenderingServer.frame_post_draw.connect(_on_frame_post_draw)
 	var args := _parse_args(OS.get_cmdline_user_args())
 
 	_mode = str(args.get("mode", _mode))
@@ -88,7 +100,9 @@ func _initialize() -> void:
 	# the run proceed and let `FrameCheck` reject the blank frames — that way
 	# the guard this ticket exists for is the thing on the failure path, and
 	# `capture.sh --self-test` exercises it for real rather than exercising a
-	# string comparison standing in front of it.
+	# string comparison standing in front of it. `_wait_for_draw()` is what makes
+	# that possible: without a bounded wait the headless run hangs before the
+	# guard is ever consulted, which looks the same from outside as no guard.
 
 	root.size = Vector2i(_width, _height)
 	await process_frame
@@ -172,13 +186,44 @@ func _run_movie() -> void:
 	_ok()
 
 
+func _on_frame_post_draw() -> void:
+	_drew = true
+
+
+## Wait for one frame to finish drawing since this call started. Returns false
+## if the driver never said it drew anything.
+##
+## The obvious version of this is `await RenderingServer.frame_post_draw`, and
+## it is a trap: under the `dummy` driver the signal is never emitted, so the
+## coroutine never resumes, the process sits there until the shell kills it, and
+## the blank frame it was supposed to be caught holding never reaches
+## `FrameCheck`. That leaves a working guard and a broken guard looking exactly
+## alike from outside, which is the single thing this harness exists to prevent.
+##
+## `process_frame` keeps firing with no rendering context — it is the main loop,
+## not the renderer — so it is what bounds the wait. A false return is not a
+## failure by itself: the caller reads the viewport regardless and lets the
+## pixel check pass judgement, keeping the guard on the failure path rather than
+## a driver-name or signal-arrival check standing in front of it.
+func _wait_for_draw() -> bool:
+	_drew = false
+	for i in range(POST_DRAW_WAIT_FRAMES):
+		await process_frame
+		if _drew:
+			return true
+	return false
+
+
 ## Read the viewport, refuse it if it is blank, and only then write it.
 ##
 ## The order matters: nothing reaches disk that has not already passed the
 ## check. A harness that writes first and validates afterwards leaves the blank
 ## file behind on every failure, and one of those eventually gets committed.
 func _capture_to(path: String) -> bool:
-	await RenderingServer.frame_post_draw
+	if not await _wait_for_draw():
+		print("[capture] no frame_post_draw in %d frames; reading the viewport anyway" % [
+			POST_DRAW_WAIT_FRAMES,
+		])
 	var tex := root.get_texture()
 	var img: Image = null if tex == null else tex.get_image()
 

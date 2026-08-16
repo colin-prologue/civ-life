@@ -129,18 +129,24 @@ fi
 # so the loop can sit there until the deadline on a run that already succeeded.
 # Block on `wait` and let a separate watchdog do the killing, leaving a marker
 # file behind so a deliberate SIGKILL is distinguishable from a crash.
+#
+# Note the `|| rc=$?` idiom used here and at every other call that is allowed to
+# fail. The obvious alternative — bracketing the call in `set +e` / `set -e` —
+# is a trap, because those are global settings and not function-local ones: a
+# helper that switches errexit back on hands it to a caller that had switched it
+# off on purpose, and the helper's own non-zero `return` then kills the script
+# before a single word of diagnosis is printed. That is how a self-test whose
+# whole job is to observe a failure ends up exiting silently on the failure it
+# was watching for.
 run_bounded() {
   local log="$1"; shift
-  local pid watchdog rc
+  local pid watchdog rc=0
   rm -f "$log.timeout"
   "$@" >"$log" 2>&1 &
   pid=$!
   ( sleep "$TIMEOUT_SECS"; touch "$log.timeout"; kill -9 "$pid" ) >/dev/null 2>&1 &
   watchdog=$!
-  set +e
-  wait "$pid"
-  rc=$?
-  set -e
+  wait "$pid" || rc=$?
   kill "$watchdog" >/dev/null 2>&1 || true
   wait "$watchdog" >/dev/null 2>&1 || true
   if [ -f "$log.timeout" ]; then
@@ -197,10 +203,8 @@ capture_stills() {
   argv+=(--resolution "${WIDTH}x${HEIGHT}" -s tools/capture.gd --
     "--mode=stills" "--seed=$seed" "--turns=$turns"
     "--out=$out" "--width=$WIDTH" "--height=$HEIGHT")
-  set +e
-  run_bounded "$log" "${argv[@]}"
-  local rc=$?
-  set -e
+  local rc=0
+  run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"
 }
 
@@ -209,20 +213,31 @@ capture_stills() {
 # blank-frame guard actually rejects a blank frame, and that the same seed and
 # turn produce the same bytes twice. A guard nobody has watched fail is
 # indistinguishable from a guard that is broken.
+SELF_TEST_TMP=""
+
 self_test() {
-  local tmp failures=0
-  tmp="$(mktemp -d)"
+  local failures=0 tmp
+  SELF_TEST_TMP="$(mktemp -d)"
+  tmp="$SELF_TEST_TMP"
   # EXIT rather than RETURN: the failure path below calls `die`, which exits
   # rather than returning, and would otherwise leave the directory behind.
-  trap 'rm -rf "$tmp"' EXIT
+  #
+  # The trap body names a global deliberately. A `local` is out of scope by the
+  # time the trap runs, and under `set -u` an EXIT trap that references an unset
+  # variable fails — turning a self-test that passed both of its checks into a
+  # non-zero exit, which reads from outside as the capture being broken.
+  trap 'rm -rf "$SELF_TEST_TMP"' EXIT
 
   echo "[self-test] 1/2 — blank-frame guard, running the capture under --headless on purpose"
-  set +e
-  capture_stills "$tmp/headless" "$SEED" "0" "$tmp/headless.log" 1
-  local rc=$?
-  set -e
+  # Created up front, not left to the capture: if the run dies before it makes
+  # its own output directory, `find` on a missing path fails, and under
+  # `pipefail` that aborts the self-test with no verdict printed at all — the
+  # exact silent outcome this leg exists to rule out.
+  mkdir -p "$tmp/headless"
+  local rc=0
+  capture_stills "$tmp/headless" "$SEED" "0" "$tmp/headless.log" 1 || rc=$?
   local wrote
-  wrote="$(find "$tmp/headless" -name '*.png' 2>/dev/null | wc -l | tr -d ' ')"
+  wrote="$(find "$tmp/headless" -name '*.png' | wc -l | tr -d ' ')"
   if [ "$rc" -eq 0 ]; then
     echo "  FAIL: the headless run exited 0. The guard did not fire."
     failures=$((failures + 1))
@@ -239,12 +254,9 @@ self_test() {
   fi
 
   echo "[self-test] 2/2 — determinism, capturing seed $SEED turn 0 twice"
-  set +e
-  capture_stills "$tmp/a" "$SEED" "0" "$tmp/a.log"
-  local rc_a=$?
-  capture_stills "$tmp/b" "$SEED" "0" "$tmp/b.log"
-  local rc_b=$?
-  set -e
+  local rc_a=0 rc_b=0
+  capture_stills "$tmp/a" "$SEED" "0" "$tmp/a.log" || rc_a=$?
+  capture_stills "$tmp/b" "$SEED" "0" "$tmp/b.log" || rc_b=$?
   if [ "$rc_a" -ne 0 ] || [ "$rc_b" -ne 0 ]; then
     echo "  FAIL: a capture run did not succeed on this host."
     explain_failure "$rc_a" "$tmp/a.log" | sed 's/^/    /'
@@ -287,10 +299,8 @@ trap 'rm -f "$LOG"' EXIT
 
 if [ "$MODE" = "stills" ]; then
   echo "[capture] stills, seed $SEED, turns $TURNS, ${WIDTH}x${HEIGHT} -> $REL_OUT/"
-  set +e
-  capture_stills "$ABS_OUT" "$SEED" "$TURNS" "$LOG"
-  RC=$?
-  set -e
+  RC=0
+  capture_stills "$ABS_OUT" "$SEED" "$TURNS" "$LOG" || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: capture failed and nothing was written." >&2
@@ -315,14 +325,12 @@ else
   # --write-movie forces --fixed-fps, so the recording advances in lockstep with
   # the simulation instead of with the wall clock: the same span of turns always
   # yields the same number of frames.
-  set +e
+  RC=0
   run_bounded "$LOG" "$GODOT" --resolution "${WIDTH}x${HEIGHT}" \
     --fixed-fps "$FPS" --write-movie "$FRAMES_DIR/frame.png" \
     -s tools/capture.gd -- \
     "--mode=movie" "--seed=$SEED" "--from=$FROM_TURN" "--to=$TO_TURN" \
-    "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT"
-  RC=$?
-  set -e
+    "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: movie capture failed and nothing was kept." >&2
