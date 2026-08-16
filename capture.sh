@@ -3,13 +3,14 @@
 #
 #   ./capture.sh --seed 20260815 --turns 0,4,12 --name world
 #   ./capture.sh --movie --seed 20260815 --from 0 --to 8 --name growth
+#   ./capture.sh --links docs/shots/growth
 #   ./capture.sh --self-test
 #
 # Deliberately NOT wired into ./test.sh. The suite has to stay runnable on a
 # host with no rendering context; this command cannot run on one, and coupling
 # them would make every future test run depend on a GPU.
 #
-# Three things about this are not obvious and cost real time to rediscover:
+# Four things about this are not obvious and cost real time to rediscover:
 #
 # 1. `--headless` cannot be used. It forces `--display-driver headless` and the
 #    `dummy` rendering driver, which rasterizes nothing — and `Image.save_png()`
@@ -30,6 +31,14 @@
 #    repository permanently. Every invocation is capped (see MAX_BYTES); going
 #    over deletes what the run produced rather than leaving it lying next to a
 #    warning. Prefer few, well-chosen frames.
+#
+# 4. A written frame is not yet a visible one. GitHub does not resolve
+#    repo-relative image paths in a pull request body, so the obvious markdown
+#    puts no picture in front of a reviewer while looking exactly like markdown
+#    that does. This command therefore prints absolute, commit-pinned URLs (see
+#    tools/shot_links.sh) — and, because the frames are never committed at the
+#    moment they are captured, says so and tells you to re-run `--links` once
+#    they are.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -60,9 +69,10 @@ HOLD=6
 FPS=10
 GIF_WIDTH=480
 SELF_TEST=0
+LINKS_DIRS=()
 
 usage() {
-  sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options
@@ -75,6 +85,10 @@ Options
   --gif-width N       GIF width in pixels (default 480)
   --name NAME         subdirectory under docs/shots/ (default: derived)
   --resolution WxH    render size (default 1280x720)
+  --links DIR         print the paste-ready markdown for an existing shots
+                      directory and exit — no Godot, no capture. Run this
+                      again after committing the frames: the URLs are pinned
+                      to HEAD, and HEAD moves when you commit.
   --self-test         prove the blank-frame guard fires and frames are stable
   -h, --help          this
 
@@ -100,11 +114,21 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
+    --links) LINKS_DIRS+=("$2"); shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown option '$1'" ;;
   esac
 done
+
+# --- links only ---------------------------------------------------------------
+# Ahead of the Godot check on purpose. This mode reads a directory and the git
+# metadata and nothing else; the whole point of it is to be re-runnable after a
+# commit, on any host, long after the capture that produced the frames.
+if [ "${#LINKS_DIRS[@]}" -gt 0 ]; then
+  bash tools/shot_links.sh "${LINKS_DIRS[@]}"
+  exit 0
+fi
 
 command -v "$GODOT" >/dev/null \
   || die "'$GODOT' is not on PATH. Install Godot 4 or set GODOT=/path/to/godot"
@@ -410,9 +434,11 @@ fi
 
 echo
 echo "[capture] $BYTES / $MAX_BYTES bytes written to $REL_OUT/"
-echo "[capture] paste into the PR body:"
 echo
-while IFS= read -r f; do
-  echo "![$(basename "$f" | sed 's/\.[a-z]*$//')](${f#"$PWD/"})"
-done < <(find "$ABS_OUT" -type f | sort)
+
+# The frames were written a second ago, so they are certainly not committed at
+# HEAD and the block below will say so. That is the correct thing for it to say:
+# the alternative is a confident link to a file GitHub cannot fetch, which is
+# the failure this replaced. Commit, then re-run `--links` for the real block.
+bash tools/shot_links.sh "$REL_OUT"
 echo

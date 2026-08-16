@@ -1,7 +1,13 @@
 # AgDR-008 — Visual criteria are reviewed from frames committed to the branch
 
-**Status:** accepted
+**Status:** accepted, amended by AgDR-009
 **Date:** 2026-08-15
+
+> **Correction.** Where this record says frames are inlined "by relative path",
+> it is wrong: GitHub does not resolve relative image paths in a pull request
+> body, so the first PR to use this mechanism showed a reviewer no pictures at
+> all. The links are absolute and commit-pinned — see AgDR-009. Everything else
+> below stands.
 
 ## Decision
 
