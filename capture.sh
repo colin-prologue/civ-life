@@ -339,19 +339,58 @@ else
   fi
   grep -E "^\[capture\]" "$LOG" || true
 
-  # The movie writer is the engine, so the in-engine guard cannot stand in front
-  # of it — the poster stills above prove the viewport had pixels. This is the
-  # independent second signal: a uniform PNG compresses to a few hundred bytes,
-  # so a floor on recorded frame size catches a blank recording even if the
-  # poster somehow passed.
+  # The movie writer is the engine, so the guard cannot stand in front of what it
+  # writes — but it can stand behind it. Every recorded frame is loaded back and
+  # run through the same FrameCheck the stills pass through, in a separate pass
+  # that needs no rendering context.
+  #
+  # The previous version of this check was a floor on file size, on the theory
+  # that a uniform PNG compresses to a few hundred bytes. It was too weak, and
+  # not in a theoretical way: `--write-movie` starts recording at engine start,
+  # so the first frames are the clear colour from before the scene exists, and a
+  # 1280x720 grey rectangle is comfortably over any sane floor. The GIF opened on
+  # a blank screen and every check passed.
   RECORDED="$(find "$FRAMES_DIR" -name '*.png' | wc -l | tr -d ' ')"
   [ "$RECORDED" -gt 0 ] || { rm -rf "$ABS_OUT"; die "--write-movie recorded no frames"; }
-  TINY="$(find "$FRAMES_DIR" -name '*.png' -size -2k | wc -l | tr -d ' ')"
-  if [ "$TINY" -gt 0 ]; then
+
+  VERIFY_LOG="$(mktemp)"
+  trap 'rm -f "$LOG" "$VERIFY_LOG"; rm -rf "$FRAMES_DIR"' EXIT
+  VRC=0
+  run_bounded "$VERIFY_LOG" "$GODOT" --headless -s tools/capture.gd -- \
+    "--mode=verify" "--frames=$FRAMES_DIR" || VRC=$?
+  if [ "$VRC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$VERIFY_LOG"; then
     rm -rf "$ABS_OUT"
-    die "$TINY of $RECORDED recorded frames are under 2KB — that is a blank recording, not a small one"
+    echo "ERROR: the recorded frames could not be checked for content." >&2
+    explain_failure "$VRC" "$VERIFY_LOG" >&2
+    exit 1
   fi
-  echo "[capture] $RECORDED frames recorded, assembling GIF"
+
+  # Leading blanks are engine start-up and are dropped. A blank *after* the
+  # recording has begun properly is a hole in the middle of the film, which is a
+  # different thing entirely and is fatal.
+  TRIMMED=0
+  HOLES=0
+  SEEN_OK=0
+  while read -r VERDICT FRAME; do
+    if [ "$VERDICT" = "FRAME-OK" ]; then
+      SEEN_OK=1
+    elif [ "$SEEN_OK" = "1" ]; then
+      HOLES=$((HOLES + 1))
+    else
+      rm -f "$FRAMES_DIR/$FRAME"
+      TRIMMED=$((TRIMMED + 1))
+    fi
+  done < <(grep -E '^FRAME-(OK|BLANK) ' "$VERIFY_LOG")
+
+  if [ "$SEEN_OK" = "0" ]; then
+    rm -rf "$ABS_OUT"
+    die "all $RECORDED recorded frames are blank — the recording drew nothing"
+  fi
+  if [ "$HOLES" -gt 0 ]; then
+    rm -rf "$ABS_OUT"
+    die "$HOLES recorded frame(s) are blank after the recording had started — a gap in the film, not a slow start"
+  fi
+  echo "[capture] $RECORDED frames recorded, $TRIMMED blank start-up frame(s) dropped, assembling GIF"
 
   ffmpeg -y -loglevel error -framerate "$FPS" -pattern_type glob \
     -i "$FRAMES_DIR/*.png" \

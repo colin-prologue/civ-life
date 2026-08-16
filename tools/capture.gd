@@ -78,6 +78,12 @@ func _initialize() -> void:
 	if args.has("turns"):
 		_turns = _parse_turns(str(args["turns"]))
 
+	# Verification of already-written frames needs no rendering context and no
+	# scene, so it short-circuits everything below.
+	if _mode == "verify":
+		_run_verify(str(args.get("frames", "")))
+		return
+
 	if _out_dir == "":
 		_fail("no --out= directory was given")
 		return
@@ -184,6 +190,43 @@ func _run_movie() -> void:
 	if not closed:
 		return
 	_ok()
+
+
+## Run the blank-frame guard over PNGs somebody else already wrote.
+##
+## `--write-movie` is the engine writing files, not this harness, so the guard
+## cannot stand in front of those the way it does for a still. It can stand
+## behind them: load each one back and run the same `FrameCheck`. The earlier
+## stand-in — a floor on file size, on the theory that a uniform PNG compresses
+## to almost nothing — was too weak to notice that the recording opens with the
+## engine's clear colour before the scene has been added, which is a 1280x720
+## grey rectangle and several kilobytes of it.
+##
+## Prints one line per frame, oldest first, and leaves the deciding to
+## `capture.sh`: leading blanks are engine start-up and get trimmed, a blank
+## after the recording has begun properly is a hole and is fatal.
+func _run_verify(dir: String) -> void:
+	if dir == "":
+		_fail("verify mode needs --frames=<directory>")
+		return
+	var names := DirAccess.get_files_at(dir)
+	if names.is_empty():
+		_fail("no files to verify in %s" % dir)
+		return
+	names.sort()
+	var checked := 0
+	for name in names:
+		if not name.ends_with(".png"):
+			continue
+		var img := Image.load_from_file("%s/%s" % [dir, name])
+		var report := FrameCheck.inspect(img)
+		print("FRAME-%s %s" % ["OK" if report["ok"] else "BLANK", name])
+		checked += 1
+	if checked == 0:
+		_fail("no PNG frames to verify in %s" % dir)
+		return
+	print("CAPTURE-OK %d" % checked)
+	quit(0)
 
 
 func _on_frame_post_draw() -> void:
