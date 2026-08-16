@@ -311,7 +311,7 @@ func _draw_legend() -> void:
 	draw_string(
 		font,
 		pos + Vector2(swatch.x + 8.0, swatch.y - 3.0),
-		"herds (size = animals)",
+		"herds (size=count)",
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		font_size,
