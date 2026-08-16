@@ -43,6 +43,22 @@ one failure mode already known and would put a string comparison, rather than
 the pixel check, on the failure path — so the self-test would exercise the
 guard nobody is worried about.
 
+## The constraint this turned out to actually be about
+
+The ticket assumed the thing standing between a reviewer and a picture was
+*physical access to a machine with a GPU*. On the first attempt it was not. The
+GPU was present and idle; what blocked capture was the agent's own command
+allowlist, which permitted `./test.sh` and refused `./capture.sh`. The first
+pass shipped a capture path that had never once been executed.
+
+That is worth carrying forward, because it generalises past this ticket. A
+mechanism for remote review is only as good as the least-privileged step in it,
+and the least-privileged step is not usually the one the design worries about.
+Anything sequenced behind this that expects an agent to produce evidence needs
+the command that produces it allowlisted at the same time the criterion is
+written — otherwise the criterion is unmeetable and nobody finds out until a
+review round is spent discovering it.
+
 ## What would make this the wrong call
 
 **Repository weight.** If capture frames come to dominate clone size, the byte
