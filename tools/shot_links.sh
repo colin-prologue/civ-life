@@ -85,14 +85,24 @@ esac
 BASE="https://raw.githubusercontent.com/$SLUG/$SHA"
 
 # --- collect the files --------------------------------------------------------
+# A shots directory does not stay all-pictures. Godot writes a `.import`
+# sidecar next to every image it sees, and those appear after the capture, not
+# during it — so the naive "one line per file here" produced a block with a
+# broken link per frame and an uncommitted-file warning caused entirely by
+# metadata. Pictures only; anything else is counted out loud rather than
+# dropped quietly.
 FILES=()
+SKIPPED=0
 for dir in "$@"; do
   [ -d "$dir" ] || die "'$dir' is not a directory"
   while IFS= read -r f; do
-    FILES+=("$f")
+    case "$f" in
+      *.png|*.gif|*.jpg|*.jpeg|*.webp|*.avif) FILES+=("$f") ;;
+      *) SKIPPED=$((SKIPPED + 1)) ;;
+    esac
   done < <(find "$dir" -type f ! -name '.*' | sort)
 done
-[ "${#FILES[@]}" -gt 0 ] || die "no files found under: $*"
+[ "${#FILES[@]}" -gt 0 ] || die "no image files found under: $*"
 
 # A file counts as present at $SHA only if the blob recorded there is byte-for
 # byte what is on disk. "Committed under this name once" is not the check: a
@@ -118,17 +128,13 @@ for f in "${FILES[@]}"; do
   enc="${rel// /%20}"
   alt="$(basename "$rel")"
   alt="${alt%.*}"
-  bang="!"
-  case "$rel" in
-    *.png|*.gif|*.jpg|*.jpeg|*.webp|*.avif) ;;
-    *) bang="" ;;
-  esac
-  LINES+=("$bang[$alt]($BASE/$enc)")
+  LINES+=("![$alt]($BASE/$enc)")
 done
 
 # --- emit ---------------------------------------------------------------------
 {
   echo "[links] remote '$REMOTE_NAME' is $SLUG, pinned at $SHA"
+  [ "$SKIPPED" -eq 0 ] || echo "[links] $SKIPPED non-image file(s) in there were not linked (Godot .import sidecars and the like)"
   if [ "$MISSING" -gt 0 ]; then
     echo "[links] $MISSING of ${#FILES[@]} file(s) are NOT committed at that sha — the links below 404 until they are."
     echo "[links] commit the frames, then re-run:  ./capture.sh --links $1"

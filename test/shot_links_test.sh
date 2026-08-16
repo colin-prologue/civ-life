@@ -112,6 +112,11 @@ fi
 
 echo "[shot-links] 4/6 — an uncommitted frame is stated, not linked confidently"
 printf 'brand new' >"$d/docs/shots/demo/fresh.png"
+# Godot drops one of these next to every image it imports, so a shots directory
+# is only all-pictures until the next time the editor or ./test.sh looks at it.
+# Linking them produced a broken image per frame and a 404 warning caused
+# entirely by metadata.
+printf 'godot metadata' >"$d/docs/shots/demo/fresh.png.import"
 emit_ok "$d" docs/shots/demo
 out3="$EMIT_OUT"
 if [ "$EMIT_RC" -ne 0 ]; then
@@ -120,9 +125,15 @@ elif [[ "$out3" != *404* ]]; then
   fail "no 404 warning in the block for an uncommitted frame:"$'\n'"$out3"
 elif [[ "$out3" != *"fresh.png"* ]]; then
   fail "the uncommitted frame got no link line at all: $out3"
+elif [[ "$out3" == *".import"* ]]; then
+  fail "a Godot .import sidecar was linked as though it were a picture: $out3"
 else
-  pass "block warns the links 404 until the commit is pushed"
+  pass "block warns the links 404 until the commit is pushed, sidecars not linked"
 fi
+
+# The .import sidecar has done its job; it would otherwise keep the next check
+# from testing what it means to test.
+rm -f "$d/docs/shots/demo/fresh.png.import"
 
 echo "[shot-links] 5/6 — a committed name whose bytes changed counts as uncommitted"
 # A re-capture overwrites frames in place. The path still resolves at the sha,
