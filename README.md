@@ -107,8 +107,10 @@ unseeded random source is a bug, not a shortcut.
 ## Status
 
 Early. The project skeleton, headless test harness, hex grid and world
-generation are in; the map is now on screen and turns advance by hand. Seasons
-and the first living population are next.
+generation are in; the map is on screen, turns advance by hand, and the year
+turns with them — every land tile's forage rises and falls with the season, and
+the map visibly changes as it does. The first living population is next, and it
+is what will read forage.
 
 The renderer comes early on purpose. This design's value proposition is
 observational, and whether a growing world is worth watching is not a question a

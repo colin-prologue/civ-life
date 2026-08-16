@@ -21,6 +21,12 @@ extends SceneTree
 
 const SEEDS := [20260815, 987654321, 1, 42, 7, 555]
 
+## Turns each world is run forward before its final fingerprint is taken.
+## Deliberately not a multiple of the season length and more than a year, so the
+## digest covers a world part-way through a season some distance from where it
+## started rather than one that has landed neatly back on spring.
+const TURNS := 37
+
 
 func _init() -> void:
 	for world_seed in SEEDS:
@@ -28,11 +34,32 @@ func _init() -> void:
 	quit()
 
 
-## Order-sensitive rolling hash over every tile in grid order. Every tile is
-## folded in — this is a whole-map digest, not a sample.
+## Order-sensitive rolling hash over every tile in grid order, taken at turn 0
+## and again after `TURNS` turns. Every tile is folded in — this is a whole-map
+## digest, not a sample.
+##
+## Forage is folded in alongside terrain because the cross-process check is only
+## as wide as what it hashes: a terrain-only digest would keep agreeing across
+## processes while every seasonal value in the world diverged.
 static func _fingerprint(map: WorldMap) -> int:
-	var data := map.terrain_data()
-	var acc := 17
-	for i in range(data.size()):
-		acc = (acc * 31 + data[i] + 1) % 1000000007
-	return acc
+	var acc := _fold(_fold(17, map.terrain_data()), _quantised_forage(map))
+	for i in range(TURNS):
+		map.advance_turn()
+	return _fold(_fold(acc, [map.turn, map.season()]), _quantised_forage(map))
+
+
+static func _fold(acc: int, values) -> int:
+	var out := acc
+	for value in values:
+		out = (out * 31 + int(value) + 1) % 1000000007
+	return out
+
+
+## Forage as integers, so the digest is over exact values rather than over the
+## text of a float. The table these come from holds constants, so there is no
+## arithmetic here to round differently on another host.
+static func _quantised_forage(map: WorldMap) -> Array:
+	var out := []
+	for value in map.forage_data():
+		out.append(roundi(value * 10000.0))
+	return out

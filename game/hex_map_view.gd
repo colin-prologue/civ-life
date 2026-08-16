@@ -4,11 +4,11 @@ extends Node2D
 ## Draws a `WorldMap` as coloured hexes, scaled to fit whatever viewport it is
 ## given.
 ##
-## This node owns pixels and nothing else. It reads terrain out of the world and
-## picks a colour for it; it never decides what the terrain should be, and it
-## holds no state that would survive being thrown away and rebuilt from the
-## world. If a rule ever needs to live here, it belongs in `sim/` instead — see
-## `.decisions/AgDR-001-headless-sim-core.md`.
+## This node owns pixels and nothing else. It reads terrain, forage and the
+## season out of the world and picks colours for them; it never decides what any
+## of those should be, and it holds no state that would survive being thrown away
+## and rebuilt from the world. If a rule ever needs to live here, it belongs in
+## `sim/` instead — see `.decisions/AgDR-001-headless-sim-core.md`.
 ##
 ## Layout is flat-top, odd-q offset, matching `sim/hex_grid.gd`'s extent. Centre
 ## spacing is `1.5 * radius` horizontally and `sqrt(3) * radius` vertically, with
@@ -41,6 +41,32 @@ const TERRAIN_NAMES := {
 	WorldGen.Terrain.HILL: "hills",
 	WorldGen.Terrain.MOUNTAIN: "mountains",
 }
+
+## Accent per season, used for the indicator above the legend. Warm through the
+## growing half of the year, cold at the end of it, so the header reads as the
+## season before the word does.
+const SEASON_COLORS := {
+	Seasons.Season.SPRING: Color(0.55, 0.85, 0.45),
+	Seasons.Season.SUMMER: Color(0.95, 0.80, 0.30),
+	Seasons.Season.AUTUMN: Color(0.90, 0.52, 0.24),
+	Seasons.Season.WINTER: Color(0.72, 0.84, 0.95),
+}
+
+## Colour a tile fades toward as its forage falls — a pale, bleached version of
+## itself rather than a darker one, because a winter map should read as drained
+## rather than as a map at night.
+const _DORMANT := Color(0.82, 0.84, 0.87)
+
+## How far toward `_DORMANT` a tile with no forage at all is allowed to go. Short
+## of 1.0 on purpose: at 1.0 every barren tile is the same colour and the terrain
+## underneath stops being readable, which trades one thing the player needs to
+## see for another.
+const _DORMANCY_MAX := 0.70
+
+## Left edge of the season indicator and the legend below it, measured in from
+## the right of the viewport. Shared so the two line up, and wide enough that
+## the longest season caption is not clipped by the edge of the window.
+const _PANEL_INSET := 176.0
 
 const _EDGE_COLOR := Color(0.0, 0.0, 0.0, 0.18)
 const _BACKGROUND := Color(0.07, 0.08, 0.10)
@@ -137,9 +163,29 @@ func _rebuild() -> void:
 			var loop := corners.duplicate()
 			loop.append(corners[0])
 			_outlines[i] = loop
-			var terrain := _world.terrain_at(HexGrid.from_offset(col, row))
-			_fills[i] = TERRAIN_COLORS.get(terrain, Color.MAGENTA)
+			var coord := HexGrid.from_offset(col, row)
+			var terrain := _world.terrain_at(coord)
+			_fills[i] = tile_color(terrain, _world.forage_at(coord))
 			i += 1
+
+
+## The fill for one tile: its terrain colour, bleached toward `_DORMANT` in
+## proportion to how far its forage sits below the best any tile can manage.
+##
+## Measured against the global maximum rather than against each terrain's own
+## annual peak. Relative-to-itself would make every terrain swing the full range
+## and read more dramatically, at the price of a mountain in summer looking as
+## fed as a meadow in spring — which is the one thing this colour is supposed to
+## communicate.
+##
+## Water is left alone. It has no forage in any season, so scaling it would
+## permanently bleach the sea to say something true only about grazing.
+static func tile_color(terrain: int, forage: float) -> Color:
+	var base: Color = TERRAIN_COLORS.get(terrain, Color.MAGENTA)
+	if terrain == WorldGen.Terrain.WATER:
+		return base
+	var fed := clampf(forage / Seasons.MAX_FORAGE, 0.0, 1.0)
+	return base.lerp(_DORMANT, (1.0 - fed) * _DORMANCY_MAX)
 
 
 ## The six corners of a flat-top hex, starting at the right-hand point and going
@@ -162,9 +208,36 @@ func _draw() -> void:
 	for i in range(_polygons.size()):
 		draw_colored_polygon(_polygons[i], _fills[i])
 		draw_polyline(_outlines[i], _EDGE_COLOR, 1.0)
+	_draw_season()
 	_draw_legend()
 
 	last_draw_usec = Time.get_ticks_usec() - started
+
+
+## The year, drawn as four bars with the current season lit. A name alone tells
+## you where you are; the bars tell you where you are *going*, which is the
+## difference between a caption and a calendar.
+func _draw_season() -> void:
+	var font := ThemeDB.fallback_font
+	if font == null:
+		return
+	var current := _world.season()
+	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var pos := Vector2(left, 16.0)
+	var bar := Vector2(38, 10)
+	for season in Seasons.SEASON_ORDER:
+		var color: Color = SEASON_COLORS[season]
+		draw_rect(Rect2(pos, bar), color if season == current else color * 0.30)
+		pos.x += bar.x + 4.0
+	draw_string(
+		font,
+		Vector2(left, 16.0 + bar.y + 18.0),
+		"%s — year %d" % [Seasons.season_name(current), _world.year()],
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		ThemeDB.fallback_font_size,
+		SEASON_COLORS[current]
+	)
 
 
 ## A swatch and a name per terrain, because a colour key is the difference
@@ -175,7 +248,7 @@ func _draw_legend() -> void:
 		return
 	var font_size := ThemeDB.fallback_font_size
 	var swatch := Vector2(16, 16)
-	var pos := Vector2(get_viewport_rect().size.x - 130.0, 16.0)
+	var pos := Vector2(get_viewport_rect().size.x - _PANEL_INSET, 62.0)
 	for terrain in TERRAIN_NAMES:
 		draw_rect(Rect2(pos, swatch), TERRAIN_COLORS[terrain])
 		draw_rect(Rect2(pos, swatch), _EDGE_COLOR, false, 1.0)
