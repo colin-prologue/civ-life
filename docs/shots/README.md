@@ -17,11 +17,38 @@ make it.
 ./capture.sh --seed 20260815 --turns 0,4,12 --name world   # stills
 ./capture.sh --movie --seed 20260815 --from 0 --to 8       # a short GIF
 ./capture.sh --self-test                                   # prove the guard fires
+./capture.sh --links docs/shots/growth                     # markdown for the PR
 ```
 
-The command prints the markdown to paste into the PR body. Paths are
-repo-relative, so GitHub renders them inline without anyone downloading
-anything.
+Capture, **commit the frames**, then run `--links` and paste what it prints.
+That order is not a style preference: the URLs are pinned to `HEAD`, and the
+frames are not in `HEAD` until you commit them. Run `--links` before committing
+and it will tell you so rather than hand you a link to a file that is not there.
+
+## Why the links look like that
+
+`![x](docs/shots/growth/motion.gif)` does not work. GitHub resolves a
+repo-relative image path when the surrounding markdown is viewed *in the repo
+tree* — this file, for instance — and does not resolve it in a pull request or
+issue body, where it renders as nothing at all. The two forms are
+indistinguishable in markdown source, which is how PR #12 shipped with every
+frame verified byte-for-byte and no picture visible to anyone reading it.
+
+So the emitted URLs are absolute, and pinned to a commit sha rather than to a
+branch:
+
+```
+https://raw.githubusercontent.com/<owner>/<repo>/<sha>/docs/shots/<name>/<file>
+```
+
+The sha matters for the same reason "old frames are not history" below does,
+pointing the other way: re-capturing a name replaces the file, and a
+branch-pinned URL would let that quietly change the pictures inside a pull
+request that was already reviewed and merged. Owner and repo come from the git
+remote, so a fork emits its own links rather than somebody else's.
+
+This depends on the repository staying public. `raw.githubusercontent.com` on a
+private repo needs a token, and if that changes, this whole approach does.
 
 ## Rules this directory lives under
 
