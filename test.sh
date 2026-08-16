@@ -37,6 +37,14 @@ command -v "$GODOT" >/dev/null || {
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# --- 0. the shell-side checks ------------------------------------------------
+# Cheap, needs no engine, and runs first so a broken one is not buried under a
+# minute of Godot output. The URL emitter is shell reading git metadata, so its
+# test is shell too; asserting on that text from GDScript would mean shelling
+# out from the engine to check a string.
+echo "[test] shot-link URL form"
+bash test/shot_links_test.sh
+
 # --- 1. import readiness -----------------------------------------------------
 # Every GUT image with an .import sidecar must have a matching compiled texture
 # in the cache. Cheap (a few stats) so it runs on every invocation.
