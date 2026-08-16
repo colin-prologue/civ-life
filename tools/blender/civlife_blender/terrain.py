@@ -67,3 +67,24 @@ def road_mesh(f, path_points, width=0.5, lift=0.06):
             quad.append(bm.verts.new((corner.x, corner.y, z)))
         bm.faces.new(quad)
     return bm
+
+
+def road_mesh_worn(f, path_points, seed, width=0.5, lift=0.06, keep=1.0):
+    """Road ribbon with hash-chosen missing segments - worn to ghost trace."""
+    import bmesh as _bmesh
+    from .core import chan
+    from mathutils import Vector as _V
+    bm = _bmesh.new()
+    for i in range(len(path_points) - 1):
+        if chan(seed, "roadkeep", i).random() > keep:
+            continue
+        a = _V((path_points[i][0], path_points[i][1], 0.0))
+        b = _V((path_points[i + 1][0], path_points[i + 1][1], 0.0))
+        d = (b - a).normalized()
+        n = _V((-d.y, d.x, 0.0)) * (width / 2)
+        quad = []
+        for corner in (a - n, a + n, b + n, b - n):
+            z = f(corner.x, corner.y) + lift
+            quad.append(bm.verts.new((corner.x, corner.y, z)))
+        bm.faces.new(quad)
+    return bm

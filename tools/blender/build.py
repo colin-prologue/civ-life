@@ -149,6 +149,62 @@ def sheet_diorama(seed, culture=None, ruined=False, tag=""):
     render(os.path.join(OUT, name), res=(1600, 1000), samples=48)
 
 
+def sheet_sequence(seed):
+    """One valley, seven dates, one camera - then a shareable montage."""
+    from civlife_blender.sequence import SEQUENCE, build_date, valley_plan
+    plan = valley_plan(seed)
+    tiles = []
+    for year, label, cfg in SEQUENCE:
+        fresh_scene()
+        build_date(seed, plan, cfg)
+        add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+        add_camera((0.0, 0.0, 0.3), 80.0, fov_deg=22, pitch_deg=36,
+                   yaw_deg=-140)
+        path = os.path.join(OUT, "sequence_year_%04d.png" % year)
+        render(path, res=(1600, 1000), samples=48)
+        tiles.append((year, label, path))
+    montage_sequence(tiles, os.path.join(OUT, "sequence_montage.png"))
+
+
+def montage_sequence(tiles, out_path):
+    from PIL import Image, ImageDraw, ImageFont
+    tw, th = 800, 500
+    label_h = 46
+    cols, rows = 4, 2
+    W, H = cols * tw, rows * (th + label_h)
+    sheet = Image.new("RGB", (W, H), (14, 16, 24))
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 22)
+        small = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 17)
+    except OSError:
+        font = small = ImageFont.load_default()
+    draw = ImageDraw.Draw(sheet)
+    for idx, (year, label, path) in enumerate(tiles):
+        c, r = idx % cols, idx // cols
+        x0, y0 = c * tw, r * (th + label_h)
+        img = Image.open(path).resize((tw, th), Image.LANCZOS)
+        sheet.paste(img, (x0, y0))
+        text = "YEAR %d - %s" % (year, label.upper())
+        draw.text((x0 + 14, y0 + th + 11), text, fill=(201, 164, 74),
+                  font=font)
+    # title card in the last cell
+    x0, y0 = 3 * tw, 1 * (th + label_h)
+    draw.rectangle([x0, y0, x0 + tw, y0 + th + label_h], fill=(14, 16, 24))
+    draw.text((x0 + 44, y0 + 130), "CIV-LIFE", fill=(230, 223, 204),
+              font=font)
+    lines = ["one valley, seven dates", "same seed, same mountains",
+             "", "every difference between", "these frames is a rule,",
+             "not an asset",
+             "", "tools/blender - headless bpy lab"]
+    for i, ln in enumerate(lines):
+        draw.text((x0 + 44, y0 + 180 + i * 30), ln, fill=(160, 168, 146),
+                  font=small)
+    sheet.save(out_path)
+    print("montage:", out_path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--experiment", default="all")
@@ -167,6 +223,8 @@ def main():
         sheet_monuments(args.seed)
     if args.experiment in ("time", "all"):
         sheet_time(args.seed)
+    if args.experiment == "sequence":
+        sheet_sequence(args.seed)
     if args.experiment in ("diorama", "all"):
         sheet_diorama(args.seed, culture, ruined=args.ruined,
                       tag=('_%s_ruined' % args.culture) if args.ruined else '')
