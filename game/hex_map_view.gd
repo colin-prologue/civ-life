@@ -63,6 +63,11 @@ const _DORMANT := Color(0.82, 0.84, 0.87)
 ## see for another.
 const _DORMANCY_MAX := 0.70
 
+## Left edge of the season indicator and the legend below it, measured in from
+## the right of the viewport. Shared so the two line up, and wide enough that
+## the longest season caption is not clipped by the edge of the window.
+const _PANEL_INSET := 176.0
+
 const _EDGE_COLOR := Color(0.0, 0.0, 0.0, 0.18)
 const _BACKGROUND := Color(0.07, 0.08, 0.10)
 const _MARGIN := 12.0
@@ -217,15 +222,16 @@ func _draw_season() -> void:
 	if font == null:
 		return
 	var current := _world.season()
-	var pos := Vector2(get_viewport_rect().size.x - 130.0, 16.0)
-	var bar := Vector2(26, 8)
+	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var pos := Vector2(left, 16.0)
+	var bar := Vector2(38, 10)
 	for season in Seasons.SEASON_ORDER:
 		var color: Color = SEASON_COLORS[season]
-		draw_rect(Rect2(pos, bar), color if season == current else color * 0.35)
+		draw_rect(Rect2(pos, bar), color if season == current else color * 0.30)
 		pos.x += bar.x + 4.0
 	draw_string(
 		font,
-		Vector2(get_viewport_rect().size.x - 130.0, 16.0 + bar.y + 18.0),
+		Vector2(left, 16.0 + bar.y + 18.0),
 		"%s — year %d" % [Seasons.season_name(current), _world.year()],
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
@@ -242,7 +248,7 @@ func _draw_legend() -> void:
 		return
 	var font_size := ThemeDB.fallback_font_size
 	var swatch := Vector2(16, 16)
-	var pos := Vector2(get_viewport_rect().size.x - 130.0, 60.0)
+	var pos := Vector2(get_viewport_rect().size.x - _PANEL_INSET, 62.0)
 	for terrain in TERRAIN_NAMES:
 		draw_rect(Rect2(pos, swatch), TERRAIN_COLORS[terrain])
 		draw_rect(Rect2(pos, swatch), _EDGE_COLOR, false, 1.0)
