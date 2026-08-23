@@ -44,14 +44,24 @@ var agents: Array[Agent] = []
 var _terrain: PackedInt32Array
 var _forage: PackedFloat32Array
 
-## Heads standing on each tile, by grid index. A cache, maintained by the
+## Everything the player has placed: farms, granaries, and the roads between
+## them. Stepped in array order for the same reason agents are.
+var nodes: Array[CityNode] = []
+var routes: Array[Route] = []
+
+## How much of each tile's forage is spoken for, by grid index — the sum of
+## every agent's `forage_demand()` on that tile. A cache, maintained by the
 ## mutators below rather than recomputed, because the movement code asks for it
 ## seven times per herd per turn and a scan of every agent per query is the
 ## difference between a thousand-turn test and no thousand-turn test.
 ##
+## Agents report a number into this; nothing here asks what kind of agent it
+## came from. That is what lets a citizen notice a herd standing on its road
+## without either type knowing the other exists (`AgDR-002`).
+##
 ## Read for *decisions*, never for reporting: repeated add-and-subtract on
 ## floats drifts, so anything quoting a total sums the agents themselves.
-var _herd_population: PackedFloat32Array
+var _forage_demand: PackedFloat32Array
 
 
 func _init(p_grid: HexGrid, p_seed: int) -> void:
@@ -62,17 +72,21 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 	_terrain.resize(p_grid.tile_count())
 	_forage = PackedFloat32Array()
 	_forage.resize(p_grid.tile_count())
-	_herd_population = PackedFloat32Array()
-	_herd_population.resize(p_grid.tile_count())
+	_forage_demand = PackedFloat32Array()
+	_forage_demand.resize(p_grid.tile_count())
 
 
 ## Move the world forward one turn. Returns the turn just entered.
 ##
-## Forage first, then everything alive: an agent decides its turn against the
-## season it is actually standing in, never against last turn's.
+## Forage first, then what is built, then everything alive: an agent decides its
+## turn against the season it is actually standing in, never against last
+## turn's, and a carrier standing at a farm leaves with this turn's harvest
+## rather than last turn's.
 func advance_turn() -> int:
 	turn += 1
 	_recompute_forage()
+	for node in nodes:
+		node.produce(self)
 	for agent in agents:
 		agent.step(self)
 	return turn
@@ -83,31 +97,45 @@ func advance_turn() -> int:
 func add_agent(agent: Agent) -> void:
 	assert(grid.has_coord(agent.coord), "an agent cannot stand off the map")
 	agents.append(agent)
-	if agent is Herd:
-		_herd_population[grid.index_of(agent.coord)] += (agent as Herd).population
+	_forage_demand[grid.index_of(agent.coord)] += agent.forage_demand()
 
 
 ## Move an agent one or more tiles. The only way an agent's position changes.
 func move_agent(agent: Agent, to: Vector2i) -> void:
 	assert(grid.has_coord(to), "an agent cannot step off the map")
-	if agent is Herd:
-		var herd := agent as Herd
-		_herd_population[grid.index_of(herd.coord)] -= herd.population
-		_herd_population[grid.index_of(to)] += herd.population
+	var demand := agent.forage_demand()
+	if demand != 0.0:
+		_forage_demand[grid.index_of(agent.coord)] -= demand
+		_forage_demand[grid.index_of(to)] += demand
 	agent.coord = to
+
+
+## Put a structure into the world. Nodes do not move and are never removed —
+## `world-growth-tone` rule 1 — so this is the only mutator they need.
+func add_node(node: CityNode) -> void:
+	assert(grid.has_coord(node.coord), "a structure cannot stand off the map")
+	nodes.append(node)
+
+
+## Lay a route between two nodes already in the world.
+func add_route(route: Route) -> void:
+	for coord in route.path:
+		assert(grid.has_coord(coord), "a route cannot run off the map")
+	routes.append(route)
 
 
 ## Set a herd's population. The only way it changes, for the same reason.
 func set_herd_population(herd: Herd, value: float) -> void:
-	_herd_population[grid.index_of(herd.coord)] += value - herd.population
+	_forage_demand[grid.index_of(herd.coord)] += value - herd.population
 	herd.population = value
 
 
-## Heads standing on this tile, across every herd on it.
-func herd_population_at(coord: Vector2i) -> float:
+## How much of this tile's forage is spoken for, across everything standing on
+## it. Zero on a tile with nothing grazing it, whoever else is passing through.
+func forage_demand_at(coord: Vector2i) -> float:
 	var i := grid.index_of(coord)
-	assert(i >= 0, "cannot read population off the map")
-	return _herd_population[i]
+	assert(i >= 0, "cannot read forage demand off the map")
+	return _forage_demand[i]
 
 
 ## The same three fields by grid index rather than by coordinate.
@@ -125,17 +153,52 @@ func forage_by_index(i: int) -> float:
 	return _forage[i]
 
 
-func herd_population_by_index(i: int) -> float:
-	return _herd_population[i]
+func forage_demand_by_index(i: int) -> float:
+	return _forage_demand[i]
 
 
 ## Every herd in the world, in step order.
+##
+## A kind-check, and deliberately one: this is a *query* asked from outside, by a
+## renderer drawing markers or a test checking populations. Nothing inside the
+## turn loop calls it. The claim `AgDR-002` makes is about behaviour — that no
+## agent's turn branches on what kind of agent it is — not that a heterogeneous
+## array can be filtered without naming the thing being filtered for.
 func herds() -> Array[Herd]:
 	var out: Array[Herd] = []
 	for agent in agents:
 		if agent is Herd:
 			out.append(agent as Herd)
 	return out
+
+
+## Every citizen in the world, in step order. Same caveat as `herds()`.
+func citizens() -> Array[Citizen]:
+	var out: Array[Citizen] = []
+	for agent in agents:
+		if agent is Citizen:
+			out.append(agent as Citizen)
+	return out
+
+
+## Grain held across every structure in the world. Summed from the nodes rather
+## than tracked, for the same reason `total_herd_population()` is.
+func total_stored_grain() -> float:
+	var total := 0.0
+	for node in nodes:
+		total += node.store
+	return total
+
+
+## Grain held in granaries alone — the number that says whether the city is
+## getting anywhere, as distinct from what is sitting in a barn waiting to be
+## carried.
+func total_granary_store() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			total += node.store
+	return total
 
 
 ## Total heads alive in the world. Summed from the herds rather than from the

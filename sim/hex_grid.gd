@@ -106,3 +106,52 @@ static func distance(a: Vector2i, b: Vector2i) -> int:
 	var dq := a.x - b.x
 	var dr := a.y - b.y
 	return (absi(dq) + absi(dq + dr) + absi(dr)) >> 1
+
+
+## The straight run of hexes from `a` to `b` inclusive, one per step, each a
+## neighbour of the one before it.
+##
+## Pure geometry: it goes where the line goes, through water and off the map
+## alike. Callers that care — a road, for instance — check what it crossed. That
+## split is deliberate; the moment this function starts avoiding things it has
+## become a pathfinder with an opinion, and this project does not have one yet.
+##
+## The half-step nudge is the standard fix for the degenerate case: a line whose
+## midpoint lands exactly on a hex boundary rounds to whichever side the float
+## noise favours, and can round the same way twice and emit a duplicate tile.
+## Shifting the endpoints by a fraction of a hex breaks every such tie in the
+## same direction, so the result is contiguous and identical on every run.
+static func line(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
+	var steps := distance(a, b)
+	var out: Array[Vector2i] = []
+	out.resize(steps + 1)
+	out[0] = a
+	if steps == 0:
+		return out
+	var nudge := 1.0e-4
+	for i in range(1, steps + 1):
+		var t := float(i) / float(steps)
+		out[i] = _round_axial(
+			lerpf(float(a.x) + nudge, float(b.x) + nudge, t),
+			lerpf(float(a.y) + nudge, float(b.y) + nudge, t)
+		)
+	out[steps] = b
+	return out
+
+
+## Nearest hex to a fractional axial coordinate. Rounds in cube space and
+## repairs whichever of the three cube axes drifted furthest, which is what
+## keeps the result a real hex rather than a coordinate that fails q + r + s = 0.
+static func _round_axial(qf: float, rf: float) -> Vector2i:
+	var sf := -qf - rf
+	var q := roundi(qf)
+	var r := roundi(rf)
+	var s := roundi(sf)
+	var dq := absf(float(q) - qf)
+	var dr := absf(float(r) - rf)
+	var ds := absf(float(s) - sf)
+	if dq > dr and dq > ds:
+		q = -r - s
+	elif dr > ds:
+		r = -q - s
+	return Vector2i(q, r)
