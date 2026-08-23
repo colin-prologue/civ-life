@@ -14,17 +14,38 @@ extends SceneTree
 ## viewport texture has no such failure mode — either the rendering context
 ## came up or it did not, and `FrameCheck` can tell the difference.
 ##
-## Why this drives `game/main.tscn` rather than building its own view: the
-## thing worth reviewing is what the game actually shows. A capture path with
-## its own scene setup would be a second renderer that can drift from the first,
-## and the drift would be invisible precisely in the frames meant to prove
-## nothing had drifted.
+## Why this drives `game/main.tscn` by default rather than building its own
+## view: the thing worth reviewing is what the game actually shows. A capture
+## path with its own scene setup would be a second renderer that can drift from
+## the first, and the drift would be invisible precisely in the frames meant to
+## prove nothing had drifted.
+##
+## `--scene=` overrides that default so a standalone lab scene can be
+## photographed by the same harness — the procedural-art intent judges lab
+## output through this script, and a spike whose evidence cannot be captured
+## cannot be reviewed. The override does not weaken the argument above: the
+## default is unchanged, and the "no HexMapView" guard still fires for the game
+## scene, where a missing view means the capture path went stale. For any other
+## scene a missing view is simply a scene that is not the hex game, so the
+## world/turn plumbing is skipped rather than fatal.
+##
+## What an overridden scene gets: a real rendering context, the settle frames,
+## and the same `FrameCheck` blank-frame guard — which is the part that matters,
+## because it is what distinguishes a captured diorama from a grey rectangle.
+## What it does not get: seeding and turn advance, which are calls on the hex
+## game's own API. A scene that wants those must expose `world` and
+## `advance_turn()`.
 ##
 ## Contract with `capture.sh`, which greps for these:
 ##   CAPTURE-FRAME <path>     one per verified frame written
 ##   CAPTURE-OK <count>       the run finished and every frame passed
 ##   CAPTURE-FAIL <reason>    the run stopped; nothing further was written
 ## Anything else on stdout is commentary.
+##
+## Scene selection:
+##   --scene=res://path.tscn  what to photograph (default: the game scene)
+##   --label=name             stem for stills from a non-turn-driven scene,
+##                            which has no turn number to name them by
 
 const MAIN_SCENE := "res://game/main.tscn"
 
@@ -56,6 +77,8 @@ var _hold := DEFAULT_HOLD_FRAMES
 var _out_dir := ""
 var _width := 1280
 var _height := 720
+var _scene := MAIN_SCENE
+var _label := ""
 
 var _main: Node = null
 var _view: Node = null
@@ -75,6 +98,8 @@ func _initialize() -> void:
 	_hold = int(args.get("hold", _hold))
 	_from_turn = int(args.get("from", _from_turn))
 	_to_turn = int(args.get("to", _to_turn))
+	_scene = str(args.get("scene", _scene))
+	_label = str(args.get("label", ""))
 	if args.has("turns"):
 		_turns = _parse_turns(str(args["turns"]))
 
@@ -114,14 +139,21 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 
-	_main = load(MAIN_SCENE).instantiate()
+	if not ResourceLoader.exists(_scene):
+		_fail("no scene at %s" % _scene)
+		return
+	_main = load(_scene).instantiate()
 	root.add_child(_main)
 	_view = _main.get_node_or_null("HexMapView")
-	if _view == null:
+	# Only fatal for the game scene. There, a missing view means this harness
+	# has drifted from the thing it photographs and every later frame would be
+	# of the wrong scene; anywhere else it just means "not the hex game".
+	if _view == null and _scene == MAIN_SCENE:
 		_fail("game/main.tscn has no HexMapView node — the capture path is stale")
 		return
 
-	_apply_seed()
+	if _is_turn_driven():
+		_apply_seed()
 
 	for i in range(SETTLE_FRAMES):
 		await process_frame
@@ -130,6 +162,16 @@ func _initialize() -> void:
 		await _run_movie()
 	else:
 		await _run_stills()
+
+
+## Whether the loaded scene exposes the hex game's clock and world.
+##
+## Checked by capability rather than by comparing against MAIN_SCENE: a future
+## scene that genuinely drives the same API should get seeding and turn advance,
+## and a copy of main.tscn that has diverged should not get them just because of
+## where it lives.
+func _is_turn_driven() -> bool:
+	return _view != null and _main.has_method("advance_turn") and "world" in _main
 
 
 ## Point the running scene at the requested seed.
@@ -147,6 +189,9 @@ func _apply_seed() -> void:
 
 
 func _run_stills() -> void:
+	if not _is_turn_driven():
+		await _run_static_still()
+		return
 	for target in _turns:
 		while _main.world.turn < target:
 			_main.advance_turn()
@@ -156,6 +201,23 @@ func _run_stills() -> void:
 		var wrote := await _capture_to(path)
 		if not wrote:
 			return
+	_ok()
+
+
+## One verified frame from a scene that has no clock to advance.
+##
+## Named from `--label=` or the scene's own filename, because the turn-numbered
+## convention the hex game uses has nothing to put in the number. Everything
+## else — settle frames, the viewport read, the blank-frame guard — is the same
+## path the game scene takes, which is the point: the evidence a spike attaches
+## is verified the same way the game's is.
+func _run_static_still() -> void:
+	var stem := _label
+	if stem == "":
+		stem = _scene.get_file().get_basename()
+	var wrote := await _capture_to("%s/%s.png" % [_out_dir, stem])
+	if not wrote:
+		return
 	_ok()
 
 
@@ -169,6 +231,14 @@ func _run_stills() -> void:
 ## too. `capture.sh` adds an independent check on the recorded frames' file
 ## sizes, because a uniform PNG compresses to almost nothing.
 func _run_movie() -> void:
+	if not _is_turn_driven():
+		# Refused rather than approximated. Movie mode means "advance the clock
+		# and record", and a scene with no clock would silently produce N copies
+		# of one frame — a GIF that looks like a successful capture of a world
+		# that never moved, which is the single most misleading thing this
+		# harness could hand a reviewer.
+		_fail("movie mode needs a scene with advance_turn(); %s has none" % _scene)
+		return
 	while _main.world.turn < _from_turn:
 		_main.advance_turn()
 	for i in range(2):
