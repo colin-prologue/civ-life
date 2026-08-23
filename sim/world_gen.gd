@@ -89,6 +89,12 @@ static func generate(world_seed: int, width := DEFAULT_WIDTH, height := DEFAULT_
 	for index in range(grid.tile_count()):
 		map.set_terrain(grid.coord_at(index), _classify(raw_elevation[index], raw_moisture[index]))
 
+	# Herds go on last, once every tile knows what it grows: placement reads
+	# forage, and forage is only meaningful after the whole map is classified.
+	# They draw from their own generator (see `Herd.populate`), so adding them
+	# did not move a single tile of terrain on any existing seed.
+	Herd.populate(map)
+
 	return map
 
 
