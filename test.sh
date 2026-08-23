@@ -228,27 +228,34 @@ fp1="$(mktemp)"; fp2="$(mktemp)"
 trap 'rm -f "$out" "$fp1" "$fp2"' EXIT
 
 run_fingerprints() {
-  "$GODOT" --headless -s tools/world_fingerprint.gd 2>/dev/null \
+  "$GODOT" --headless -s "$1" 2>/dev/null \
     | grep -E '^-?[0-9]+ [0-9]+$'
 }
 
-run_fingerprints > "$fp1"
-run_fingerprints > "$fp2"
+# Each generator is checked on its own rather than through one concatenated
+# stream. A combined stream is non-empty as soon as *either* half produces
+# lines, so a generator that silently stopped emitting would leave the
+# emptiness guard green and take its own coverage down with it unnoticed.
+for gen in tools/world_fingerprint.gd tools/diorama_fingerprint.gd; do
+  run_fingerprints "$gen" > "$fp1"
+  run_fingerprints "$gen" > "$fp2"
 
-if [ ! -s "$fp1" ]; then
-  echo "ERROR: the fingerprint pass produced no output. A silent no-op here" >&2
-  echo "       would make the cross-process check vacuously green." >&2
-  exit 1
-fi
+  if [ ! -s "$fp1" ]; then
+    echo "ERROR: $gen produced no output. A silent no-op here would make the" >&2
+    echo "       cross-process check vacuously green." >&2
+    exit 1
+  fi
 
-if ! diff -u "$fp1" "$fp2" >/dev/null; then
-  echo "ERROR: the same seeds produced different maps in two separate processes." >&2
-  echo "       Generation is reading something outside the seed." >&2
-  diff -u "$fp1" "$fp2" >&2 || true
-  exit 1
-fi
+  if ! diff -u "$fp1" "$fp2" >/dev/null; then
+    echo "ERROR: the same seeds produced different output from $gen in two" >&2
+    echo "       separate processes. Generation is reading something outside" >&2
+    echo "       the seed." >&2
+    diff -u "$fp1" "$fp2" >&2 || true
+    exit 1
+  fi
 
-echo "[test] $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
+  echo "[test] $gen: $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
+done
 
 # --- 5. the main scene actually launches ------------------------------------
 # The suite instantiates the scene itself, which proves the nodes wire up — but
