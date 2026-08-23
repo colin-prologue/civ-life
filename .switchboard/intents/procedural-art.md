@@ -398,6 +398,16 @@ Sheets are reproducible from their seeds via `tools/blender/build.py`.
 - **Godot parity.** All lab evidence is raytraced Cycles with soft sun and
   denoising. Real-time shadow maps, AO, and tonemapping may not carry the
   same model-like light — this is exactly ticket #17 (S0), unchanged.
+  **Feasibility resolved (2026-08-23): the real engine runs in headless
+  cloud containers.** Recipe: the official Godot 4.3 Linux binary +
+  `mesa-vulkan-drivers` (lavapipe, Vulkan on CPU) + `xvfb-run` for the
+  display context capture.sh requires. Verified in a GPU-less container:
+  `./test.sh` passes in full (54 tests, cross-process determinism, main
+  scene 120 frames clean), and `xvfb-run ./capture.sh` renders verified
+  frames of the actual game through its own blank-frame guard. The
+  parity *question* stays open until S0 exists, but the tooling barrier
+  is gone: S0 can be developed, rendered, and reviewed entirely from a
+  remote session.
 - **Motion — now tested, verdict pending (2026-08-23).** The lab's
   turn-lapse experiment (`build.py --experiment lapse`) renders one
   120-turn valley timeline twice from the identical discrete schedule:
