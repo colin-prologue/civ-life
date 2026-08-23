@@ -335,3 +335,71 @@ that faint line is the old imperial road; those arches survive because
 hero structures outlast domestic fabric.
 
 The renderer's job is to make history visible.
+
+## Addendum — lab findings (2026-08-16)
+
+The headless Blender lab (`tools/blender`) ran the experiment suite ahead
+of the Godot spikes: the diorama and culture sheets, the seven-date
+sequence, and a 40×30 hex-sourced world with conformance, salience,
+cartography, seasons, and reduction passes. What follows are the results,
+recorded as rules so S0/S1 inherit them instead of rediscovering them.
+Sheets are reproducible from their seeds via `tools/blender/build.py`.
+
+### Confirmed, now rules
+
+1. **The hex data shape is safe — but soften class edges, never terrain.**
+   A world built exactly from per-hex state (fields at flat-top axial
+   centres, hex-line roads, hex-centre placement) is visually
+   indistinguishable from free placement, with one exception: terrain-class
+   region edges. Perfect hex boundaries on class tint read as board game
+   instantly; hash-displaced corner jitter makes the same regions read as
+   organic ground cover. Smooth (IDW-style) terrain interpolation is the
+   default; honest stepped hex plateaus are an acceptable terraced
+   fallback, not a failure. Roads: Chaikin-smoothed hex-centre paths win;
+   raw 60° turns are tolerable but visibly mechanical.
+2. **Exaggeration and contrast are band-scaled parameters, not constants.**
+   Class-tint contrast that reads correctly up close is camouflage blotch
+   at world distance (mute it as the camera rises — "omit, don't shrink"
+   applies to color contrast). Mountains need far more vertical
+   exaggeration to carry silhouette at world distance than looks right up
+   close. Every scale-sensitive parameter should be authored per band.
+3. **Salience numbers (first S1 data).** Twelve planted events (building,
+   fire, herd) ray-cast against the camera: 12/12 visible at pitch 38° and
+   48°, 10/12 at 28°. At this relief the dominant occluder is **canopy,
+   not ridges** — forest density near watchable things is the real S1
+   design variable. Caveat now part of the method: ray-cast visibility is
+   not noticeability; small low-contrast events pass the ray test while
+   being visually negligible. Noticing needs size, contrast, or motion,
+   and S1-in-Godot must measure that, not just occlusion.
+4. **Printed information survives 3D.** Contour ribbons following the
+   relief and a territory band read as drawn on the model, not as debug
+   overlay. The sculpture+cartography hybrid — the direction's identity —
+   holds.
+5. **Seasons are a palette re-grade with a held identity.** Four re-grades
+   of the same world work when plaster, brass, roads, and water hue stay
+   invariant; the world changes together and remains itself. Winter (snow
+   world, dark water) is the strongest and costs nothing extra.
+6. **The reduction test passes.** Six flat colors and value-only greyscale
+   both keep the world legible; the road is the brightest value line on
+   the map. Identity genuinely lives in silhouette and value.
+7. **Craft rules from the earlier sheets, kept for Godot:** voussoirs lie
+   tangent to the arc, not radial; render with a poster transform, not a
+   filmic one (Blender: Standard, not AgX — Godot: disable filmic/ACES
+   tonemap for this look); faceted-mass vegetation beats cardstock at
+   these scales; buildings emit parts tagged (role, height) so ruins are a
+   filter, not an asset set; a historical sequence needs a fixed place
+   plan with monotonic per-index tree acceptance so forests thin and
+   regrow in place; peak prosperity must read vertically (silhouette
+   punctuation), not as more building count — count is invisible at world
+   distance, and so is sub-silhouette damage.
+
+### Still open (the lab cannot close these)
+
+- **Godot parity.** All lab evidence is raytraced Cycles with soft sun and
+  denoising. Real-time shadow maps, AO, and tonemapping may not carry the
+  same model-like light — this is exactly ticket #17 (S0), unchanged.
+- **Motion.** Everything is stills; whether discrete per-turn change reads
+  as growth or popping (the turn-lapse question) is untested.
+- **Real simulation distributions.** Every lab scene is placed by curated
+  rules; whether live sim ecology composes as well stays open until real
+  state feeds the recipes.
