@@ -43,6 +43,10 @@ func _grab(out: String) -> void:
 		print("SPIKE-FAIL frame is blank (%d distinct colours)" % histogram.size())
 		quit(1)
 		return
-	img.save_png(out)
+	var err := img.save_png(out)
+	if err != OK:
+		print("SPIKE-FAIL could not write %s (error %d)" % [out, err])
+		quit(1)
+		return
 	print("SPIKE-SHOT ", out)
 	quit(0)
