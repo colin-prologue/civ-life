@@ -45,6 +45,30 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 echo "[test] shot-link URL form"
 bash test/shot_links_test.sh
 
+# --- 0b. decision records carry distinct numbers ------------------------------
+# Agents work in parallel workspaces cloned from the same main, so two tickets
+# in flight both read "the highest AgDR is 008" and both write an AgDR-009.
+# Neither branch conflicts on merge — the filenames differ after the number —
+# so git merges them happily and the collision only shows up when a human reads
+# the directory. It already happened once: #13 and #15 both landed an AgDR-009.
+#
+# Cheap to check and it fails the command rather than a review, so it runs here
+# before the expensive part. This catches the duplicate; it cannot stop two
+# agents from picking the same number in the first place, which needs a number
+# reserved at dispatch rather than at write time.
+dupes="$(ls .decisions/AgDR-*.md 2>/dev/null \
+  | sed -E 's|.*/AgDR-([0-9]+).*|\1|' \
+  | sort | uniq -d)"
+if [ -n "$dupes" ]; then
+  echo "ERROR: two or more decision records share a number:" >&2
+  for n in $dupes; do
+    echo "       AgDR-$n:" >&2
+    ls .decisions/AgDR-"$n"-*.md | sed 's|^|         |' >&2
+  done
+  echo "       Renumber the later one and update anything that references it." >&2
+  exit 1
+fi
+
 # --- 1. import readiness -----------------------------------------------------
 # Every GUT image with an .import sidecar must have a matching compiled texture
 # in the cache. Cheap (a few stats) so it runs on every invocation.

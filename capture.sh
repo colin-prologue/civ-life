@@ -61,6 +61,8 @@ HEIGHT=720
 SEED=20260815
 TURNS="0,4,12"
 NAME=""
+SCENE=""
+LABEL=""
 OUT_ROOT="docs/shots"
 MODE="stills"
 FROM_TURN=0
@@ -84,6 +86,14 @@ Options
   --fps N             capture and playback rate for --movie (default 10)
   --gif-width N       GIF width in pixels (default 480)
   --name NAME         subdirectory under docs/shots/ (default: derived)
+  --scene PATH        res:// scene to photograph (default: the game scene).
+                      A scene without the hex game's world/advance_turn() is
+                      captured as a single verified still; --turns and --movie
+                      do not apply to it and --movie is refused rather than
+                      recording one frame N times.
+  --label NAME        filename stem for a --scene still (default: the scene's
+                      own basename). Ignored for the game scene, whose stills
+                      are named by seed and turn.
   --resolution WxH    render size (default 1280x720)
   --links DIR         print the paste-ready markdown for an existing shots
                       directory and exit — no Godot, no capture. Run this
@@ -112,6 +122,8 @@ while [ $# -gt 0 ]; do
     --fps) FPS="$2"; shift 2 ;;
     --gif-width) GIF_WIDTH="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
+    --scene) SCENE="$2"; shift 2 ;;
+    --label) LABEL="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
     --links) LINKS_DIRS+=("$2"); shift 2 ;;
@@ -227,16 +239,24 @@ capture_stills() {
   argv+=(--resolution "${WIDTH}x${HEIGHT}" -s tools/capture.gd --
     "--mode=stills" "--seed=$seed" "--turns=$turns"
     "--out=$out" "--width=$WIDTH" "--height=$HEIGHT")
+  # Appended only when set, so the default invocation is byte-identical to what
+  # it was before this option existed and every committed frame stays
+  # reproducible by the command that made it.
+  [ -n "$SCENE" ] && argv+=("--scene=$SCENE")
+  [ -n "$LABEL" ] && argv+=("--label=$LABEL")
   local rc=0
   run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"
 }
 
 # --- self test ---------------------------------------------------------------
-# The two claims this harness makes that cannot be taken on trust: that the
-# blank-frame guard actually rejects a blank frame, and that the same seed and
-# turn produce the same bytes twice. A guard nobody has watched fail is
-# indistinguishable from a guard that is broken.
+# The three claims this harness makes that cannot be taken on trust: that the
+# blank-frame guard actually rejects a blank frame, that the same seed and
+# turn produce the same bytes twice, and that --scene can photograph something
+# that is not the hex game. A guard nobody has watched fail is
+# indistinguishable from a guard that is broken, and a scene option nobody has
+# pointed at a foreign scene is indistinguishable from one that only ever
+# worked on main.tscn.
 SELF_TEST_TMP=""
 
 self_test() {
@@ -252,7 +272,7 @@ self_test() {
   # non-zero exit, which reads from outside as the capture being broken.
   trap 'rm -rf "$SELF_TEST_TMP"' EXIT
 
-  echo "[self-test] 1/2 — blank-frame guard, running the capture under --headless on purpose"
+  echo "[self-test] 1/3 — blank-frame guard, running the capture under --headless on purpose"
   # Created up front, not left to the capture: if the run dies before it makes
   # its own output directory, `find` on a missing path fails, and under
   # `pipefail` that aborts the self-test with no verdict printed at all — the
@@ -277,7 +297,7 @@ self_test() {
     grep "CAPTURE-FAIL" "$tmp/headless.log" | sed 's/^/    /'
   fi
 
-  echo "[self-test] 2/2 — determinism, capturing seed $SEED turn 0 twice"
+  echo "[self-test] 2/3 — determinism, capturing seed $SEED turn 0 twice"
   local rc_a=0 rc_b=0
   capture_stills "$tmp/a" "$SEED" "0" "$tmp/a.log" || rc_a=$?
   capture_stills "$tmp/b" "$SEED" "0" "$tmp/b.log" || rc_b=$?
@@ -302,8 +322,38 @@ self_test() {
     fi
   fi
 
+  # A 3D fixture with no HexMapView, no world, and no advance_turn(). It stands
+  # in for the diorama lab the procedural-art intent says is judged through this
+  # harness. The assertion is not "a file appeared" — a blank frame is a file —
+  # but that the frame cleared the same blank-frame guard leg 1 just watched
+  # fire, which is the only thing that makes a captured spike reviewable.
+  echo "[self-test] 3/3 — --scene captures a scene that is not the hex game"
+  local rc_s=0
+  mkdir -p "$tmp/scene"
+  local -a scene_argv
+  scene_argv=("$GODOT" --resolution "${WIDTH}x${HEIGHT}" -s tools/capture.gd --
+    "--mode=stills" "--seed=$SEED" "--turns=0" "--out=$tmp/scene"
+    "--width=$WIDTH" "--height=$HEIGHT"
+    "--scene=res://test/fixtures/static_scene.tscn" "--label=static")
+  run_bounded "$tmp/scene.log" "${scene_argv[@]}" || rc_s=$?
+  if [ "$rc_s" -ne 0 ]; then
+    echo "  FAIL: capturing the static fixture exited $rc_s."
+    explain_failure "$rc_s" "$tmp/scene.log" | sed 's/^/    /'
+    failures=$((failures + 1))
+  elif [ ! -f "$tmp/scene/static.png" ]; then
+    echo "  FAIL: no static.png was written; --label was not honoured."
+    failures=$((failures + 1))
+  elif ! grep -q "^CAPTURE-OK 1" "$tmp/scene.log"; then
+    echo "  FAIL: the run did not report exactly one verified frame:"
+    tail -5 "$tmp/scene.log" | sed 's/^/    /'
+    failures=$((failures + 1))
+  else
+    echo "  PASS: one verified frame from a scene with no HexMapView:"
+    grep -E "^\[capture\] static\.png" "$tmp/scene.log" | sed 's/^/    /'
+  fi
+
   [ "$failures" -eq 0 ] || die "$failures self-test check(s) failed."
-  echo "[self-test] both checks passed."
+  echo "[self-test] all checks passed."
 }
 
 if [ "$SELF_TEST" = "1" ]; then
@@ -335,7 +385,26 @@ if [ "$MODE" = "stills" ]; then
 
   # Every requested turn must have produced a file. A run that quietly captures
   # three of four frames and exits 0 is the same lie as one that captures none.
-  EXPECTED="$(echo "$TURNS" | tr ',' '\n' | grep -c '[0-9]' || true)"
+  #
+  # For a --scene capture the shell cannot derive the count: whether the scene
+  # is turn-driven is a property only the engine can see, and a static scene
+  # yields one still no matter how many turns were asked for. There the
+  # harness's own reported count stands in. That is a weaker expectation --
+  # self-reported rather than independent -- so it is used only where the
+  # stronger one is unavailable, and the on-disk count is still what gets
+  # compared, which is what catches a frame that was reported and never
+  # landed.
+  REPORTED="$(sed -n 's/^CAPTURE-OK \([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)"
+  if [ -n "$SCENE" ]; then
+    EXPECTED="${REPORTED:-0}"
+  else
+    EXPECTED="$(echo "$TURNS" | tr ',' '\n' | grep -c '[0-9]' || true)"
+    # Default path only: the harness's count and the request must also agree,
+    # so a harness that silently decided to write fewer is caught here rather
+    # than passing because it wrote exactly as many as it meant to.
+    [ "${REPORTED:-0}" -eq "$EXPECTED" ] \
+      || { rm -rf "$ABS_OUT"; die "asked for $EXPECTED frame(s), harness reported ${REPORTED:-none}"; }
+  fi
   GOT="$(find "$ABS_OUT" -name '*.png' | wc -l | tr -d ' ')"
   [ "$GOT" -eq "$EXPECTED" ] \
     || { rm -rf "$ABS_OUT"; die "asked for $EXPECTED frame(s), got $GOT"; }
@@ -354,7 +423,8 @@ else
     --fixed-fps "$FPS" --write-movie "$FRAMES_DIR/frame.png" \
     -s tools/capture.gd -- \
     "--mode=movie" "--seed=$SEED" "--from=$FROM_TURN" "--to=$TO_TURN" \
-    "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" || RC=$?
+    "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" \
+    ${SCENE:+"--scene=$SCENE"} || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: movie capture failed and nothing was kept." >&2
