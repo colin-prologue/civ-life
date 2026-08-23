@@ -71,6 +71,41 @@ const _HERD_MAX_SCALE := 0.66
 ## backstop rather than a thing the eye meets.
 const _HERD_FULL_AT := 400.0
 
+## The city: roads, structures, and the people on them.
+##
+## Drawn in warm, built colours against a landscape that is entirely greens,
+## blues and greys, so the eye separates "somebody put that there" from "that
+## grew there" before it reads a single shape. Structures are squares because
+## every natural thing on this map is round or hexagonal.
+##
+## The road is dark rather than the sandy brown a track wants to be, and the
+## granary is a deep red rather than an ochre, for a measured reason: the hill
+## terrain is already brown and the mountains are already pale, so every warm
+## mid-tone is taken. `test_hex_map_view.gd` holds the city palette to the same
+## separation the terrain palette has to meet, and those two were the colours
+## that failed it.
+const _ROAD_COLOR := Color(0.38, 0.24, 0.28, 0.92)
+const _FARM_FILL := Color(0.93, 0.79, 0.32)
+const _GRANARY_FILL := Color(0.62, 0.20, 0.16)
+const _NODE_EDGE := Color(0.20, 0.12, 0.04, 0.95)
+
+## Citizens: a small pale figure, with the grain they are carrying shown as a
+## warm core. Loaded and empty look different on purpose — the road then reads as
+## traffic with a direction rather than as dots sliding back and forth.
+const _CITIZEN_FILL := Color(0.96, 0.94, 0.88)
+const _CITIZEN_LOADED := Color(1.00, 0.97, 0.62)
+const _CITIZEN_EDGE := Color(0.16, 0.12, 0.08, 0.95)
+
+## Structure size and citizen size, as fractions of the hex radius. The node is
+## a chunky thing standing on a tile; the citizen is a person beside it.
+const _NODE_SCALE := 0.52
+const _CITIZEN_SCALE := 0.20
+
+## Road width as a fraction of the hex radius, floored in pixels so the road does
+## not vanish when the whole map is squeezed into a small window.
+const _ROAD_WIDTH_SCALE := 0.18
+const _ROAD_MIN_WIDTH := 2.0
+
 ## Colour a tile fades toward as its forage falls — a pale, bleached version of
 ## itself rather than a darker one, because a winter map should read as drained
 ## rather than as a map at night.
@@ -227,7 +262,13 @@ func _draw() -> void:
 	for i in range(_polygons.size()):
 		draw_colored_polygon(_polygons[i], _fills[i])
 		draw_polyline(_outlines[i], _EDGE_COLOR, 1.0)
+	# Roads under everything the roads connect, herds under the people who have
+	# to walk around them, and the structures on top: the draw order is the
+	# reading order.
+	_draw_routes()
 	_draw_herds()
+	_draw_nodes()
+	_draw_citizens()
 	_draw_season()
 	_draw_legend()
 
@@ -246,6 +287,42 @@ func _draw_herds() -> void:
 		var radius := _radius * herd_marker_scale(herd.population)
 		draw_circle(centre, radius, _HERD_FILL)
 		draw_arc(centre, radius, 0.0, TAU, 18, _HERD_EDGE, maxf(1.0, radius * 0.14))
+
+
+## The roads, as a line through the centre of every tile they run along.
+##
+## Drawn tile-centre to tile-centre rather than as a band across each hex,
+## because the thing that has to be legible is where the road *goes* — the tiles
+## it occupies are already legible from the things standing on them.
+func _draw_routes() -> void:
+	var width := maxf(_ROAD_MIN_WIDTH, _radius * _ROAD_WIDTH_SCALE)
+	for route in _world.routes:
+		var points := PackedVector2Array()
+		for coord in route.path:
+			points.append(center_of(coord))
+		draw_polyline(points, _ROAD_COLOR, width)
+
+
+## The structures, as squares on the tiles they were placed on.
+func _draw_nodes() -> void:
+	var half := _radius * _NODE_SCALE * 0.5
+	for node in _world.nodes:
+		var centre := center_of(node.coord)
+		var box := Rect2(centre - Vector2(half, half), Vector2(half, half) * 2.0)
+		draw_rect(box, _FARM_FILL if node.kind == CityNode.Kind.FARM else _GRANARY_FILL)
+		draw_rect(box, _NODE_EDGE, false, maxf(1.0, half * 0.22))
+
+
+## The people on the road. Small — a person is not a herd — and filled according
+## to whether they are carrying anything, so a glance at the road says which way
+## the grain is going.
+func _draw_citizens() -> void:
+	var radius := maxf(2.0, _radius * _CITIZEN_SCALE)
+	for citizen in _world.citizens():
+		var centre := center_of(citizen.coord)
+		var fill := _CITIZEN_LOADED if citizen.carrying > 0.0 else _CITIZEN_FILL
+		draw_circle(centre, radius, fill)
+		draw_arc(centre, radius, 0.0, TAU, 14, _CITIZEN_EDGE, maxf(1.0, radius * 0.30))
 
 
 ## Marker radius as a fraction of the hex radius, for a herd of this size.
@@ -308,10 +385,25 @@ func _draw_legend() -> void:
 	# The herds get a line of their own, with the dot drawn at the size it is
 	# used on the map so "bigger means more" is stated rather than inferred.
 	draw_circle(pos + swatch * 0.5, swatch.x * 0.32, _HERD_FILL)
+	_legend_caption(font, font_size, pos, "herds (size=count)")
+	pos.y += swatch.y + 6.0
+
+	# And the city, in the same order it is drawn on the map.
+	draw_rect(Rect2(pos + swatch * 0.24, swatch * 0.52), _FARM_FILL)
+	_legend_caption(font, font_size, pos, "farm")
+	pos.y += swatch.y + 6.0
+	draw_rect(Rect2(pos + swatch * 0.24, swatch * 0.52), _GRANARY_FILL)
+	_legend_caption(font, font_size, pos, "granary")
+	pos.y += swatch.y + 6.0
+	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_LOADED)
+	_legend_caption(font, font_size, pos, "citizens (lit=laden)")
+
+
+func _legend_caption(font: Font, font_size: int, pos: Vector2, text: String) -> void:
 	draw_string(
 		font,
-		pos + Vector2(swatch.x + 8.0, swatch.y - 3.0),
-		"herds (size=count)",
+		pos + Vector2(24.0, 13.0),
+		text,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		font_size,

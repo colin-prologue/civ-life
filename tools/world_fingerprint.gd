@@ -41,11 +41,36 @@ func _init() -> void:
 ## Forage is folded in alongside terrain because the cross-process check is only
 ## as wide as what it hashes: a terrain-only digest would keep agreeing across
 ## processes while every seasonal value in the world diverged.
+##
+## The same argument applies again to everything that carries state forward.
+## Terrain and forage are pure functions of `(seed, turn)` and would keep
+## agreeing across processes while every herd, citizen and granary in the world
+## diverged, so the live state is folded in too — which is the only part of this
+## digest that can actually catch a float or an iteration order behaving
+## differently in a second process.
 static func _fingerprint(map: WorldMap) -> int:
 	var acc := _fold(_fold(17, map.terrain_data()), _quantised_forage(map))
 	for i in range(TURNS):
 		map.advance_turn()
-	return _fold(_fold(acc, [map.turn, map.season()]), _quantised_forage(map))
+	acc = _fold(_fold(acc, [map.turn, map.season()]), _quantised_forage(map))
+	return _fold(acc, _quantised_state(map))
+
+
+## Everything that survives a turn, as integers, in step order: where each agent
+## is standing, what it is carrying or how many of it there are, and what every
+## structure holds.
+static func _quantised_state(map: WorldMap) -> Array:
+	var out := []
+	for agent in map.agents:
+		out.append(agent.coord.x)
+		out.append(agent.coord.y)
+		out.append(roundi(agent.forage_demand() * 1000.0))
+	for citizen in map.citizens():
+		out.append(roundi(citizen.carrying * 1000.0))
+	for node in map.nodes:
+		out.append(node.kind)
+		out.append(roundi(node.store * 1000.0))
+	return out
 
 
 static func _fold(acc: int, values) -> int:

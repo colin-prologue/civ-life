@@ -316,7 +316,7 @@ func _mean_land_forage(world: WorldMap) -> float:
 
 func _first_tile_of(world: WorldMap, terrain: int) -> Vector2i:
 	for coord in world.grid.all_coords():
-		if world.terrain_at(coord) == terrain and world.herd_population_at(coord) == 0.0:
+		if world.terrain_at(coord) == terrain and world.forage_demand_at(coord) == 0.0:
 			return coord
 	fail_test("the map has no empty tile of terrain %d to check" % terrain)
 	return Vector2i.ZERO
@@ -325,6 +325,6 @@ func _first_tile_of(world: WorldMap, terrain: int) -> Vector2i:
 func _far_tile_of(world: WorldMap, terrain: int) -> Vector2i:
 	var found := Vector2i.ZERO
 	for coord in world.grid.all_coords():
-		if world.terrain_at(coord) == terrain and world.herd_population_at(coord) == 0.0:
+		if world.terrain_at(coord) == terrain and world.forage_demand_at(coord) == 0.0:
 			found = coord
 	return found

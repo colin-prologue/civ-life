@@ -50,6 +50,53 @@ func test_no_two_terrains_share_a_colour() -> void:
 			)
 
 
+func test_the_city_is_drawn_in_colours_no_terrain_uses() -> void:
+	# The city has to read as built rather than grown, and the cheapest way that
+	# fails is a structure landing on a tile close enough in colour to disappear
+	# into it. Not evidence the city is legible — that is AC12 and needs a person
+	# — but it catches the palette collapsing during a tweak.
+	var city := {
+		"farm": HexMapView._FARM_FILL,
+		"granary": HexMapView._GRANARY_FILL,
+		"road": HexMapView._ROAD_COLOR,
+		"citizen": HexMapView._CITIZEN_LOADED,
+	}
+	for name in city:
+		for terrain in WorldGen.Terrain.values():
+			var a: Color = city[name]
+			var b: Color = HexMapView.TERRAIN_COLORS[terrain]
+			var distance := Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length()
+			assert_gt(
+				distance,
+				MIN_COLOR_DISTANCE,
+				"%s is distinguishable from %s (distance %.3f)" % [
+					name, HexMapView.TERRAIN_NAMES[terrain], distance,
+				]
+			)
+
+
+func test_the_view_draws_the_city_the_world_actually_has() -> void:
+	# The renderer holds no state of its own, so what can be checked without
+	# looking at the picture is that the world it is pointed at has something to
+	# draw and that drawing it does not fall over.
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	var view: HexMapView = main.get_node("HexMapView")
+	var world: WorldMap = main.world
+
+	assert_gt(world.nodes.size(), 0, "there are structures on the map to draw")
+	assert_gt(world.routes.size(), 0, "and a road")
+	assert_gt(world.citizens().size(), 0, "and people on it")
+	assert_gt(view.last_draw_usec, 0, "and the view drew the frame containing them")
+	for citizen in world.citizens():
+		assert_ne(
+			view.center_of(citizen.coord),
+			Vector2.ZERO,
+			"citizen %d has somewhere on screen to be" % citizen.id
+		)
+
+
 func test_every_season_has_an_accent_colour() -> void:
 	for season in Seasons.SEASON_ORDER:
 		assert_true(

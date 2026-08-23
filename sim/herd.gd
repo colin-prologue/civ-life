@@ -96,6 +96,13 @@ func head_count() -> int:
 	return roundi(population)
 
 
+## Every head is a mouth, so a herd's claim on the tile it is standing on is
+## simply its population. This is the one place the base type's census question
+## gets a non-zero answer at present.
+func forage_demand() -> float:
+	return population
+
+
 ## One turn: eat where you are, then decide where to be next. In that order, so
 ## a herd's numbers are the consequence of the tile it actually spent the turn
 ## on rather than of the one it is about to walk to.
@@ -171,7 +178,7 @@ func _best_ground(world: WorldMap) -> Vector2i:
 			if i < 0 or world.terrain_by_index(i) == WorldGen.Terrain.WATER:
 				continue
 			var supported := species.heads_supported_by(world.forage_by_index(i))
-			var mouths := world.herd_population_by_index(i) + population
+			var mouths := world.forage_demand_by_index(i) + population
 			var steps := (absi(dq) + absi(dq + dr) + absi(dr)) >> 1
 			var score := supported / mouths / (1.0 + DISTANCE_COST * float(steps))
 			if score > best_score:
@@ -205,7 +212,7 @@ func _step_toward(world: WorldMap, target: Vector2i) -> Vector2i:
 ## the same forage preferable to a crowded one.
 func ration_at(world: WorldMap, candidate: Vector2i) -> float:
 	var supported := species.heads_supported_by(world.forage_at(candidate))
-	var mouths := world.herd_population_at(candidate)
+	var mouths := world.forage_demand_at(candidate)
 	if candidate != coord:
 		mouths += population
 	# The herd's own population is always in `mouths` and is never below the
