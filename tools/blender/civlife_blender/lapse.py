@@ -131,9 +131,9 @@ def _ramp(t, appear, vanish, ease):
         return 0.0
     s = 1.0
     if t < appear + RAMP_IN:
-        s = min(s, (t - appear + 1) / RAMP_IN)
+        s = min(s, max(0.05, (t - appear) / RAMP_IN))
     if t >= vanish:
-        s = min(s, max(0.0, 1.0 - (t - vanish + 1) / RAMP_OUT))
+        s = min(s, max(0.0, 1.0 - (t - vanish) / RAMP_OUT))
     return s
 
 
@@ -180,7 +180,9 @@ def build_frame(seed, plan, sched, tree_iv, t, ease):
     kinds = ["residential", "residential", "residential", "civic", "stepped"]
     sites = plan["sites"]
 
-    # deco fabric
+    # deco fabric - constructed things assemble, they do not inflate:
+    # during arrival the ruin filter runs in reverse (visual condition
+    # ramps 0->1, parts land bottom-up in height order).
     for i, b in enumerate(sched["deco"]):
         s = _ramp(t, b["appear"], TURNS + 10, ease)
         if s <= 0.0:
@@ -191,17 +193,20 @@ def build_frame(seed, plan, sched, tree_iv, t, ease):
         parts = A.GENERATORS[kinds[i % len(kinds)]](DECO, seed * 100 + i,
                                                     scale=0.55)
         x, y, rot = sites[i]
-        if cond_q < 0.995:
-            parts, age = ruin(parts, cond_q, seed * 100 + i)
-            if not ease:
+        assembling = ease and s < 0.999
+        vis_cond = min(cond_q, s) if assembling else cond_q
+        if vis_cond < 0.995:
+            parts, age = ruin(parts, vis_cond, seed * 100 + i)
+            if assembling and cond_q >= 0.995:
+                age = 0.0          # under construction, not decaying
+            elif not ease:
                 age = round(age * 4) / 4.0
             _place_parts(parts, "d%d" % i, (x, y, f(x, y)), rot_z=rot,
-                         scale=s, age=age)
+                         age=age)
         else:
-            _place_parts(parts, "d%d" % i, (x, y, f(x, y)), rot_z=rot,
-                         scale=s)
+            _place_parts(parts, "d%d" % i, (x, y, f(x, y)), rot_z=rot)
 
-    # organic return
+    # organic-culture return: still architecture, so it assembles too
     for j, b in enumerate(sched["org"]):
         s = _ramp(t, b["appear"], TURNS + 10, ease)
         if s <= 0.0:
@@ -209,9 +214,11 @@ def build_frame(seed, plan, sched, tree_iv, t, ease):
         x, y, rot = sites[j]
         parts = A.GENERATORS[kinds[j % len(kinds)]](ORGANIC, seed * 300 + j,
                                                     scale=0.55)
+        if ease and s < 0.999:
+            parts, _ = ruin(parts, s, seed * 300 + j)
         _place_parts(parts, "o%d" % j, (x + 0.35, y + 0.25,
                                         f(x + 0.35, y + 0.25)),
-                     rot_z=rot + 0.8, scale=s)
+                     rot_z=rot + 0.8)
 
     # hero monument: built at 50, decays from 78
     s = _ramp(t, sched["hero_appear"], TURNS + 10, ease)
@@ -221,15 +228,18 @@ def build_frame(seed, plan, sched, tree_iv, t, ease):
         cond_q = max(step, round(cond / step) * step)
         hx, hy = -5.0, 3.0
         parts = A.hero_arch(DECO, seed + 7, scale=1.1)
-        if cond_q < 0.995:
-            parts, age = ruin(parts, cond_q, seed + 7)
-            if not ease:
+        assembling = ease and s < 0.999
+        vis_cond = min(cond_q, s) if assembling else cond_q
+        if vis_cond < 0.995:
+            parts, age = ruin(parts, vis_cond, seed + 7)
+            if assembling and cond_q >= 0.995:
+                age = 0.0
+            elif not ease:
                 age = round(age * 4) / 4.0
             _place_parts(parts, "hero", (hx, hy, f(hx, hy)), rot_z=0.5,
-                         scale=s, age=age)
+                         age=age)
         else:
-            _place_parts(parts, "hero", (hx, hy, f(hx, hy)), rot_z=0.5,
-                         scale=s)
+            _place_parts(parts, "hero", (hx, hy, f(hx, hy)), rot_z=0.5)
 
     # farms
     for i in range(5):

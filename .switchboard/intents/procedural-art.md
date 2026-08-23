@@ -419,7 +419,15 @@ Sheets are reproducible from their seeds via `tools/blender/build.py`.
   real under-construction state, drawn honestly) remain an open game
   design option that composes with the tween. Cost of the tween is
   one ramp per element class driven by turns-since-appear, which the
-  snapshot already implies.
+  snapshot already implies. **Refinement (owner, 2026-08-23):
+  constructed things assemble; living things grow.** Architecture must
+  not inflate uniformly - during its arrival tween a building's parts
+  land bottom-up in height order, which is the ruin filter run in
+  reverse (visual condition ramping 0 to 1 through the same
+  part-selection used for decay). Organic elements - trees, shrubs,
+  crops - scale up, because growth is their honest motion. One
+  transform, both directions of time: assembly and ruin are the same
+  function.
 - **Real simulation distributions.** Every lab scene is placed by curated
   rules; whether live sim ecology composes as well stays open until real
   state feeds the recipes.
