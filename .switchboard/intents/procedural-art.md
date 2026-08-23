@@ -398,8 +398,20 @@ Sheets are reproducible from their seeds via `tools/blender/build.py`.
 - **Godot parity.** All lab evidence is raytraced Cycles with soft sun and
   denoising. Real-time shadow maps, AO, and tonemapping may not carry the
   same model-like light — this is exactly ticket #17 (S0), unchanged.
-- **Motion.** Everything is stills; whether discrete per-turn change reads
-  as growth or popping (the turn-lapse question) is untested.
+- **Motion — now tested, verdict pending (2026-08-23).** The lab's
+  turn-lapse experiment (`build.py --experiment lapse`) renders one
+  120-turn valley timeline twice from the identical discrete schedule:
+  a naive per-turn redraw (elements appear at full size the turn they
+  change) beside an eased interpretation (elements scale in/out over a
+  few turns, aging tints move continuously, ruin steps are finer),
+  composed side by side in `turn_lapse.mp4`. What the frames certify:
+  the eased variant is implementable purely view-side — the sim truth is
+  identical in both panels, which is exactly the game layer's contract,
+  and easing never desynchronizes from the schedule. Whether the cut
+  variant is *acceptable* or easing is *required* is an aesthetic call
+  a human makes from the clip; whichever way it lands, the cost of
+  easing is one ramp function per element class, so the decision is
+  about feel, not budget.
 - **Real simulation distributions.** Every lab scene is placed by curated
   rules; whether live sim ecology composes as well stays open until real
   state feeds the recipes.
