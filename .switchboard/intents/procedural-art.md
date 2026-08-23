@@ -335,3 +335,109 @@ that faint line is the old imperial road; those arches survive because
 hero structures outlast domestic fabric.
 
 The renderer's job is to make history visible.
+
+## Addendum — lab findings (2026-08-16)
+
+The headless Blender lab (`tools/blender`) ran the experiment suite ahead
+of the Godot spikes: the diorama and culture sheets, the seven-date
+sequence, and a 40×30 hex-sourced world with conformance, salience,
+cartography, seasons, and reduction passes. What follows are the results,
+recorded as rules so S0/S1 inherit them instead of rediscovering them.
+Sheets are reproducible from their seeds via `tools/blender/build.py`.
+
+### Confirmed, now rules
+
+1. **The hex data shape is safe — but soften class edges, never terrain.**
+   A world built exactly from per-hex state (fields at flat-top axial
+   centres, hex-line roads, hex-centre placement) is visually
+   indistinguishable from free placement, with one exception: terrain-class
+   region edges. Perfect hex boundaries on class tint read as board game
+   instantly; hash-displaced corner jitter makes the same regions read as
+   organic ground cover. Smooth (IDW-style) terrain interpolation is the
+   default; honest stepped hex plateaus are an acceptable terraced
+   fallback, not a failure. Roads: Chaikin-smoothed hex-centre paths win;
+   raw 60° turns are tolerable but visibly mechanical.
+2. **Exaggeration and contrast are band-scaled parameters, not constants.**
+   Class-tint contrast that reads correctly up close is camouflage blotch
+   at world distance (mute it as the camera rises — "omit, don't shrink"
+   applies to color contrast). Mountains need far more vertical
+   exaggeration to carry silhouette at world distance than looks right up
+   close. Every scale-sensitive parameter should be authored per band.
+3. **Salience numbers (first S1 data).** Twelve planted events (building,
+   fire, herd) ray-cast against the camera: 12/12 visible at pitch 38° and
+   48°, 10/12 at 28°. At this relief the dominant occluder is **canopy,
+   not ridges** — forest density near watchable things is the real S1
+   design variable. Caveat now part of the method: ray-cast visibility is
+   not noticeability; small low-contrast events pass the ray test while
+   being visually negligible. Noticing needs size, contrast, or motion,
+   and S1-in-Godot must measure that, not just occlusion.
+4. **Printed information survives 3D.** Contour ribbons following the
+   relief and a territory band read as drawn on the model, not as debug
+   overlay. The sculpture+cartography hybrid — the direction's identity —
+   holds.
+5. **Seasons are a palette re-grade with a held identity.** Four re-grades
+   of the same world work when plaster, brass, roads, and water hue stay
+   invariant; the world changes together and remains itself. Winter (snow
+   world, dark water) is the strongest and costs nothing extra.
+6. **The reduction test passes.** Six flat colors and value-only greyscale
+   both keep the world legible; the road is the brightest value line on
+   the map. Identity genuinely lives in silhouette and value.
+7. **Craft rules from the earlier sheets, kept for Godot:** voussoirs lie
+   tangent to the arc, not radial; render with a poster transform, not a
+   filmic one (Blender: Standard, not AgX — Godot: disable filmic/ACES
+   tonemap for this look); faceted-mass vegetation beats cardstock at
+   these scales; buildings emit parts tagged (role, height) so ruins are a
+   filter, not an asset set; a historical sequence needs a fixed place
+   plan with monotonic per-index tree acceptance so forests thin and
+   regrow in place; peak prosperity must read vertically (silhouette
+   punctuation), not as more building count — count is invisible at world
+   distance, and so is sub-silhouette damage.
+
+### Still open (the lab cannot close these)
+
+- **Godot parity.** All lab evidence is raytraced Cycles with soft sun and
+  denoising. Real-time shadow maps, AO, and tonemapping may not carry the
+  same model-like light — this is exactly ticket #17 (S0), unchanged.
+  **Feasibility resolved (2026-08-23): the real engine runs in headless
+  cloud containers.** Recipe: the official Godot 4.3 Linux binary +
+  `mesa-vulkan-drivers` (lavapipe, Vulkan on CPU) + `xvfb-run` for the
+  display context capture.sh requires. Verified in a GPU-less container:
+  `./test.sh` passes in full (54 tests, cross-process determinism, main
+  scene 120 frames clean), and `xvfb-run ./capture.sh` renders verified
+  frames of the actual game through its own blank-frame guard. The
+  parity *question* stays open until S0 exists, but the tooling barrier
+  is gone: S0 can be developed, rendered, and reviewed entirely from a
+  remote session.
+- **Motion — now tested, verdict pending (2026-08-23).** The lab's
+  turn-lapse experiment (`build.py --experiment lapse`) renders one
+  120-turn valley timeline twice from the identical discrete schedule:
+  a naive per-turn redraw (elements appear at full size the turn they
+  change) beside an eased interpretation (elements scale in/out over a
+  few turns, aging tints move continuously, ruin steps are finer),
+  composed side by side in `turn_lapse.mp4`. What the frames certify:
+  the eased variant is implementable purely view-side — the sim truth is
+  identical in both panels, which is exactly the game layer's contract,
+  and easing never desynchronizes from the schedule. **Verdict
+  (2026-08-23, decided by the owner): wall-clock tween on turn
+  advance.** On each turn the view animates to the new state over
+  roughly half a second of real time, then rests showing exactly the
+  sim state — nothing pops, and the resting map never lags the truth.
+  Multi-turn visual arrival (elements growing across several turns,
+  as the clip's eased panel showed) is rejected for the map view: it
+  makes the resting picture lie slightly about state, against Rule 5
+  and the instrument-panel principle. Sim-side construction stages (a
+  real under-construction state, drawn honestly) remain an open game
+  design option that composes with the tween. Cost of the tween is
+  one ramp per element class driven by turns-since-appear, which the
+  snapshot already implies. **Refinement (owner, 2026-08-23):
+  constructed things assemble; living things grow.** Architecture must
+  not inflate uniformly - during its arrival tween a building's parts
+  land bottom-up in height order, which is the ruin filter run in
+  reverse (visual condition ramping 0 to 1 through the same
+  part-selection used for decay). Organic elements - trees, shrubs,
+  crops - scale up, because growth is their honest motion. One
+  transform, both directions of time: assembly and ruin are the same
+  function.
+- **Real simulation distributions.** Every lab scene is placed by curated
+  rules; whether live sim ecology composes as well stays open until real
+  state feeds the recipes.
