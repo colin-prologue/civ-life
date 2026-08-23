@@ -374,6 +374,62 @@ def _label_montage(tiles, out_path, cols=3, tw=900, th=579):
     print("montage:", out_path)
 
 
+
+def sheet_lapse(seed, step=2, res=(800, 500), samples=24):
+    """Turn-lapse motion test: 'cut' vs 'eased' interpretation of the same
+    discrete schedule, composed side by side into one clip."""
+    import shutil
+    import subprocess
+    from PIL import Image, ImageDraw, ImageFont
+    from civlife_blender.lapse import (TURNS, build_frame, build_schedule,
+                                       presence_intervals)
+    from civlife_blender.sequence import valley_plan
+    plan = valley_plan(seed)
+    sched = build_schedule(seed, plan)
+    tree_iv = presence_intervals(seed, plan, len(plan["trees"]))
+    frames = list(range(0, TURNS + 1, step))
+    for variant, ease in (("cut", False), ("eased", True)):
+        vdir = os.path.join(OUT, "lapse_" + variant)
+        os.makedirs(vdir, exist_ok=True)
+        for fi, t in enumerate(frames):
+            fresh_scene()
+            build_frame(seed, plan, sched, tree_iv, t, ease)
+            add_sun(elevation_deg=26, azimuth_deg=205, energy=4.5)
+            add_camera((0.0, 0.0, 0.3), 80.0, fov_deg=22, pitch_deg=36,
+                       yaw_deg=-140)
+            render(os.path.join(vdir, "f%03d.png" % fi), res=res,
+                   samples=samples)
+        print("variant %s: %d frames" % (variant, len(frames)))
+    # compose side-by-side with labels and a turn counter
+    sbdir = os.path.join(OUT, "lapse_sb")
+    os.makedirs(sbdir, exist_ok=True)
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 18)
+    except OSError:
+        font = ImageFont.load_default()
+    W, H = res
+    for fi, t in enumerate(frames):
+        a = Image.open(os.path.join(OUT, "lapse_cut", "f%03d.png" % fi))
+        b = Image.open(os.path.join(OUT, "lapse_eased", "f%03d.png" % fi))
+        sheet = Image.new("RGB", (W * 2 + 4, H + 36), (14, 16, 24))
+        sheet.paste(a, (0, 36))
+        sheet.paste(b, (W + 4, 36))
+        d = ImageDraw.Draw(sheet)
+        d.text((12, 9), "CUT - naive per-turn redraw", fill=(201, 164, 74),
+               font=font)
+        d.text((W + 16, 9), "EASED - view interprets the same turns",
+               fill=(201, 164, 74), font=font)
+        d.text((W - 60, 9), "turn %3d" % t, fill=(160, 168, 146), font=font)
+        sheet.save(os.path.join(sbdir, "f%03d.png" % fi))
+    out_mp4 = os.path.join(OUT, "turn_lapse.mp4")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", "10",
+                    "-i", os.path.join(sbdir, "f%03d.png"),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "22",
+                    out_mp4], check=True)
+    print("clip:", out_mp4)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--experiment", default="all")
@@ -392,6 +448,8 @@ def main():
         sheet_monuments(args.seed)
     if args.experiment in ("time", "all"):
         sheet_time(args.seed)
+    if args.experiment == "lapse":
+        sheet_lapse(args.seed)
     if args.experiment == "hexcompare":
         sheet_hexcompare(args.seed)
     if args.experiment == "worldscale":
