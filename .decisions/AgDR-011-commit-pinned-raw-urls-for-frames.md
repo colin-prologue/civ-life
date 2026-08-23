@@ -1,4 +1,4 @@
-# AgDR-009 — Frames are linked by commit-pinned raw.githubusercontent.com URLs
+# AgDR-011 — Frames are linked by commit-pinned raw.githubusercontent.com URLs
 
 **Status:** accepted
 **Date:** 2026-08-15
