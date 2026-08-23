@@ -1,4 +1,4 @@
-# AgDR-012 — Agents report quantities; nothing asks them what they are
+# AgDR-013 — Agents report quantities; nothing asks them what they are
 
 **Status:** accepted
 **Date:** 2026-08-23
