@@ -119,17 +119,21 @@ def presence_intervals(seed, plan, n):
     return out
 
 
+RAMP_IN = 4.0   # turns an arriving element takes to reach full size
+RAMP_OUT = 3.0  # turns a leaving element takes to shrink away
+
+
 def _ramp(t, appear, vanish, ease):
     """Scale factor for an element alive on [appear, vanish)."""
     if not ease:
         return 1.0 if appear <= t < vanish else 0.0
-    if t < appear or t >= vanish + 3:
+    if t < appear or t >= vanish + RAMP_OUT:
         return 0.0
     s = 1.0
-    if t < appear + 4:
-        s = min(s, (t - appear + 1) / 4.0)
+    if t < appear + RAMP_IN:
+        s = min(s, (t - appear + 1) / RAMP_IN)
     if t >= vanish:
-        s = min(s, max(0.0, 1.0 - (t - vanish + 1) / 3.0))
+        s = min(s, max(0.0, 1.0 - (t - vanish + 1) / RAMP_OUT))
     return s
 
 

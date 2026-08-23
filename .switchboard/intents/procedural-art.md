@@ -407,11 +407,19 @@ Sheets are reproducible from their seeds via `tools/blender/build.py`.
   composed side by side in `turn_lapse.mp4`. What the frames certify:
   the eased variant is implementable purely view-side — the sim truth is
   identical in both panels, which is exactly the game layer's contract,
-  and easing never desynchronizes from the schedule. Whether the cut
-  variant is *acceptable* or easing is *required* is an aesthetic call
-  a human makes from the clip; whichever way it lands, the cost of
-  easing is one ramp function per element class, so the decision is
-  about feel, not budget.
+  and easing never desynchronizes from the schedule. **Verdict
+  (2026-08-23, decided by the owner): wall-clock tween on turn
+  advance.** On each turn the view animates to the new state over
+  roughly half a second of real time, then rests showing exactly the
+  sim state — nothing pops, and the resting map never lags the truth.
+  Multi-turn visual arrival (elements growing across several turns,
+  as the clip's eased panel showed) is rejected for the map view: it
+  makes the resting picture lie slightly about state, against Rule 5
+  and the instrument-panel principle. Sim-side construction stages (a
+  real under-construction state, drawn honestly) remain an open game
+  design option that composes with the tween. Cost of the tween is
+  one ramp per element class driven by turns-since-appear, which the
+  snapshot already implies.
 - **Real simulation distributions.** Every lab scene is placed by curated
   rules; whether live sim ecology composes as well stays open until real
   state feeds the recipes.
