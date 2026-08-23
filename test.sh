@@ -69,6 +69,32 @@ if [ -n "$dupes" ]; then
   exit 1
 fi
 
+# --- 0c. the importer stays out of docs/ -------------------------------------
+# Godot writes an `.import` sidecar next to every image it can see under
+# `res://`. For game art that is correct and those sidecars are committed. For
+# the screenshots under `docs/shots/` it is pure noise: nobody loads them, and
+# the metadata lands as untracked files in whichever branch ran this command
+# next, so `git add -A` at the end of a ticket sweeps documentation churn into
+# an unrelated pull request.
+#
+# This has now been "fixed" twice by committing the sidecars — once for
+# `addons/gut/`, once for the nine under `docs/shots/`. Both times the files
+# that existed stopped showing up and the next asset added re-opened it. The
+# actual fix is `docs/.gdignore`, which stops them being generated at all.
+#
+# So the check is for the sidecars themselves, not for a list of paths: if any
+# exist under `docs/`, the .gdignore is gone or has stopped working, and the
+# next capture will put untracked metadata in somebody's diff. No git involved,
+# so it reads the same in a dirty workspace as in a clean clone.
+stray="$(find docs -type f \( -name '*.import' -o -name '*.uid' \) 2>/dev/null | sort)"
+if [ -n "$stray" ]; then
+  echo "ERROR: Godot import metadata was generated under docs/:" >&2
+  echo "$stray" | sed 's|^|         |' >&2
+  echo "       docs/ holds documentation images, never game resources, so these" >&2
+  echo "       should not exist. Restore docs/.gdignore and delete them." >&2
+  exit 1
+fi
+
 # --- 1. import readiness -----------------------------------------------------
 # Every GUT image with an .import sidecar must have a matching compiled texture
 # in the cache. Cheap (a few stats) so it runs on every invocation.

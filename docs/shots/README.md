@@ -66,6 +66,20 @@ already argued against, and would turn a palette tweak into a fixture update.
 stops matching what the game does, delete it; a stale picture in a directory
 called `shots` is read as current.
 
+**These are pictures, not resources.** [`../.gdignore`](../.gdignore) — the
+empty file one level up — tells Godot's importer to skip `docs/` entirely, so
+none of these PNGs get an `.import` sidecar. Without it the importer treats
+every committed frame as a game texture and writes metadata next to it, which
+then shows up as untracked files in whatever branch happened to run `./test.sh`
+next. Twice now that noise has been resolved by committing the sidecars, which
+fixes the frames that exist and does nothing about the next one captured.
+Deleting that file brings it back on the following import; `./test.sh` fails
+rather than letting it happen quietly. Nothing under `docs/` is loaded through
+`res://` — the capture harness reads frames back off disk with
+`Image.load_from_file`, which does not go through the importer. A ticket that
+needs to `load()` an image from here is a ticket that needs a different
+arrangement, not a deleted `.gdignore`.
+
 ## The one thing that would make this worthless
 
 Godot's `--headless` uses a rendering driver that rasterizes nothing, and
