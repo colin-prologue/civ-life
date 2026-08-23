@@ -7,6 +7,11 @@ extends RefCounted
 ## Vertex colours + a single vertex-colour material keep the whole diorama
 ## to a handful of draw calls.
 
+## Sign applied to every computed face normal. The recipes' shared winding
+## convention is fixed by this one constant rather than by remembering which
+## way round each helper builds its quads.
+const WINDING := -1.0
+
 var verts := PackedVector3Array()
 var normals := PackedVector3Array()
 var colors := PackedColorArray()
@@ -16,23 +21,19 @@ func add_tri(a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
 	var n := (b - a).cross(c - a)
 	if n.length_squared() < 1e-12:
 		return
-	n = n.normalized()
-	# Two-sided on purpose: recipes compose boxes, fans, and open surfaces
-	# with mixed windings, and a spike optimises for tunability over
-	# triangle count. Each side carries its own outward normal so lighting
-	# is correct from either face. TODO(S0-local): settle windings and drop
-	# the back faces once the composition is locked.
+	n = n.normalized() * WINDING
+	# One triangle per face, culling disabled on the material. The first
+	# version of this emitted both windings at the same coordinates so the
+	# recipes would not have to agree on orientation; the two copies then
+	# z-fought, and every lit surface came back speckled with its own unlit
+	# duplicate. The whole valley rendered as dark mush and read as a
+	# lighting problem rather than a geometry one. Recipes agree on winding
+	# instead.
 	verts.append(a)
 	verts.append(b)
 	verts.append(c)
 	for _i in range(3):
 		normals.append(n)
-		colors.append(col)
-	verts.append(a)
-	verts.append(c)
-	verts.append(b)
-	for _i in range(3):
-		normals.append(-n)
 		colors.append(col)
 
 

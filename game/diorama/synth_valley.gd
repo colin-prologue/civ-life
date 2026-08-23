@@ -12,6 +12,11 @@ enum Terrain { WATER, GRASS, FOREST, HILL, MOUNTAIN }
 const COLS := 18
 const ROWS := 14
 
+## Elevation below this is river. Kept as a named constant because three
+## separate things have to agree on it: the terrain class, the display height,
+## and where the road turns into a bridge.
+const WATER_LEVEL := 0.30
+
 var seed: int
 var elevation: Dictionary = {}   # Vector2i -> float 0..1
 var moisture: Dictionary = {}    # Vector2i -> float 0..1
@@ -27,7 +32,7 @@ func _init(p_seed: int) -> void:
 	seed = p_seed
 	var noise := FastNoiseLite.new()
 	noise.seed = seed
-	noise.frequency = 0.11
+	noise.frequency = 0.075
 	var noise2 := FastNoiseLite.new()
 	noise2.seed = seed + 7777
 	noise2.frequency = 0.16
@@ -38,24 +43,19 @@ func _init(p_seed: int) -> void:
 	for q in range(COLS):
 		for r in range(ROWS):
 			var c := DioramaHexKit.hex_center(q, r)
-			var e := 0.5 + 0.5 * noise.get_noise_2d(c.x, c.y)
-			# valley shaping: mountains rise on +x, river carves a sine path
-			e += pow(maxf(0.0, c.x - extent.x * 0.62) * 0.14, 1.5)
-			var river_z := _river_x(c.y)
-			e -= maxf(0.0, 1.7 - absf(c.x - river_z)) * 0.22
-			e = clampf(e, 0.0, 1.3)
+			var e := _land_elevation(c, noise)
 			var m := 0.5 + 0.5 * noise2.get_noise_2d(c.x, c.y)
 			var coord := Vector2i(q, r)
 			elevation[coord] = e
 			moisture[coord] = m
 			var t: Terrain
-			if e < 0.30:
+			if e < WATER_LEVEL:
 				t = Terrain.WATER
-			elif e > 0.92:
+			elif e > 0.90:
 				t = Terrain.MOUNTAIN
-			elif e > 0.76:
+			elif e > 0.74:
 				t = Terrain.HILL
-			elif m > 0.52:
+			elif m > 0.50:
 				t = Terrain.FOREST
 			else:
 				t = Terrain.GRASS
@@ -66,20 +66,43 @@ func _init(p_seed: int) -> void:
 	_pick_sites()
 
 
-func _river_x(z: float) -> float:
-	return extent.x * 0.42 + sin(z * 0.31) * 1.6
+## The valley's whole shape, as one continuous field: rolling ground, a
+## mountain wall on +x, a low ridge on -x so the valley is enclosed rather
+## than an open shelf, and a river cut hard enough to be a river and not a
+## chain of ponds.
+func _land_elevation(c: Vector2, noise: FastNoiseLite) -> float:
+	var e := 0.52 + 0.30 * noise.get_noise_2d(c.x, c.y)
+	# mountain wall along the eastern third
+	var into_range := maxf(0.0, c.x - extent.x * 0.60) / (extent.x * 0.40)
+	e += pow(into_range, 1.6) * 1.05
+	# a modest western shoulder — the valley reads as enclosed, not as a shelf
+	var west := maxf(0.0, extent.x * 0.16 - c.x) / (extent.x * 0.16)
+	e += pow(west, 1.5) * 0.34
+	# the river: a narrow channel with banks, not a moisture-driven blot
+	var d := absf(c.x - river_x(c.y))
+	e -= pow(maxf(0.0, 1.0 - d / 3.2), 2.0) * 0.42
+	if d < 1.05:
+		e = minf(e, WATER_LEVEL - 0.10 - (1.05 - d) * 0.12)
+	return clampf(e, 0.0, 1.9)
+
+
+## The river's centreline as a function of z. Public because the road has to
+## know where it is in order to bridge it.
+func river_x(z: float) -> float:
+	return extent.x * 0.40 + sin(z * 0.24) * 2.1 + sin(z * 0.61) * 0.7
 
 
 func _display_height(t: Terrain, e: float) -> float:
 	match t:
 		Terrain.WATER:
-			return -0.55
+			# riverbed, not a flat floor — the channel keeps a cross-section
+			return -0.30 - (WATER_LEVEL - e) * 2.2
 		Terrain.MOUNTAIN:
-			return 1.1 + (e - 0.92) * 9.0
+			return 1.05 + (e - 0.90) * 3.2
 		Terrain.HILL:
-			return 0.5 + (e - 0.76) * 3.5
+			return 0.52 + (e - 0.74) * 3.3
 		_:
-			return maxf(0.02, (e - 0.30) * 1.4)
+			return maxf(0.03, (e - WATER_LEVEL) * 1.25)
 	return 0.0
 
 
@@ -118,35 +141,50 @@ func terrain_at(x: float, z: float) -> Terrain:
 	return best
 
 
+## True where the ground sits under the river surface — the bridge test, and
+## the reason the road knows about water at all.
+func is_submerged(x: float, z: float) -> bool:
+	return absf(x - river_x(z)) < 1.35
+
+
 func _lay_road() -> void:
-	# the road runs the valley floor, west bank of the river, bending with it
+	# The road crosses the valley west to east: farmland and town on the near
+	# bank, a bridge over the river, then up toward the hero and the range.
+	# Crossing rather than paralleling is a composition choice — it gives the
+	# frame a line that travels through depth instead of across it.
 	var pts := PackedVector2Array()
-	for i in range(15):
-		var z := extent.y * (0.06 + 0.88 * i / 14.0)
-		var x := _river_x(z) - 2.1 + sin(z * 0.5) * 0.5
+	for i in range(13):
+		var t := float(i) / 12.0
+		var x := extent.x * (0.03 + 0.86 * t)
+		var z := extent.y * 0.62 - t * extent.y * 0.22 + sin(t * 4.1) * 1.5
 		pts.append(Vector2(x, z))
 	road = DioramaHexKit.chaikin(pts, 2)
 
 
 func _pick_sites() -> void:
-	# building sites flank the road's mid-section, on dry ground
+	# Buildings flank the road on the dry western bank, before the crossing.
 	var placed := 0
-	var i := 4
-	while placed < 8 and i < 11:
-		var p := road[i * (road.size() / 15)]
+	for k in range(6, road.size()):
+		if placed >= 9:
+			break
+		var p := road[k]
+		if p.x > river_x(p.y) - 2.4:
+			continue
+		if k % 3 != 0:
+			continue
 		for side: float in [-1.0, 1.0]:
-			if placed >= 8:
+			if placed >= 9:
 				break
 			var jx := DioramaHexKit.h01(seed, 31, placed, 1) - 0.5
 			var jz := DioramaHexKit.h01(seed, 31, placed, 2) - 0.5
-			var x := p.x + side * (1.1 + jx * 0.8)
-			var z := p.y + jz * 1.4
-			if height_at(x, z) > 0.05 and terrain_at(x, z) != Terrain.WATER:
-				var rot := (DioramaHexKit.h01(seed, 37, placed) - 0.5) * 0.6
+			var x := p.x + side * (1.15 + jx * 0.7)
+			var z := p.y + jz * 1.5
+			if height_at(x, z) > 0.06 and terrain_at(x, z) != Terrain.WATER:
+				var rot := (DioramaHexKit.h01(seed, 37, placed) - 0.5) * 0.5
 				sites.append(Vector3(x, z, rot))
 				placed += 1
-		i += 1
-	# the hero stands on the rise across the river
-	var hz := extent.y * 0.42
-	var hx := _river_x(hz) + 3.4
-	hero_site = Vector3(hx, hz, 0.5)
+	# The hero stands on the far bank where the road climbs toward the range —
+	# across the river from the town, so the crossing reads as going somewhere.
+	var hz := road[road.size() - 4].y
+	var hx := river_x(hz) + 3.6
+	hero_site = Vector3(hx, hz, 0.35)

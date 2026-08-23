@@ -59,6 +59,20 @@ func test_scene_builds_expected_structure() -> void:
 	assert_gt(trees_found, 10, "vegetation is missing or not instanced")
 
 
+## AC10 asks for the cold-start build cost to be measured and reported, on the
+## grounds that a spike nobody can iterate on has already failed. The scene
+## prints the number on launch, but a number that only appears when someone
+## runs the scene by hand is a number that stops being true the moment a
+## generator gets slower. Emitting it from the suite puts it in front of
+## whoever runs the verification command, every time.
+func test_build_time_is_measured_and_reported() -> void:
+	var spike: DioramaSpike = load("res://game/diorama/spike.gd").new()
+	spike._build()
+	assert_gt(spike.build_msec, 0.0, "build time was never measured")
+	gut.p("[spike] built seed %d in %.1f ms" % [spike.world_seed, spike.build_msec])
+	spike.free()
+
+
 func test_camera_fov_in_intent_range() -> void:
 	var spike: DioramaSpike = load("res://game/diorama/spike.gd").new()
 	assert_between(spike.fov_horizontal_deg, 15.0, 30.0,
