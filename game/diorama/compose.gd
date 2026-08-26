@@ -266,13 +266,22 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# put. A composite child — a nested row of unequal widths — comes back
 		# off-centre from the transform it was handed, and using the cursor
 		# instead reports bounds that do not cover the row's own geometry.
-		var child_xf: Transform3D = f["xf"]
-		var local: Vector3 = base_inv * child_xf.origin
-		var half: float = f["footprint"].x * 0.5
-		min_edge = minf(min_edge, local.x - half)
-		max_edge = maxf(max_edge, local.x + half)
-		deepest = maxf(deepest, f["footprint"].y)
-		tallest = maxf(tallest, f["height"])
+		# A child that resolved to nothing — an optional nested row whose count
+		# came out 0 — must not widen the row it sits in. `_stack` has always
+		# guarded this; `_row` did not, and a width-2 mass followed by an absent
+		# child reported width 3, off centre by half the phantom.
+		#
+		# Third time these two have drifted apart on the same kind of rule (the
+		# frame origin, the nested centre, now the empty guard). If a fourth
+		# turns up, they want one shared accumulator rather than another patch.
+		if f["height"] > EPS:
+			var child_xf: Transform3D = f["xf"]
+			var local: Vector3 = base_inv * child_xf.origin
+			var half: float = f["footprint"].x * 0.5
+			min_edge = minf(min_edge, local.x - half)
+			max_edge = maxf(max_edge, local.x + half)
+			deepest = maxf(deepest, f["footprint"].y)
+			tallest = maxf(tallest, f["height"])
 		cursor += f["footprint"].x * advance
 	var span := (max_edge - min_edge) if children.size() > 0 else 0.0
 	var center := (min_edge + max_edge) * 0.5 if children.size() > 0 else 0.0

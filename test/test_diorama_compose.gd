@@ -327,3 +327,21 @@ func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
 			"outer row's span ignored the nested row's real extent")
 	assert_almost_eq(out["frame"]["xf"].origin.x, 2.75, 1e-5,
 			"outer row's centre ignored the nested row's real extent")
+
+
+## An optional child that resolves to nothing must not widen the row it is in.
+## `count: 0` is the supported way for a style to say "sometimes absent", so a
+## row carrying one has to come out the same size as a row without it.
+func test_an_empty_child_does_not_widen_a_row() -> void:
+	var absent := {"row": {"name": "maybe", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var with_gap := {"row": {"name": "outer", "advance": 1.0, "children": [
+		_box("real", 2.0, 2.0, 1.0), absent]}}
+	var without := {"row": {"name": "outer", "advance": 1.0, "children": [
+		_box("real", 2.0, 2.0, 1.0)]}}
+	var a := DioramaCompose.resolve(with_gap, _ctx())
+	var b := DioramaCompose.resolve(without, _ctx())
+	assert_almost_eq(a["frame"]["footprint"].x, b["frame"]["footprint"].x, 1e-5,
+			"an empty child widened the row")
+	assert_almost_eq(a["frame"]["xf"].origin.x, b["frame"]["xf"].origin.x, 1e-5,
+			"an empty child pushed the row off centre")
