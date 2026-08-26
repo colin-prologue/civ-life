@@ -162,6 +162,26 @@ func test_row_template_repeats_with_distinct_channels_per_index() -> void:
 	assert_ne(w0, w1, "repeated units are identical — index is not in the channel")
 
 
+func test_row_template_growing_count_does_not_disturb_earlier_units() -> void:
+	# The row analogue of test_adding_a_named_sibling_does_not_disturb_the_others
+	# above: this branch's central claim is that channels are keyed on a
+	# NAME path rather than an index path, and it is precisely as fragile
+	# here as it is for a stack — growing a templated row's count must not
+	# re-roll the units that were already there, because each repeat's
+	# channel is keyed on its own indexed name ("unit0", "unit1", ...) rather
+	# than on the total count.
+	var two := DioramaCompose.resolve(
+			{"row": {"name": "block", "count": 2, "advance": 1.0, "of":
+				_box("unit", [1.0, 3.0], [1.0, 3.0], [1.0, 3.0])}}, _ctx())
+	var three := DioramaCompose.resolve(
+			{"row": {"name": "block", "count": 3, "advance": 1.0, "of":
+				_box("unit", [1.0, 3.0], [1.0, 3.0], [1.0, 3.0])}}, _ctx())
+	assert_eq(two["parts"][0]["params"]["size"], three["parts"][0]["params"]["size"],
+			"growing count from 2 to 3 re-rolled the first unit")
+	assert_eq(two["parts"][1]["params"]["size"], three["parts"][1]["params"]["size"],
+			"growing count from 2 to 3 re-rolled the second unit")
+
+
 func test_row_with_zero_count_is_legal_and_empty() -> void:
 	var tree := {"row": {"name": "block", "count": 0, "advance": 1.0,
 			"of": _box("unit", 1.0, 1.0, 1.0)}}

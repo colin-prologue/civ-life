@@ -85,13 +85,13 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 ## negative y here sits under that opaque geometry and never reaches the
 ## camera at all.
 ##
-## 0.05 clears the pad but is not enough on its own: at this camera's shallow
-## pitch, a caption at near-ground height and a row behind its own specimen is
-## still hidden behind the ROOF of whichever specimen sits one row closer to
-## the camera in the same column — verified by ray-tracing camera-to-caption
-## against each neighbour's roof height, which is what set 0.45 rather than a
-## rounder-looking guess: the tallest roof in this batch needs about 0.36 to
-## clear, and 0.45 keeps a working margin.
+## 0.05 clears the pad but is not enough on its own: even at this camera's
+## 34-degree pitch, a caption at near-ground height and a row behind its own
+## specimen is still hidden behind the ROOF of whichever specimen sits one
+## row closer to the camera in the same column — verified by ray-tracing
+## camera-to-caption against each neighbour's roof height, which is what set
+## 0.45 rather than a rounder-looking guess: it clears the tallest roof in
+## this batch with a working margin.
 ##
 ## font_size 96 at pixel_size 0.002 is 0.192 world units tall — legible up
 ## close, but at the ~55-unit camera distance this sheet needs to fit all
