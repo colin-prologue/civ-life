@@ -20,7 +20,7 @@ const ROLES := {
 ## says the same thing in sixteen lines of arithmetic — if this is harder to
 ## read than that was, the whole design has failed its own premise.
 static func residential() -> Dictionary:
-	return {"row": {"name": "block", "count": [1, 4.0], "advance": 0.95, "of":
+	return {"row": {"name": "block", "count": [1, 3], "advance": 0.95, "of":
 		{"stack": {"name": "unit", "children": [
 			{"mass": {"name": "body", "kind": "box",
 					"w": [0.55, 1.05], "d": [0.55, 1.05], "h": [0.60, 1.30],

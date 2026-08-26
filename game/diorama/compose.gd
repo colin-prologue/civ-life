@@ -61,6 +61,32 @@ static func sample(spec: Variant, seed: int, building_id: int, path: String,
 	return lo + (hi - lo) * channel(seed, building_id, path, purpose)
 
 
+## `count` is inclusive integer bounds: a scalar is that exact count, and
+## [lo, hi] means lo, lo+1, ..., hi with equal probability — so a style reads
+## "[1, 3]" and means what it says, rather than "[1, 4.0]" meaning "1 to 3"
+## because the sampler floors under the hood.
+##
+## floor, not round: round() would reach one past hi (round(2.99) is 3, but so
+## is round(3.49)), so it is not the hi bound itself that needs reaching — it
+## is that floor(c * span), scaled across span = hi - lo + 1 rather than
+## hi - lo, lands exactly on hi when the channel value approaches 1 (which
+## h01 never quite returns, so hi is a reachable outcome, not an asymptote,
+## and nothing beyond it is ever produced).
+static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> int:
+	if spec == null:
+		return 1
+	if spec is float or spec is int:
+		return int(spec)
+	assert(spec is Array, "'count' on '%s' must be a number or [lo, hi]" % path)
+	assert(spec.size() == 2, "'count' on '%s' must have exactly two bounds" % path)
+	var lo := int(spec[0])
+	var hi := int(spec[1])
+	assert(lo <= hi, "'count' on '%s' has lo > hi" % path)
+	var span := hi - lo + 1
+	var c := channel(seed, id, path, "count")
+	return lo + int(floor(c * span))
+
+
 static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
@@ -185,11 +211,7 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			"'%s' has 'count' without 'of' — count only repeats a template" % path)
 	var children: Array = []
 	if has_template:
-		# floor, not round: round() reaches the upper bound, so [1, 3.99]
-		# yields 4 as well as 1-3. With floor, [1, 4.0] gives exactly 1-3 and
-		# each is equally likely — h01 never returns 1.0.
-		var count := int(floor(sample(n.get("count"), seed, id, path,
-				"count", 1.0)))
+		var count := _sample_count(n.get("count"), seed, id, path)
 		for i in range(maxi(0, count)):
 			children.append(_indexed(n["of"], i))
 	else:
