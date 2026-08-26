@@ -128,6 +128,11 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if w <= EPS or d <= EPS or h <= EPS:
 		return {"parts": [], "frame": zero_frame(xf)}
 	var kind: String = n.get("kind", "box")
+	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
+	# the renderer. Reporting (w, d) would describe geometry that does not
+	# exist, and everything stacking on this frame inherits the lie.
+	if kind == "prism" or kind == "cone":
+		d = w
 	var params := _params_for(kind, n, w, d, h, seed, id, path)
 	var part := {"kind": kind, "xf": xf, "params": params,
 			"color": Color.MAGENTA, "tag": "", "y": 0.0,
@@ -269,39 +274,48 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var base_inv := base_xf.affine_inverse()
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
 	var parts: Array = []
-	var cursor := 0.0
-	# DioramaMeshKit.add_box centres geometry in X (and Z), so each child's
-	# own xf.origin sits at ITS centre, not its near edge — the true extent of
-	# the row is the union of every child's centre ∓ half its footprint, not
-	# "the origin to the last child's far edge" (which undercounts whenever an
-	# earlier child is wider than the last one).
+	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
+	# xf.origin sits at ITS centre, not its near edge.
 	var bounds := Bounds.new()
 	var tallest := 0.0
+	# Two passes, because placing a child flush against the one before it needs
+	# BOTH their widths, and a child's width is only known once it is resolved.
+	# Resolve every child at the row's own origin first, then lay them out.
+	var resolved: Array = []
 	for child in children:
 		var child_ctx := {"seed": seed, "id": id, "path": path,
-				"frame": {"xf": base_xf.translated_local(Vector3(cursor, 0, 0)),
+				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
-		var out := resolve(child, child_ctx)
-		parts.append_array(out["parts"])
+		resolved.append(resolve(child, child_ctx))
+	var cursor := 0.0
+	var prev_half := 0.0
+	var placed_any := false
+	for out: Dictionary in resolved:
 		var f: Dictionary = out["frame"]
-		# Measure from where the child says its centre IS, not from where it was
-		# put. A composite child — a nested row of unequal widths — comes back
-		# off-centre from the transform it was handed, and using the cursor
-		# instead reports bounds that do not cover the row's own geometry.
-		# A child that resolved to nothing — an optional nested row whose count
-		# came out 0 — must not widen the row it sits in. `_stack` has always
-		# guarded this; `_row` did not, and a width-2 mass followed by an absent
-		# child reported width 3, off centre by half the phantom.
-		#
-		# Third time these two have drifted apart on the same kind of rule (the
-		# frame origin, the nested centre, now the empty guard). If a fourth
-		# turns up, they want one shared accumulator rather than another patch.
+		var half: float = f["footprint"].x * 0.5
+		if f["height"] > EPS:
+			# Step edge to edge: half the previous child plus half of this one.
+			# Advancing by the preceding width alone is only flush when
+			# neighbours are the same size — which a style that samples each
+			# unit's width independently never is, so `advance: 0.95` was
+			# producing visible gaps instead of a 5% overlap.
+			if placed_any:
+				cursor += (prev_half + half) * advance
+			placed_any = true
+			prev_half = half
+		# Children were resolved at the origin; shift them into place. A child
+		# that resolved to nothing contributes no parts and no bounds, and does
+		# not move the cursor.
+		var shift := base_xf * Transform3D(Basis.IDENTITY,
+				Vector3(cursor, 0, 0)) * base_inv
+		for part: Dictionary in out["parts"]:
+			part["xf"] = shift * part["xf"]
+		parts.append_array(out["parts"])
 		if f["height"] > EPS:
 			var child_xf: Transform3D = f["xf"]
 			var local: Vector3 = base_inv * child_xf.origin
-			bounds.add(Vector2(local.x, local.z), f["footprint"])
+			bounds.add(Vector2(local.x + cursor, local.z), f["footprint"])
 			tallest = maxf(tallest, f["height"])
-		cursor += f["footprint"].x * advance
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
 	var mid := bounds.mid()

@@ -210,19 +210,19 @@ func test_row_frame_spans_true_edges_with_unequal_widths() -> void:
 	# EQUAL-width children, so "far edge of the last child minus the row's own
 	# origin" and "true near-edge-to-far-edge span" come out equal by
 	# coincidence and the bug they are meant to catch is invisible. A wide
-	# first child and a narrower last child pulls them apart: the true span
-	# runs from the first child's near edge (-2, since it is 4 wide and
-	# centred on the row origin) to the last child's far edge (5, since it
-	# starts at cursor 4 and is 2 wide) — 7 total. The old
-	# "cursor + last child's width" arithmetic instead reported 4 + 2 = 6.
+	# first child and a narrower last child pulls them apart. `a` is 4 wide,
+	# centred on the row origin, so it occupies [-2, 2]. `b` is 2 wide and sits
+	# flush against it — the cursor steps by half of each, (2 + 1) = 3 — so it
+	# occupies [2, 4]. The true span is -2..4, i.e. 6, centred on +1. The old
+	# "row origin to the last child's far edge" arithmetic reported 5.
 	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
 		_box("a", 4.0, 1.0, 1.0),
 		_box("b", 2.0, 1.0, 1.0)]}}
 	var out := DioramaCompose.resolve(tree, _ctx())
-	assert_almost_eq(out["frame"]["footprint"].x, 7.0, 1e-5,
+	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
 			"row width should span the first child's near edge to the last "
 			+ "child's far edge, not the origin to the last child's far edge")
-	assert_almost_eq(out["frame"]["xf"].origin.x, 1.5, 1e-5,
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.0, 1e-5,
 			"row frame origin should be the true centre of its span")
 
 
@@ -300,10 +300,12 @@ func test_a_mass_stacked_on_a_row_is_centred_over_it() -> void:
 		{"mass": {"name": "roof", "kind": "box", "h": 0.5, "role": "ochre"}}]}}
 	var out := DioramaCompose.resolve(tree, _ctx())
 	var roof: Dictionary = out["parts"][3]
-	# the row spans x in [-2, 6]; its centre is +2
-	assert_almost_eq(roof["xf"].origin.x, 2.0, 1e-5,
+	# Units are 4, 1 and 2 wide, each flush against the last: a occupies
+	# [-2, 2], b steps by (2 + 0.5) to occupy [2, 3], c steps by (0.5 + 1) to
+	# occupy [3, 5]. The terrace is therefore -2..5 — 7 wide, centred on +1.5.
+	assert_almost_eq(roof["xf"].origin.x, 1.5, 1e-5,
 			"roof did not land over the terrace's centre")
-	assert_almost_eq(roof["params"]["size"].x, 8.0, 1e-5,
+	assert_almost_eq(roof["params"]["size"].x, 7.0, 1e-5,
 			"roof did not span the whole terrace")
 
 
@@ -314,18 +316,21 @@ func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
 	var inner := {"row": {"name": "inner", "advance": 1.0, "children": [
 		_box("wide", 4.0, 2.0, 1.0),
 		_box("narrow", 1.0, 2.0, 1.0)]}}
-	# inner: wide sits at 0 spanning [-2, 2], cursor advances 4, narrow sits at
-	# 4 spanning [3.5, 4.5]. So inner spans [-2, 4.5] — width 6.5, centre +1.25,
-	# which is 1.25 to the RIGHT of the transform it was handed.
+	# inner: wide sits at 0 spanning [-2, 2]; narrow is 1 wide and flush against
+	# it, stepping by (2 + 0.5), so it occupies [2, 3]. inner spans [-2, 3] —
+	# width 5, centre +0.5, which is half a unit to the RIGHT of the transform
+	# it was handed.
 	var outer := {"row": {"name": "outer", "advance": 1.0, "children": [
 		inner,
 		_box("tail", 2.0, 2.0, 1.0)]}}
 	var out := DioramaCompose.resolve(outer, _ctx())
-	# outer: inner really occupies [-2, 4.5]; cursor then advances by inner's
-	# width (6.5), so tail sits at 6.5 spanning [5.5, 7.5]. Union is [-2, 7.5].
-	assert_almost_eq(out["frame"]["footprint"].x, 9.5, 1e-5,
+	# outer: inner really occupies [-2, 3] and is 5 wide; tail is 2 wide and
+	# flush, stepping by (2.5 + 1), so it occupies [3, 5]. Union is [-2, 5] —
+	# width 6.5, centre +1.25. Using the cursor instead of inner's reported
+	# centre would misplace both the span and the centre.
+	assert_almost_eq(out["frame"]["footprint"].x, 6.5, 1e-5,
 			"outer row's span ignored the nested row's real extent")
-	assert_almost_eq(out["frame"]["xf"].origin.x, 2.75, 1e-5,
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.25, 1e-5,
 			"outer row's centre ignored the nested row's real extent")
 
 
@@ -376,3 +381,33 @@ func test_an_all_empty_row_does_not_poison_its_parent() -> void:
 			"an all-empty child changed the parent's width")
 	assert_true(is_finite(out["parts"][0]["xf"].origin.x),
 			"the real child got a non-finite transform")
+
+
+## `advance` is documented as "1.0 is flush, below overlaps, above gaps". That
+## is only true when neighbours are the same width: stepping by the PRECEDING
+## width alone leaves a width-4 child and a width-2 child one unit apart at
+## advance 1.0. residential samples every unit's width independently, so its
+## intended 5% overlap can come out as a visible gap — which is what the
+## committed specimen sheet shows on several cells.
+func test_row_advance_is_measured_between_adjacent_edges() -> void:
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	# wide occupies [-2, 2]; flush means narrow's near edge is at 2, so its
+	# centre is 3 — a step of (4 + 2) / 2, not of 4.
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 3.0, 1e-5,
+			"row stepped by the preceding width alone, leaving a gap")
+	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
+			"row span should be the two children flush against each other")
+
+
+## A cone or prism is emitted as a circle of radius w/2 — `d` never reaches the
+## renderer. Reporting a frame of (w, d) therefore describes geometry that does
+## not exist, and anything stacking on it inherits the lie.
+func test_a_round_mass_reports_the_footprint_it_actually_occupies() -> void:
+	var tree := {"mass": {"name": "spire", "kind": "cone",
+			"w": 2.0, "d": 5.0, "h": 3.0, "role": "brass"}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["frame"]["footprint"], Vector2(2.0, 2.0),
+			"round mass reported its declared depth, not its emitted radius")
