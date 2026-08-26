@@ -31,6 +31,15 @@ func _ready() -> void:
 	_build()
 
 
+## `columns` is exported, so 0 and negatives are both a keystroke away in the
+## inspector. Every consumer goes through here rather than reading the export:
+## clamping at the layout loop and leaving _add_stage on the raw value is how
+## the first fix left a negative column count building a zero-width pad whose
+## triangles were silently discarded, with the specimens standing on nothing.
+func _cols() -> int:
+	return maxi(1, columns)
+
+
 func _build() -> void:
 	for child in get_children():
 		remove_child(child)
@@ -41,10 +50,7 @@ func _build() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.roughness = 0.92
 
-	# One clamped value, used everywhere. Guarding only the row count while the
-	# layout loop below divides and mods by the raw export means a columns of 0
-	# set in the inspector takes the whole scene down rather than degrading.
-	var cols := maxi(1, columns)
+	var cols := _cols()
 	var rows := int(ceil(float(specimen_count) / float(cols)))
 	var tallest := 0.0
 	for i in range(specimen_count):
@@ -121,7 +127,7 @@ func _add_caption(i: int, at: Vector3) -> void:
 ## silhouettes read against a consistent value.
 func _add_stage(rows: int, mat: StandardMaterial3D) -> void:
 	var b := DioramaMeshKit.new()
-	var w := columns * cell_size
+	var w := _cols() * cell_size
 	var d := rows * cell_size
 	b.add_box(Transform3D(Basis.IDENTITY, Vector3(0, -0.2, 0)),
 			Vector3(w + cell_size, 0.2, d + cell_size),
@@ -150,7 +156,7 @@ func _add_camera(rows: int, tallest: float) -> void:
 
 	# Matches _add_stage's actual footprint (columns/rows of cells plus one
 	# cell of margin on each axis), not an arbitrary span.
-	var stage_w := maxi(1, columns) * cell_size + cell_size
+	var stage_w := _cols() * cell_size + cell_size
 	var stage_d := rows * cell_size + cell_size
 	var dist_h := (stage_w * 0.5) / tan(h_half)
 	# The stage recedes away from the camera at this pitch, so its far edge's

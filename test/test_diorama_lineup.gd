@@ -72,3 +72,20 @@ func test_captions_name_the_id_not_the_seed() -> void:
 		if child is Label3D:
 			assert_false((child as Label3D).text.begins_with("seed"),
 					"caption calls the building id a seed — the seed is fixed")
+
+
+## A negative columns is as reachable as zero, and it hits a different path:
+## the stage is built from `columns * cell_size`, which goes negative and whose
+## triangles are then discarded, leaving the specimens standing on nothing.
+func test_a_negative_columns_still_builds_a_stage() -> void:
+	var scene: PackedScene = load("res://game/diorama/lineup.tscn")
+	var lineup: Node3D = scene.instantiate()
+	lineup.specimen_count = 2
+	lineup.columns = -1
+	add_child_autofree(lineup)
+	await wait_frames(2)
+	var stage: MeshInstance3D = lineup.get_node_or_null("Stage")
+	assert_not_null(stage, "no stage node")
+	if stage != null:
+		assert_gt(stage.mesh.surface_get_array_len(0), 0,
+				"the stage has no geometry — its width went non-positive")

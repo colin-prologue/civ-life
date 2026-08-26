@@ -345,3 +345,34 @@ func test_an_empty_child_does_not_widen_a_row() -> void:
 			"an empty child widened the row")
 	assert_almost_eq(a["frame"]["xf"].origin.x, b["frame"]["xf"].origin.x, 1e-5,
 			"an empty child pushed the row off centre")
+
+
+## A row whose declared children ALL resolve to nothing must report a zero
+## frame, not -INF and NaN. Guarding the accumulation but then testing the
+## declared child count instead of whether anything accumulated leaves the
+## sentinels in place, and an enclosing row's cursor goes infinite.
+func test_a_row_of_only_empty_children_is_a_zero_frame() -> void:
+	var nothing := {"row": {"name": "gone", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var all_empty := {"row": {"name": "outer", "advance": 1.0, "children": [
+		nothing, _box("ghost", 1.0, 1.0, 0.0)]}}
+	var out := DioramaCompose.resolve(all_empty, _ctx())
+	assert_eq(out["parts"].size(), 0, "an all-empty row produced parts")
+	assert_eq(out["frame"]["footprint"], Vector2.ZERO,
+			"an all-empty row reported a non-zero footprint")
+	assert_eq(out["frame"]["height"], 0.0, "an all-empty row claimed height")
+	assert_true(is_finite(out["frame"]["xf"].origin.x),
+			"an all-empty row's centre is not a finite number")
+
+
+## And it must not poison a row that contains it alongside real geometry.
+func test_an_all_empty_row_does_not_poison_its_parent() -> void:
+	var nothing := {"row": {"name": "gone", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var mixed := {"row": {"name": "outer", "advance": 1.0, "children": [
+		nothing, _box("real", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(mixed, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 2.0, 1e-5,
+			"an all-empty child changed the parent's width")
+	assert_true(is_finite(out["parts"][0]["xf"].origin.x),
+			"the real child got a non-finite transform")

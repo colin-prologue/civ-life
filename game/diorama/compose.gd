@@ -152,6 +152,38 @@ static func _params_for(kind: String, n: Dictionary, w: float, d: float,
 	return {}
 
 
+## The union of what a node's children actually occupy, in the node's own local
+## space. Both combinators need exactly this, and they had drifted apart on it
+## four separate times — the frame origin, following a child's reported centre,
+## skipping children that resolved to nothing, and what to report when NOTHING
+## accumulated. Each was found in one and missed in the other, because they were
+## written separately and each kept its own copy of the arithmetic. One
+## accumulator, used by both, retires the whole class.
+class Bounds:
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+
+	## `centre` is where the child says it is; `footprint` is how much room it
+	## takes. A child that resolved to nothing is simply never added.
+	func add(centre: Vector2, footprint: Vector2) -> void:
+		var half := footprint * 0.5
+		lo = Vector2(minf(lo.x, centre.x - half.x),
+				minf(lo.y, centre.y - half.y))
+		hi = Vector2(maxf(hi.x, centre.x + half.x),
+				maxf(hi.y, centre.y + half.y))
+
+	## True when nothing was ever added — which is NOT the same as "the node had
+	## no children". A node can declare several and have every one resolve away.
+	func is_empty() -> bool:
+		return lo.x == INF
+
+	func span() -> Vector2:
+		return Vector2.ZERO if is_empty() else hi - lo
+
+	func mid() -> Vector2:
+		return Vector2.ZERO if is_empty() else (lo + hi) * 0.5
+
+
 ## Children bottom-to-top. Each child is handed the frame of the one below it,
 ## which is both where it sits and the footprint it inherits if it declares
 ## none — so a roof can say "cover whatever I am on, 8% bigger".
@@ -167,8 +199,7 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# Horizontal offset, in base-local space, of the thing the next child sits
 	# on. Zero until a child reports a centre of its own.
 	var centre := Vector2.ZERO
-	var lo := Vector2.INF
-	var hi := -Vector2.INF
+	var bounds := Bounds.new()
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
 				"frame": {"xf": base_xf.translated_local(
@@ -188,20 +219,13 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			var local: Vector3 = base_inv * child_xf.origin
 			centre = Vector2(local.x, local.z)
 			carried = f["footprint"]
-			var half := carried * 0.5
-			lo = Vector2(minf(lo.x, centre.x - half.x),
-					minf(lo.y, centre.y - half.y))
-			hi = Vector2(maxf(hi.x, centre.x + half.x),
-					maxf(hi.y, centre.y + half.y))
-	if lo.x == INF:
+			bounds.add(centre, carried)
+	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
-	# Report the union of what the children actually occupy, and its centre —
-	# the same contract _row reports, so the two combinators nest either way up.
-	var span := hi - lo
-	var mid := (lo + hi) * 0.5
+	var mid := bounds.mid()
 	return {"parts": parts,
 			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
-					"footprint": span, "height": y}}
+					"footprint": bounds.span(), "height": y}}
 
 
 ## Two siblings sharing a name would share every channel and come out
@@ -247,13 +271,11 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var parts: Array = []
 	var cursor := 0.0
 	# DioramaMeshKit.add_box centres geometry in X (and Z), so each child's
-	# own xf.origin.x sits at ITS centre, not its near edge — the true extent
-	# of the row is the min and max of every child's centre ∓ half its width,
-	# not "the origin to the last child's far edge" (which undercounts
-	# whenever an earlier child is wider than the last one).
-	var min_edge := INF
-	var max_edge := -INF
-	var deepest := 0.0
+	# own xf.origin sits at ITS centre, not its near edge — the true extent of
+	# the row is the union of every child's centre ∓ half its footprint, not
+	# "the origin to the last child's far edge" (which undercounts whenever an
+	# earlier child is wider than the last one).
+	var bounds := Bounds.new()
 	var tallest := 0.0
 	for child in children:
 		var child_ctx := {"seed": seed, "id": id, "path": path,
@@ -277,18 +299,15 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		if f["height"] > EPS:
 			var child_xf: Transform3D = f["xf"]
 			var local: Vector3 = base_inv * child_xf.origin
-			var half: float = f["footprint"].x * 0.5
-			min_edge = minf(min_edge, local.x - half)
-			max_edge = maxf(max_edge, local.x + half)
-			deepest = maxf(deepest, f["footprint"].y)
+			bounds.add(Vector2(local.x, local.z), f["footprint"])
 			tallest = maxf(tallest, f["height"])
 		cursor += f["footprint"].x * advance
-	var span := (max_edge - min_edge) if children.size() > 0 else 0.0
-	var center := (min_edge + max_edge) * 0.5 if children.size() > 0 else 0.0
-	var xf := base_xf.translated_local(Vector3(center, 0, 0))
+	if bounds.is_empty():
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	var mid := bounds.mid()
 	return {"parts": parts,
-			"frame": {"xf": xf, "footprint": Vector2(span, deepest),
-					"height": tallest}}
+			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
+					"footprint": bounds.span(), "height": tallest}}
 
 
 ## Suffix a template's name with its index so repeated units get distinct
