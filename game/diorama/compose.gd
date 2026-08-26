@@ -181,6 +181,8 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var has_template := n.has("of")
 	assert(not (has_template and n.has("children")),
 			"'%s' has both 'count'/'of' and 'children' — pick one" % path)
+	assert(not (n.has("count") and not has_template),
+			"'%s' has 'count' without 'of' — count only repeats a template" % path)
 	var children: Array = []
 	if has_template:
 		# floor, not round: round() reaches the upper bound, so [1, 3.99]
