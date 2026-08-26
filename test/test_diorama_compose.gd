@@ -84,3 +84,58 @@ func test_mass_inherits_the_incoming_footprint_when_it_omits_one() -> void:
 	var out := DioramaCompose.resolve(roof, ctx)
 	assert_eq(out["frame"]["footprint"], Vector2(3.0, 6.0),
 			"oversize did not scale the inherited footprint")
+
+
+func _two_tier() -> Dictionary:
+	return {"stack": {"name": "unit", "children": [
+		_box("lower", 2.0, 2.0, 1.0),
+		_box("upper", 1.0, 1.0, 3.0)]}}
+
+
+func test_stack_sums_height_and_takes_the_widest_footprint() -> void:
+	var out := DioramaCompose.resolve(_two_tier(), _ctx())
+	assert_eq(out["parts"].size(), 2, "stack lost a child")
+	assert_almost_eq(out["frame"]["height"], 4.0, 1e-5,
+			"stack height is not the sum of its children")
+	assert_eq(out["frame"]["footprint"], Vector2(2.0, 2.0),
+			"stack footprint is not the widest child's")
+
+
+func test_stack_places_each_child_on_top_of_the_one_below() -> void:
+	var out := DioramaCompose.resolve(_two_tier(), _ctx())
+	var lower: Dictionary = out["parts"][0]
+	var upper: Dictionary = out["parts"][1]
+	assert_almost_eq(lower["xf"].origin.y, 0.0, 1e-5,
+			"first child should sit on the incoming base plane")
+	assert_almost_eq(upper["xf"].origin.y, 1.0, 1e-5,
+			"second child should sit on top of the first, at its height")
+
+
+func test_a_zero_height_child_does_not_lift_its_successor() -> void:
+	var tree := {"stack": {"name": "unit", "children": [
+		_box("ghost", 1.0, 1.0, 0.0),
+		_box("real", 1.0, 1.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 1, "the degenerate child emitted a part")
+	assert_almost_eq(out["parts"][0]["xf"].origin.y, 0.0, 1e-5,
+			"a zero-height child still pushed its successor upward")
+
+
+func test_adding_a_named_sibling_does_not_disturb_the_others() -> void:
+	# The whole reason channels are keyed on names. If this fails, someone has
+	# reintroduced index-based hashing and every edit will reshuffle the town.
+	var before := DioramaCompose.resolve(
+			{"stack": {"name": "unit", "children": [
+				_box("body", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("roof", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0])]}}, _ctx())
+	var after := DioramaCompose.resolve(
+			{"stack": {"name": "unit", "children": [
+				_box("porch", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("body", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("roof", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0])]}}, _ctx())
+	assert_eq(before["parts"][0]["params"]["size"],
+			after["parts"][1]["params"]["size"],
+			"inserting 'porch' re-rolled 'body'")
+	assert_eq(before["parts"][1]["params"]["size"],
+			after["parts"][2]["params"]["size"],
+			"inserting 'porch' re-rolled 'roof'")

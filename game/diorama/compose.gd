@@ -73,6 +73,8 @@ static func new_ctx(seed: int, building_id: int) -> Dictionary:
 static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 	if node.has("mass"):
 		return _mass(node["mass"], ctx)
+	if node.has("stack"):
+		return _stack(node["stack"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
 	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
 
@@ -120,3 +122,44 @@ static func _params_for(kind: String, n: Dictionary, w: float, d: float,
 			return {"radius": w * 0.5, "height": h}
 	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
 	return {}
+
+
+## Children bottom-to-top. Each child is handed the frame of the one below it,
+## which is both where it sits and the footprint it inherits if it declares
+## none — so a roof can say "cover whatever I am on, 8% bigger".
+static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var children: Array = n.get("children", [])
+	_assert_unique_names(children, path)
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var parts: Array = []
+	var carried: Vector2 = ctx["frame"]["footprint"]
+	var y := 0.0
+	var widest := Vector2.ZERO
+	for child in children:
+		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
+				"frame": {"xf": base_xf.translated_local(Vector3(0, y, 0)),
+						"footprint": carried, "height": 0.0}}
+		var out := resolve(child, child_ctx)
+		parts.append_array(out["parts"])
+		var f: Dictionary = out["frame"]
+		y += f["height"]
+		if f["height"] > EPS:
+			carried = f["footprint"]
+		widest = Vector2(maxf(widest.x, f["footprint"].x),
+				maxf(widest.y, f["footprint"].y))
+	return {"parts": parts,
+			"frame": {"xf": base_xf, "footprint": widest, "height": y}}
+
+
+## Two siblings sharing a name would share every channel and come out
+## identical. That is never the intent and is otherwise invisible — the
+## buildings just look oddly repetitive.
+static func _assert_unique_names(children: Array, path: String) -> void:
+	var seen := {}
+	for child: Dictionary in children:
+		for type_key: String in child:
+			var nm: String = child[type_key].get("name", "")
+			assert(not seen.has(nm),
+					"duplicate sibling name '%s' under '%s'" % [nm, path])
+			seen[nm] = true
