@@ -35,3 +35,18 @@ func _init(p_id: int, p_coord: Vector2i) -> void:
 ## exists, it has a place, and that is the whole contract.
 func step(_world: WorldMap) -> void:
 	pass
+
+
+## How much of the tile's forage this agent is competing for, right now.
+##
+## The world keeps a running per-tile total of this so that anything deciding
+## where to stand can read one number instead of scanning every agent. It is a
+## *quantity*, asked of the agent, precisely so that the world never has to ask
+## what kind of agent it is holding: something that grazes reports its mouths,
+## something that does not reports nothing, and `WorldMap` adds up whatever it
+## is given.
+##
+## Zero here is the honest default rather than a placeholder. Standing on a
+## meadow does not eat it.
+func forage_demand() -> float:
+	return 0.0

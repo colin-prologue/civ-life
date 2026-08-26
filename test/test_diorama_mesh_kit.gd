@@ -1,12 +1,18 @@
 extends GutTest
 ## Geometry invariants for the diorama's triangle accumulator.
 ##
-## These exist because a spike frame that renders is not a spike frame that
-## renders *correctly*: the scaffold's two-sided emission produced coincident
-## coplanar triangles that z-fought, so roughly half of every surface shaded
-## with an inward normal and took no directional light at all. The scene still
-## drew — it just had no cast shadow, no plane separation, and speckle where
-## the depth test tied. Nothing in a headless suite noticed.
+## These exist because a frame that renders is not a frame that renders
+## *correctly*. The scaffold emitted every triangle twice at the same
+## coordinates with opposed normals; the copies z-fought, roughly half of every
+## surface shaded with an inward normal, and the whole valley took almost no
+## directional light. It still drew. It just had no cast shadow, no plane
+## separation, and speckle where the depth test tied — and nothing in a
+## headless suite noticed, because every assertion in it was about structure
+## and determinism rather than about whether the geometry was physically sane.
+##
+## That matters more as the building vocabulary grows: every new recipe is a
+## fresh chance to wind a face the wrong way, and with culling disabled the
+## symptom is not a hole you would spot but lighting that is subtly wrong.
 ##
 ## So the contract is asserted on the buffers instead of the picture, which
 ## keeps it runnable on a host with no rendering context (see capture.sh):
@@ -88,12 +94,17 @@ func test_add_tri_emits_one_triangle() -> void:
 			+ "the same depth")
 
 
-## Pins the engine convention this whole file exists because of: Godot treats
-## the CLOCKWISE winding as front-facing, i.e. the one whose right-hand normal
-## points away from the viewer. So a face that is visible AND correctly lit
-## from outside must carry a stored normal that is the exact negation of its
-## own emitted winding's right-hand normal. If a future Godot flips this, the
-## diorama goes invisible and this test says why in one line.
+## Pins `WINDING` against the recipes rather than leaving it as a constant
+## somebody can flip to see what happens.
+##
+## The recipes all wind their faces the same way round, and that way round
+## yields a right-hand normal pointing INTO the solid — so `add_tri` negates it
+## to get the outward normal the light needs. The two halves of that sentence
+## are set in different files, and nothing except this assertion connects them:
+## flip `WINDING`, or write one recipe the other way round, and the geometry
+## still renders (culling is disabled) while lighting quietly inverts. That is
+## the exact shape of the bug that cost this spike its first pass, arriving by
+## a different route.
 func test_emitted_winding_is_opposite_its_stored_normal() -> void:
 	var kit := DioramaMeshKit.new()
 	kit.add_box(Transform3D.IDENTITY, Vector3.ONE, Color.WHITE)
@@ -104,8 +115,9 @@ func test_emitted_winding_is_opposite_its_stored_normal() -> void:
 		if rh.length_squared() < EPS:
 			continue
 		assert_almost_eq(rh.normalized().dot(n[i]), -1.0, 1e-3,
-				"winding/normal pair no longer matches Godot's clockwise "
-				+ "front-face rule — geometry will cull or light inside-out")
+				"stored normal is no longer the negation of its winding's "
+				+ "right-hand normal — WINDING and the recipes disagree, and "
+				+ "the model will light inside-out while still rendering")
 
 
 func test_primitives_have_no_coincident_faces() -> void:

@@ -50,11 +50,12 @@ func _update_status() -> void:
 	# The herd total is here because the thing this world is trying to show is
 	# change over time, and a number that moves every turn is the cheapest way to
 	# tell whether what is on screen is going anywhere.
-	_status.text = "Turn %d — %s, year %d — %d animals in %d herds — seed %d — press Space to advance" % [
+	_status.text = "Turn %d — %s, year %d — %d animals in %d herds — %d grain in store — seed %d — press Space to advance" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
 		roundi(world.total_herd_population()),
 		world.herds().size(),
+		roundi(world.total_granary_store()),
 		world.world_seed,
 	]

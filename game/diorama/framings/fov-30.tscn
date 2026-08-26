@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://game/diorama/spike.gd" id="1"]
+
+[node name="Spike" type="Node3D"]
+script = ExtResource("1")
+fov_horizontal_deg = 30.0
+camera_distance = 70.0

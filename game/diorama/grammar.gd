@@ -7,13 +7,11 @@ extends RefCounted
 ## the motion verdict, assemble one by running the same filter in reverse).
 ## S0 uses a single style on purpose; CultureStyle parameters arrive with S3.
 
-## Semantic roles, not literal colours — see DioramaPalette for the lab
-## correspondence and why these are linear.
-static var PLASTER := DioramaPalette.col("plaster")
-static var PLASTER_DIM := DioramaPalette.col("plaster2")
-static var ROOF := DioramaPalette.col("ochre")
-static var BRASS := DioramaPalette.col("brass")
-static var WOOD := DioramaPalette.col("wood")
+const PLASTER := Color(0.902, 0.875, 0.800)
+const PLASTER_DIM := Color(0.812, 0.776, 0.682)
+const ROOF := Color(0.659, 0.475, 0.290)
+const BRASS := Color(0.788, 0.643, 0.290)
+const WOOD := Color(0.478, 0.361, 0.220)
 
 
 static func _part(kind: String, xf: Transform3D, params: Dictionary,
@@ -22,7 +20,7 @@ static func _part(kind: String, xf: Transform3D, params: Dictionary,
 			"tag": tag, "y": y}
 
 
-static func residential(seed: int, id: int, s: float = 0.55) -> Array:
+static func residential(seed: int, id: int, s: float = 0.72) -> Array:
 	var parts: Array = []
 	var n := 1 + int(DioramaHexKit.h01(seed, 51, id) * 3.0)
 	var x := 0.0
@@ -41,7 +39,7 @@ static func residential(seed: int, id: int, s: float = 0.55) -> Array:
 	return parts
 
 
-static func civic(seed: int, id: int, s: float = 0.55) -> Array:
+static func civic(seed: int, id: int, s: float = 0.72) -> Array:
 	var parts: Array = []
 	var pw := (2.4 + DioramaHexKit.h01(seed, 61, id)) * s
 	var pd := pw * 0.62
@@ -68,7 +66,7 @@ static func civic(seed: int, id: int, s: float = 0.55) -> Array:
 	return parts
 
 
-static func stepped(seed: int, id: int, s: float = 0.55) -> Array:
+static func stepped(seed: int, id: int, s: float = 0.72) -> Array:
 	var parts: Array = []
 	var base_w := (1.5 + DioramaHexKit.h01(seed, 71, id) * 0.7) * s
 	var base_h := 0.24 * s
@@ -98,7 +96,7 @@ static func stepped(seed: int, id: int, s: float = 0.55) -> Array:
 ## The hero arch — piers and voussoirs as separate parts, so a future ruin
 ## keeps its stumps or a partial span. Voussoir long axis lies TANGENT to the
 ## arc (lab finding: radial orientation makes an M-shaped scallop).
-static func hero_arch(seed: int, s: float = 1.1) -> Array:
+static func hero_arch(seed: int, s: float = 1.5) -> Array:
 	var parts: Array = []
 	var w := (2.2 + DioramaHexKit.h01(seed, 81, 0) * 0.8) * s
 	var h := (2.6 + DioramaHexKit.h01(seed, 82, 0) * 0.6) * s
