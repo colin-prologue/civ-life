@@ -277,3 +277,31 @@ func test_tags_are_monotonic_in_height() -> void:
 	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
 	assert_lt(highest_base, lowest_upper,
 			"a base part sits above an upper part")
+
+
+## A mass stacked on a row has to land over the row's CENTRE, not over the
+## transform the row was handed.
+##
+## `_row` returns a frame whose `xf` is the true centre of its children — it
+## has to, because a row of unequal widths advancing by a fraction of each
+## width does not end up centred on where it started. `_stack` was handing
+## every child `base_xf` and reading only the child's footprint, so the roof
+## came out correctly SIZED and in the wrong PLACE: over a 4/1/2 terrace
+## spanning -2..6 it sat at -4..4, overhanging empty ground on one side and
+## leaving the last unit bare. Nothing caught it because the shipped
+## `residential` puts its roofs inside each unit's stack, with the row on the
+## outside — the arrangement that breaks is the one slice 2 reaches for first.
+func test_a_mass_stacked_on_a_row_is_centred_over_it() -> void:
+	var tree := {"stack": {"name": "terrace", "children": [
+		{"row": {"name": "units", "advance": 1.0, "children": [
+			_box("a", 4.0, 2.0, 1.0),
+			_box("b", 1.0, 2.0, 1.0),
+			_box("c", 2.0, 2.0, 1.0)]}},
+		{"mass": {"name": "roof", "kind": "box", "h": 0.5, "role": "ochre"}}]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var roof: Dictionary = out["parts"][3]
+	# the row spans x in [-2, 6]; its centre is +2
+	assert_almost_eq(roof["xf"].origin.x, 2.0, 1e-5,
+			"roof did not land over the terrace's centre")
+	assert_almost_eq(roof["params"]["size"].x, 8.0, 1e-5,
+			"roof did not span the whole terrace")

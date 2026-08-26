@@ -160,24 +160,48 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var children: Array = n.get("children", [])
 	_assert_unique_names(children, path)
 	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var base_inv := base_xf.affine_inverse()
 	var parts: Array = []
 	var carried: Vector2 = ctx["frame"]["footprint"]
 	var y := 0.0
-	var widest := Vector2.ZERO
+	# Horizontal offset, in base-local space, of the thing the next child sits
+	# on. Zero until a child reports a centre of its own.
+	var centre := Vector2.ZERO
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
-				"frame": {"xf": base_xf.translated_local(Vector3(0, y, 0)),
+				"frame": {"xf": base_xf.translated_local(
+						Vector3(centre.x, y, centre.y)),
 						"footprint": carried, "height": 0.0}}
 		var out := resolve(child, child_ctx)
 		parts.append_array(out["parts"])
 		var f: Dictionary = out["frame"]
 		y += f["height"]
 		if f["height"] > EPS:
+			# A child may report a centre that is NOT the transform it was
+			# handed — a row of unequal widths advancing by a fraction of each
+			# width does not end up centred on where it started. Follow it, or
+			# whatever stacks on top lands over the wrong place: correctly
+			# sized, and hanging off one end.
+			var child_xf: Transform3D = f["xf"]
+			var local: Vector3 = base_inv * child_xf.origin
+			centre = Vector2(local.x, local.z)
 			carried = f["footprint"]
-		widest = Vector2(maxf(widest.x, f["footprint"].x),
-				maxf(widest.y, f["footprint"].y))
+			var half := carried * 0.5
+			lo = Vector2(minf(lo.x, centre.x - half.x),
+					minf(lo.y, centre.y - half.y))
+			hi = Vector2(maxf(hi.x, centre.x + half.x),
+					maxf(hi.y, centre.y + half.y))
+	if lo.x == INF:
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	# Report the union of what the children actually occupy, and its centre —
+	# the same contract _row reports, so the two combinators nest either way up.
+	var span := hi - lo
+	var mid := (lo + hi) * 0.5
 	return {"parts": parts,
-			"frame": {"xf": base_xf, "footprint": widest, "height": y}}
+			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
+					"footprint": span, "height": y}}
 
 
 ## Two siblings sharing a name would share every channel and come out
