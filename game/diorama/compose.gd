@@ -197,7 +197,13 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
 	var parts: Array = []
 	var cursor := 0.0
-	var span := 0.0
+	# DioramaMeshKit.add_box centres geometry in X (and Z), so each child's
+	# own xf.origin.x sits at ITS centre, not its near edge — the true extent
+	# of the row is the min and max of every child's centre ∓ half its width,
+	# not "the origin to the last child's far edge" (which undercounts
+	# whenever an earlier child is wider than the last one).
+	var min_edge := INF
+	var max_edge := -INF
 	var deepest := 0.0
 	var tallest := 0.0
 	for child in children:
@@ -207,12 +213,17 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var out := resolve(child, child_ctx)
 		parts.append_array(out["parts"])
 		var f: Dictionary = out["frame"]
-		span = cursor + f["footprint"].x
+		var half: float = f["footprint"].x * 0.5
+		min_edge = minf(min_edge, cursor - half)
+		max_edge = maxf(max_edge, cursor + half)
 		deepest = maxf(deepest, f["footprint"].y)
 		tallest = maxf(tallest, f["height"])
 		cursor += f["footprint"].x * advance
+	var span := (max_edge - min_edge) if children.size() > 0 else 0.0
+	var center := (min_edge + max_edge) * 0.5 if children.size() > 0 else 0.0
+	var xf := base_xf.translated_local(Vector3(center, 0, 0))
 	return {"parts": parts,
-			"frame": {"xf": base_xf, "footprint": Vector2(span, deepest),
+			"frame": {"xf": xf, "footprint": Vector2(span, deepest),
 					"height": tallest}}
 
 

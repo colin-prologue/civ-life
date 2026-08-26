@@ -185,6 +185,27 @@ func test_row_frame_spans_its_children_and_takes_the_tallest() -> void:
 			"row height should be its tallest child")
 
 
+func test_row_frame_spans_true_edges_with_unequal_widths() -> void:
+	# test_row_frame_spans_its_children_and_takes_the_tallest above uses two
+	# EQUAL-width children, so "far edge of the last child minus the row's own
+	# origin" and "true near-edge-to-far-edge span" come out equal by
+	# coincidence and the bug they are meant to catch is invisible. A wide
+	# first child and a narrower last child pulls them apart: the true span
+	# runs from the first child's near edge (-2, since it is 4 wide and
+	# centred on the row origin) to the last child's far edge (5, since it
+	# starts at cursor 4 and is 2 wide) — 7 total. The old
+	# "cursor + last child's width" arithmetic instead reported 4 + 2 = 6.
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("a", 4.0, 1.0, 1.0),
+		_box("b", 2.0, 1.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 7.0, 1e-5,
+			"row width should span the first child's near edge to the last "
+			+ "child's far edge, not the origin to the last child's far edge")
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.5, 1e-5,
+			"row frame origin should be the true centre of its span")
+
+
 func _tower() -> Dictionary:
 	return {"stack": {"name": "tower", "children": [
 		_box("plinth", 4.0, 4.0, 1.0),
