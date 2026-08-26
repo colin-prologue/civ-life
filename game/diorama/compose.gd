@@ -310,20 +310,6 @@ static func _area_of(p: Dictionary) -> float:
 	return r * r * 4.0
 
 
-## Keep the parts a building of this condition would still have standing.
-## Slice 1 needs only the filter; the full condition transform (debris, partial
-## spans) is a later slice. The ordering it relies on is asserted in the tests.
-const CONDITION_ORDER := {"accent": 0.85, "upper": 0.60, "mid": 0.35, "base": 0.0}
-
-
-static func parts_at_condition(parts: Array, condition: float) -> Array:
-	var kept: Array = []
-	for p: Dictionary in parts:
-		if condition >= CONDITION_ORDER.get(p["tag"], 0.0):
-			kept.append(p)
-	return kept
-
-
 ## Resolve each part's role into a concrete colour. Kept separate from build()
 ## so one tree can be rendered in several palettes — which is what makes
 ## culture a mapping rather than a fork of the geometry.

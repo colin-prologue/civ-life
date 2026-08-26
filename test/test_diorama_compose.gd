@@ -257,14 +257,3 @@ func test_tags_are_monotonic_in_height() -> void:
 	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
 	assert_lt(highest_base, lowest_upper,
 			"a base part sits above an upper part")
-
-
-func test_condition_removes_from_the_top_down() -> void:
-	var parts := DioramaCompose.build(_tower(), SEED, 1)
-	var half := DioramaCompose.parts_at_condition(parts, 0.5)
-	var ruin := DioramaCompose.parts_at_condition(parts, 0.05)
-	assert_lt(half.size(), parts.size(), "condition 0.5 removed nothing")
-	assert_lt(ruin.size(), half.size(), "condition 0.05 removed no more than 0.5")
-	for p: Dictionary in ruin:
-		assert_eq(p["tag"], "base",
-				"only base parts should survive at condition 0.05")
