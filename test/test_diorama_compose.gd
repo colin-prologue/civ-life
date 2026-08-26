@@ -183,3 +183,67 @@ func test_row_frame_spans_its_children_and_takes_the_tallest() -> void:
 			"row depth should be its deepest child")
 	assert_almost_eq(out["frame"]["height"], 5.0, 1e-5,
 			"row height should be its tallest child")
+
+
+func _tower() -> Dictionary:
+	return {"stack": {"name": "tower", "children": [
+		_box("plinth", 4.0, 4.0, 1.0),
+		_box("shaft", 3.0, 3.0, 6.0),
+		{"mass": {"name": "spire", "kind": "cone", "w": 0.4, "d": 0.4,
+				"h": 3.0, "role": "brass"}}]}}
+
+
+func test_build_tags_every_part() -> void:
+	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
+		assert_ne(p["tag"], "", "a part came back untagged")
+
+
+func test_tag_bands_follow_height() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_eq(parts[0]["tag"], "base", "the bottom part is not tagged base")
+	assert_eq(parts[1]["tag"], "mid", "the middle part is not tagged mid")
+
+
+func test_a_small_cone_on_top_is_an_accent() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_eq(parts[2]["tag"], "accent",
+			"a slim cone above the mass should read as an accent")
+
+
+func test_y_is_the_part_centre_height() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_almost_eq(parts[0]["y"], 0.5, 1e-5, "plinth centre should be h/2")
+	assert_almost_eq(parts[1]["y"], 4.0, 1e-5, "shaft centre should be 1 + 6/2")
+
+
+func test_tags_are_monotonic_in_height() -> void:
+	# The property the ruin filter depends on: nothing tagged base sits above
+	# anything tagged upper. Uses its own four-box fixture rather than _tower()
+	# — the tower tops out in `mid` and `accent`, so running this against it
+	# would pass without ever comparing a base to an upper.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
+	var parts := DioramaCompose.build(tall, SEED, 1)
+	var highest_base := -INF
+	var lowest_upper := INF
+	for p: Dictionary in parts:
+		if p["tag"] == "base":
+			highest_base = maxf(highest_base, p["y"])
+		elif p["tag"] == "upper":
+			lowest_upper = minf(lowest_upper, p["y"])
+	assert_gt(highest_base, -INF, "fixture produced no base part to compare")
+	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
+	assert_lt(highest_base, lowest_upper,
+			"a base part sits above an upper part")
+
+
+func test_condition_removes_from_the_top_down() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	var half := DioramaCompose.parts_at_condition(parts, 0.5)
+	var ruin := DioramaCompose.parts_at_condition(parts, 0.05)
+	assert_lt(half.size(), parts.size(), "condition 0.5 removed nothing")
+	assert_lt(ruin.size(), half.size(), "condition 0.05 removed no more than 0.5")
+	for p: Dictionary in ruin:
+		assert_eq(p["tag"], "base",
+				"only base parts should survive at condition 0.05")

@@ -225,3 +225,65 @@ static func _indexed(template: Dictionary, i: int) -> Dictionary:
 		body["name"] = "%s%d" % [body.get("name", "item"), i]
 		out[type_key] = body
 	return out
+
+
+## Public entry point. Resolve the tree, then derive what no node should have
+## to author: each part's centre height and its structural tag.
+static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
+	var out := resolve(tree, new_ctx(seed, building_id))
+	var parts: Array = out["parts"]
+	_finish(parts)
+	return parts
+
+
+## Tags fall out of normalised height once the building's full extent is known,
+## so a style author never labels a part and can never forget to. That is what
+## makes ruins and the assembly tween automatic for every new style.
+static func _finish(parts: Array) -> void:
+	if parts.is_empty():
+		return
+	var total := 0.0
+	var biggest_area := 0.0
+	for p: Dictionary in parts:
+		total = maxf(total, p["xf"].origin.y + _height_of(p))
+		biggest_area = maxf(biggest_area, _area_of(p))
+	for p: Dictionary in parts:
+		var h := _height_of(p)
+		p["y"] = p["xf"].origin.y + h * 0.5
+		var t: float = p["y"] / maxf(total, EPS)
+		if (p["kind"] == "cone" or p["kind"] == "prism") \
+				and _area_of(p) < biggest_area * 0.25:
+			p["tag"] = "accent"
+		elif t < 0.20:
+			p["tag"] = "base"
+		elif t < 0.65:
+			p["tag"] = "mid"
+		else:
+			p["tag"] = "upper"
+
+
+static func _height_of(p: Dictionary) -> float:
+	var params: Dictionary = p["params"]
+	return params["size"].y if params.has("size") else params.get("height", 0.0)
+
+
+static func _area_of(p: Dictionary) -> float:
+	var params: Dictionary = p["params"]
+	if params.has("size"):
+		return params["size"].x * params["size"].z
+	var r: float = params.get("radius", 0.0)
+	return r * r * 4.0
+
+
+## Keep the parts a building of this condition would still have standing.
+## Slice 1 needs only the filter; the full condition transform (debris, partial
+## spans) is a later slice. The ordering it relies on is asserted in the tests.
+const CONDITION_ORDER := {"accent": 0.85, "upper": 0.60, "mid": 0.35, "base": 0.0}
+
+
+static func parts_at_condition(parts: Array, condition: float) -> Array:
+	var kept: Array = []
+	for p: Dictionary in parts:
+		if condition >= CONDITION_ORDER.get(p["tag"], 0.0):
+			kept.append(p)
+	return kept
