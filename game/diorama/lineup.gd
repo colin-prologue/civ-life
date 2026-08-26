@@ -42,21 +42,26 @@ func _build() -> void:
 	mat.roughness = 0.92
 
 	var rows := int(ceil(float(specimen_count) / float(maxi(1, columns))))
+	var tallest := 0.0
 	for i in range(specimen_count):
 		var col := i % columns
 		var row := i / columns
 		var at := Vector3((col - (columns - 1) * 0.5) * cell_size, 0.0,
 				(row - (rows - 1) * 0.5) * cell_size)
-		_add_specimen(i, at, mat)
+		tallest = maxf(tallest, _add_specimen(i, at, mat))
 		_add_caption(i, at)
 
 	_add_stage(rows, mat)
-	_add_camera(rows)
+	_add_camera(rows, tallest)
 	_add_light()
 	_add_environment()
 
 
-func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> void:
+## Returns the specimen's highest point above the stage (xf.origin.y + its own
+## height), so _add_camera can frame the tallest building in the batch instead
+## of guessing a constant that goes stale the moment a style's proportions
+## change.
+func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	var parts := DioramaCompose.build(DioramaStyles.residential(), world_seed, i)
 	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
 	var b := DioramaMeshKit.new()
@@ -67,8 +72,26 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> void:
 	inst.material_override = mat
 	inst.position = at
 	add_child(inst)
+	var top := 0.0
+	for p: Dictionary in parts:
+		var params: Dictionary = p["params"]
+		var h: float = params["size"].y if params.has("size") else params.get("height", 0.0)
+		top = maxf(top, p["xf"].origin.y + h)
+	return top
 
 
+## Above the stage, not below it: _add_stage builds its pad from local y in
+## [0, 0.2] at xf.origin.y = -0.2, so the pad's TOP is world y = 0.0 — a
+## negative y here sits under that opaque geometry and never reaches the
+## camera at all.
+##
+## 0.05 clears the pad but is not enough on its own: at this camera's shallow
+## pitch, a caption at near-ground height and a row behind its own specimen is
+## still hidden behind the ROOF of whichever specimen sits one row closer to
+## the camera in the same column — verified by ray-tracing camera-to-caption
+## against each neighbour's roof height, which is what set 0.45 rather than a
+## rounder-looking guess: the tallest roof in this batch needs about 0.36 to
+## clear, and 0.45 keeps a working margin.
 func _add_caption(i: int, at: Vector3) -> void:
 	var label := Label3D.new()
 	label.name = "Caption%d" % i
@@ -76,7 +99,7 @@ func _add_caption(i: int, at: Vector3) -> void:
 	label.font_size = 96
 	label.pixel_size = 0.002
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.position = at + Vector3(0, -0.25, cell_size * 0.35)
+	label.position = at + Vector3(0, 0.45, cell_size * 0.35)
 	add_child(label)
 
 
@@ -96,17 +119,35 @@ func _add_stage(rows: int, mat: StandardMaterial3D) -> void:
 	add_child(inst)
 
 
-func _add_camera(rows: int) -> void:
+## Distance derived from the frustum rather than a guessed constant, which is
+## what left the previous version wrong by construction: too close on the
+## horizontal axis (clipping the outer columns) and too far on the vertical
+## one (leaving the bottom of the frame mostly bare stage). Both axes are
+## solved independently — "how far back until this half-extent fits inside
+## this half-angle" — and the camera sits at whichever needs more room.
+func _add_camera(rows: int, tallest: float) -> void:
 	var cam := Camera3D.new()
 	cam.name = "Camera"
-	var span := maxf(columns * cell_size, rows * cell_size)
-	var dist := span * 2.1
 	var pitch := deg_to_rad(camera_pitch_deg)
+	var aspect := 16.0 / 9.0
+	var h_half := deg_to_rad(fov_horizontal_deg) * 0.5
+	var v_half := atan(tan(h_half) / aspect)
+	cam.fov = rad_to_deg(2.0 * v_half)
+
+	# Matches _add_stage's actual footprint (columns/rows of cells plus one
+	# cell of margin on each axis), not an arbitrary span.
+	var stage_w := columns * cell_size + cell_size
+	var stage_d := rows * cell_size + cell_size
+	var dist_h := (stage_w * 0.5) / tan(h_half)
+	# The stage recedes away from the camera at this pitch, so its far edge's
+	# on-screen extent foreshortens by sin(pitch); the tallest specimen adds
+	# on top of that because roofs are the thing most likely to clip first.
+	var vertical_extent := stage_d * sin(pitch) + tallest
+	var dist_v := vertical_extent / tan(v_half)
+	var dist := maxf(dist_h, dist_v) * 1.1
+
 	cam.position = Vector3(0, sin(pitch) * dist, cos(pitch) * dist)
 	cam.basis = Basis.looking_at(-cam.position, Vector3.UP)
-	var aspect := 16.0 / 9.0
-	cam.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(fov_horizontal_deg) * 0.5)
-			/ aspect))
 	add_child(cam)
 	if not Engine.is_editor_hint():
 		cam.make_current()
