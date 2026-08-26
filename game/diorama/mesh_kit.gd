@@ -12,27 +12,38 @@ var normals := PackedVector3Array()
 var colors := PackedColorArray()
 
 
+## Single-sided. CALLER CONTRACT: wind (a, b, c) counter-clockwise as seen
+## from OUTSIDE the surface, so that (b-a)x(c-a) is the outward normal. Every
+## recipe in this spike follows that convention; the engine's disagreement
+## with it is handled here, once.
+##
+## Godot's front face is the winding whose right-hand normal points AWAY from
+## the viewer — clockwise-front, the opposite of the OpenGL default. So the
+## outward-CCW triangle the caller describes is the one Godot would cull. We
+## therefore emit it reversed, and store the outward normal `n` alongside:
+## winding satisfies the rasteriser, normal satisfies the light.
+##
+## This used to emit each triangle twice with opposed normals, to spare the
+## recipes from having to agree on a winding. That was not free. The two copies
+## are coplanar and coincident, so they z-fight — and because Godot kept the
+## clockwise one, the copy that survived was always the one carrying the INWARD
+## normal. Every surface in the diorama shaded with a normal pointing away from
+## the sun and took no directional light at all; what looked like lighting was
+## pure ambient. Hence no cast shadow, no plane separation, and speckle along
+## the depth ties. Measured at the time: a mesh_kit box rendered 2.5x darker
+## than an identical stock BoxMesh under the same light, and the terrain — whose
+## windings already followed the caller contract — vanished entirely the moment
+## the back faces were dropped. See test/test_diorama_mesh_kit.gd.
 func add_tri(a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
 	var n := (b - a).cross(c - a)
 	if n.length_squared() < 1e-12:
 		return
 	n = n.normalized()
-	# Two-sided on purpose: recipes compose boxes, fans, and open surfaces
-	# with mixed windings, and a spike optimises for tunability over
-	# triangle count. Each side carries its own outward normal so lighting
-	# is correct from either face. TODO(S0-local): settle windings and drop
-	# the back faces once the composition is locked.
 	verts.append(a)
-	verts.append(b)
 	verts.append(c)
+	verts.append(b)
 	for _i in range(3):
 		normals.append(n)
-		colors.append(col)
-	verts.append(a)
-	verts.append(c)
-	verts.append(b)
-	for _i in range(3):
-		normals.append(-n)
 		colors.append(col)
 
 
@@ -51,12 +62,12 @@ func add_box(xf: Transform3D, size: Vector3, col: Color) -> void:
 		for corner in [Vector3(-hx, yy, -hz), Vector3(hx, yy, -hz),
 				Vector3(hx, yy, hz), Vector3(-hx, yy, hz)]:
 			p.append(xf * corner)
-	add_quad(p[0], p[3], p[2], p[1], col)          # bottom
-	add_quad(p[4], p[5], p[6], p[7], col)          # top
-	add_quad(p[0], p[1], p[5], p[4], col)          # -z
-	add_quad(p[2], p[3], p[7], p[6], col)          # +z
-	add_quad(p[1], p[2], p[6], p[5], col)          # +x
-	add_quad(p[3], p[0], p[4], p[7], col)          # -x
+	add_quad(p[1], p[2], p[3], p[0], col)          # bottom (-y)
+	add_quad(p[7], p[6], p[5], p[4], col)          # top    (+y)
+	add_quad(p[4], p[5], p[1], p[0], col)          # -z
+	add_quad(p[6], p[7], p[3], p[2], col)          # +z
+	add_quad(p[5], p[6], p[2], p[1], col)          # +x
+	add_quad(p[7], p[4], p[0], p[3], col)          # -x
 
 
 ## Tapered box: top face shrunk toward its centre. taper 0 = straight box,
@@ -75,11 +86,11 @@ func add_tapered_box(xf: Transform3D, size: Vector3, taper: float, col: Color) -
 		b.append(xf * v)
 	for v in top:
 		t.append(xf * v)
-	add_quad(b[0], b[3], b[2], b[1], col)
-	add_quad(t[0], t[1], t[2], t[3], col)
+	add_quad(b[1], b[2], b[3], b[0], col)
+	add_quad(t[3], t[2], t[1], t[0], col)
 	for i in range(4):
 		var j := (i + 1) % 4
-		add_quad(b[i], b[j], t[j], t[i], col)
+		add_quad(t[i], t[j], b[j], b[i], col)
 
 
 ## N-gon prism (column) with optional taper, sitting on local origin.
@@ -93,9 +104,9 @@ func add_prism(xf: Transform3D, radius: float, height: float, col: Color,
 		var b1 := xf * Vector3(cos(a1) * radius, 0, sin(a1) * radius)
 		var t0 := xf * Vector3(cos(a0) * rt, height, sin(a0) * rt)
 		var t1 := xf * Vector3(cos(a1) * rt, height, sin(a1) * rt)
-		add_quad(b0, b1, t1, t0, col)
-		add_tri(xf * Vector3(0, height, 0), t0, t1, col)
-		add_tri(xf * Vector3(0, 0, 0), b1, b0, col)
+		add_quad(t0, t1, b1, b0, col)
+		add_tri(xf * Vector3(0, height, 0), t1, t0, col)
+		add_tri(xf * Vector3(0, 0, 0), b0, b1, col)
 
 
 ## Cone (spire / conifer tier), sitting on local origin.
@@ -107,8 +118,8 @@ func add_cone(xf: Transform3D, radius: float, height: float, col: Color,
 		var a1 := TAU * (i + 1) / segments
 		var b0 := xf * Vector3(cos(a0) * radius, 0, sin(a0) * radius)
 		var b1 := xf * Vector3(cos(a1) * radius, 0, sin(a1) * radius)
-		add_tri(b0, b1, tip, col)
-		add_tri(xf * Vector3(0, 0, 0), b1, b0, col)
+		add_tri(b1, b0, tip, col)
+		add_tri(xf * Vector3(0, 0, 0), b0, b1, col)
 
 
 ## Faceted half-dome, flat side down at local origin.
@@ -125,9 +136,9 @@ func add_dome(xf: Transform3D, radius: float, squash: float, col: Color,
 			var v01 := xf * _dome_pt(radius, squash, a0, p1)
 			var v11 := xf * _dome_pt(radius, squash, a1, p1)
 			if ri == rings - 1:
-				add_tri(v00, v01, v10, col)
+				add_tri(v10, v01, v00, col)
 			else:
-				add_quad(v00, v01, v11, v10, col)
+				add_quad(v10, v11, v01, v00, col)
 
 
 func _dome_pt(radius: float, squash: float, a: float, p: float) -> Vector3:
