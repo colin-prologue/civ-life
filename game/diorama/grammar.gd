@@ -7,11 +7,13 @@ extends RefCounted
 ## the motion verdict, assemble one by running the same filter in reverse).
 ## S0 uses a single style on purpose; CultureStyle parameters arrive with S3.
 
-const PLASTER := Color(0.902, 0.875, 0.800)
-const PLASTER_DIM := Color(0.812, 0.776, 0.682)
-const ROOF := Color(0.659, 0.475, 0.290)
-const BRASS := Color(0.788, 0.643, 0.290)
-const WOOD := Color(0.478, 0.361, 0.220)
+## Semantic roles, not literal colours — see DioramaPalette for the lab
+## correspondence and why these are linear.
+static var PLASTER := DioramaPalette.col("plaster")
+static var PLASTER_DIM := DioramaPalette.col("plaster2")
+static var ROOF := DioramaPalette.col("ochre")
+static var BRASS := DioramaPalette.col("brass")
+static var WOOD := DioramaPalette.col("wood")
 
 
 static func _part(kind: String, xf: Transform3D, params: Dictionary,
