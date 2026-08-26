@@ -287,3 +287,13 @@ static func parts_at_condition(parts: Array, condition: float) -> Array:
 		if condition >= CONDITION_ORDER.get(p["tag"], 0.0):
 			kept.append(p)
 	return kept
+
+
+## Resolve each part's role into a concrete colour. Kept separate from build()
+## so one tree can be rendered in several palettes — which is what makes
+## culture a mapping rather than a fork of the geometry.
+static func apply_roles(parts: Array, roles: Dictionary) -> void:
+	for p: Dictionary in parts:
+		var role: String = p.get("role", "")
+		assert(roles.has(role), "no colour for role '%s'" % role)
+		p["color"] = roles[role]
