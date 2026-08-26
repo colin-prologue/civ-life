@@ -242,6 +242,7 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		children = n.get("children", [])
 		_assert_unique_names(children, path)
 	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var base_inv := base_xf.affine_inverse()
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
 	var parts: Array = []
 	var cursor := 0.0
@@ -261,9 +262,15 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var out := resolve(child, child_ctx)
 		parts.append_array(out["parts"])
 		var f: Dictionary = out["frame"]
+		# Measure from where the child says its centre IS, not from where it was
+		# put. A composite child — a nested row of unequal widths — comes back
+		# off-centre from the transform it was handed, and using the cursor
+		# instead reports bounds that do not cover the row's own geometry.
+		var child_xf: Transform3D = f["xf"]
+		var local: Vector3 = base_inv * child_xf.origin
 		var half: float = f["footprint"].x * 0.5
-		min_edge = minf(min_edge, cursor - half)
-		max_edge = maxf(max_edge, cursor + half)
+		min_edge = minf(min_edge, local.x - half)
+		max_edge = maxf(max_edge, local.x + half)
 		deepest = maxf(deepest, f["footprint"].y)
 		tallest = maxf(tallest, f["height"])
 		cursor += f["footprint"].x * advance

@@ -41,12 +41,16 @@ func _build() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.roughness = 0.92
 
-	var rows := int(ceil(float(specimen_count) / float(maxi(1, columns))))
+	# One clamped value, used everywhere. Guarding only the row count while the
+	# layout loop below divides and mods by the raw export means a columns of 0
+	# set in the inspector takes the whole scene down rather than degrading.
+	var cols := maxi(1, columns)
+	var rows := int(ceil(float(specimen_count) / float(cols)))
 	var tallest := 0.0
 	for i in range(specimen_count):
-		var col := i % columns
-		var row := i / columns
-		var at := Vector3((col - (columns - 1) * 0.5) * cell_size, 0.0,
+		var col := i % cols
+		var row := i / cols
+		var at := Vector3((col - (cols - 1) * 0.5) * cell_size, 0.0,
 				(row - (rows - 1) * 0.5) * cell_size)
 		tallest = maxf(tallest, _add_specimen(i, at, mat))
 		_add_caption(i, at)
@@ -102,7 +106,10 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 func _add_caption(i: int, at: Vector3) -> void:
 	var label := Label3D.new()
 	label.name = "Caption%d" % i
-	label.text = "seed %d" % i
+	# The seed is FIXED across the sheet; what varies cell to cell is the
+	# building id. Labelling the id as a seed makes the frame unreproducible —
+	# a reader who tries `build(residential(), 3, ...)` gets nothing like cell 3.
+	label.text = "id %d" % i
 	label.font_size = 192
 	label.pixel_size = 0.002
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -143,7 +150,7 @@ func _add_camera(rows: int, tallest: float) -> void:
 
 	# Matches _add_stage's actual footprint (columns/rows of cells plus one
 	# cell of margin on each axis), not an arbitrary span.
-	var stage_w := columns * cell_size + cell_size
+	var stage_w := maxi(1, columns) * cell_size + cell_size
 	var stage_d := rows * cell_size + cell_size
 	var dist_h := (stage_w * 0.5) / tan(h_half)
 	# The stage recedes away from the camera at this pitch, so its far edge's

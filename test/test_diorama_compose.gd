@@ -305,3 +305,25 @@ func test_a_mass_stacked_on_a_row_is_centred_over_it() -> void:
 			"roof did not land over the terrace's centre")
 	assert_almost_eq(roof["params"]["size"].x, 8.0, 1e-5,
 			"roof did not span the whole terrace")
+
+
+## The mirror of test_a_mass_stacked_on_a_row_is_centred_over_it: a row whose
+## child reports a centre of its own has to follow it too, or the outer row
+## reports bounds that do not cover its own geometry.
+func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
+	var inner := {"row": {"name": "inner", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 1.0, 2.0, 1.0)]}}
+	# inner: wide sits at 0 spanning [-2, 2], cursor advances 4, narrow sits at
+	# 4 spanning [3.5, 4.5]. So inner spans [-2, 4.5] — width 6.5, centre +1.25,
+	# which is 1.25 to the RIGHT of the transform it was handed.
+	var outer := {"row": {"name": "outer", "advance": 1.0, "children": [
+		inner,
+		_box("tail", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(outer, _ctx())
+	# outer: inner really occupies [-2, 4.5]; cursor then advances by inner's
+	# width (6.5), so tail sits at 6.5 spanning [5.5, 7.5]. Union is [-2, 7.5].
+	assert_almost_eq(out["frame"]["footprint"].x, 9.5, 1e-5,
+			"outer row's span ignored the nested row's real extent")
+	assert_almost_eq(out["frame"]["xf"].origin.x, 2.75, 1e-5,
+			"outer row's centre ignored the nested row's real extent")
