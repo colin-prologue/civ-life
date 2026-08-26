@@ -19,7 +19,7 @@ extends Node3D
 @export var specimen_count: int = 12
 @export var columns: int = 4
 @export var cell_size: float = 4.5
-@export var camera_pitch_deg: float = 24.0
+@export var camera_pitch_deg: float = 34.0
 @export var fov_horizontal_deg: float = 24.0
 
 @export var rebuild: bool = false:
@@ -92,11 +92,18 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 ## against each neighbour's roof height, which is what set 0.45 rather than a
 ## rounder-looking guess: the tallest roof in this batch needs about 0.36 to
 ## clear, and 0.45 keeps a working margin.
+##
+## font_size 96 at pixel_size 0.002 is 0.192 world units tall — legible up
+## close, but at the ~55-unit camera distance this sheet needs to fit all
+## twelve specimens that is roughly 10 screen pixels, effectively unreadable.
+## Doubled rather than just widening pixel_size, so the source glyph texture
+## gets crisper along with the text getting bigger instead of the same
+## texture stretched further.
 func _add_caption(i: int, at: Vector3) -> void:
 	var label := Label3D.new()
 	label.name = "Caption%d" % i
 	label.text = "seed %d" % i
-	label.font_size = 96
+	label.font_size = 192
 	label.pixel_size = 0.002
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.position = at + Vector3(0, 0.45, cell_size * 0.35)
@@ -140,11 +147,15 @@ func _add_camera(rows: int, tallest: float) -> void:
 	var stage_d := rows * cell_size + cell_size
 	var dist_h := (stage_w * 0.5) / tan(h_half)
 	# The stage recedes away from the camera at this pitch, so its far edge's
-	# on-screen extent foreshortens by sin(pitch); the tallest specimen adds
-	# on top of that because roofs are the thing most likely to clip first.
-	var vertical_extent := stage_d * sin(pitch) + tallest
-	var dist_v := vertical_extent / tan(v_half)
-	var dist := maxf(dist_h, dist_v) * 1.1
+	# on-screen extent foreshortens by sin(pitch), and the tallest specimen's
+	# silhouette foreshortens by cos(pitch) rather than adding in full. That
+	# full extent is symmetric about the view centre (half in front, half
+	# behind), so it is HALF of it that has to fit inside the vertical
+	# half-angle — feeding the whole extent to a half-angle constraint is what
+	# over-reached and left margin on every side of the previous capture.
+	var vertical_extent := stage_d * sin(pitch) + tallest * cos(pitch)
+	var dist_v := (vertical_extent * 0.5) / tan(v_half)
+	var dist := maxf(dist_h, dist_v) * 1.05
 
 	cam.position = Vector3(0, sin(pitch) * dist, cos(pitch) * dist)
 	cam.basis = Basis.looking_at(-cam.position, Vector3.UP)
