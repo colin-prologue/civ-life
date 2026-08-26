@@ -13,8 +13,10 @@
 #  1. `--headless` rasterises nothing while still writing valid PNGs, so every
 #     frame goes through tools/spike_shot.gd's blank-frame guard and a run is
 #     failed, not warned about, when a frame comes back empty.
-#  2. Frames are committed to the branch, so the run is byte-capped and cleans
-#     up after itself rather than leaving a half-set next to a warning.
+#  2. Frames are committed to the branch, so the run is byte-capped and never
+#     leaves a half-updated set. Because the frames it overwrites are already
+#     in the branch, a failed run RESTORES the previous copies rather than
+#     deleting them — deleting would take committed evidence with it.
 #  3. A hung Godot is worse than a failed one. Every render is bounded.
 #
 # What it adds over capture.sh: parameter overrides per frame (spike_shot.gd
@@ -80,17 +82,39 @@ fi
 
 mkdir -p "$OUT"
 written=()
+attempted=()
 failed=0
 
+# A sweep overwrites frames that are already committed, so "clean up after a
+# failed run" cannot just delete what it touched — that destroys the evidence
+# in the branch and leaves a reviewer with missing images. Stash the previous
+# copy of anything about to be overwritten and put it back on failure. The
+# invariant is unchanged (never leave a half-updated set); what changes is that
+# the fallback is the committed state rather than nothing.
+BACKUP="$(mktemp -d)"
+trap 'rm -rf "$BACKUP"' EXIT
+
 cleanup_partial() {
-  echo "[spike-sweep] removing this run's frames rather than leaving a partial set" >&2
-  for f in "${written[@]:-}"; do [ -n "$f" ] && rm -f "$f"; done
+  echo "[spike-sweep] restoring the previous frames rather than leaving a partial set" >&2
+  for f in "${attempted[@]:-}"; do
+    [ -n "$f" ] || continue
+    prev="$BACKUP/$(basename "$f")"
+    if [ -f "$prev" ]; then
+      cp "$prev" "$f"
+    else
+      rm -f "$f"
+    fi
+  done
 }
 
 for entry in "${SHOTS[@]}"; do
   IFS='|' read -r name desc overrides <<<"$entry"
   [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
   path="$OUT/spike-$name.png"
+  # Record the attempt before rendering: a run killed mid-write leaves a
+  # truncated file that `written` would never learn about.
+  attempted+=("$path")
+  [ -f "$path" ] && cp "$path" "$BACKUP/$(basename "$path")"
   echo "[spike-sweep] $name — $desc"
   # shellcheck disable=SC2086
   if ! out=$("${TIMEOUT[@]}" "$GODOT" --path . --resolution "${WIDTH}x${HEIGHT}" \
