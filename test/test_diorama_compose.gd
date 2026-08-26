@@ -139,3 +139,47 @@ func test_adding_a_named_sibling_does_not_disturb_the_others() -> void:
 	assert_eq(before["parts"][1]["params"]["size"],
 			after["parts"][2]["params"]["size"],
 			"inserting 'porch' re-rolled 'roof'")
+
+
+func test_row_advances_by_a_fraction_of_the_previous_width() -> void:
+	var tree := {"row": {"name": "block", "advance": 0.5, "children": [
+		_box("a", 2.0, 1.0, 1.0),
+		_box("b", 2.0, 1.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["parts"][0]["xf"].origin.x, 0.0, 1e-5,
+			"first child of a row should start at the origin")
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 1.0, 1e-5,
+			"advance 0.5 on a width-2 child should step 1.0, not 2.0")
+
+
+func test_row_template_repeats_with_distinct_channels_per_index() -> void:
+	var tree := {"row": {"name": "block", "count": 3, "advance": 1.0,
+			"of": _box("unit", [1.0, 3.0], 1.0, 1.0)}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 3, "count did not repeat the template")
+	var w0: float = out["parts"][0]["params"]["size"].x
+	var w1: float = out["parts"][1]["params"]["size"].x
+	assert_ne(w0, w1, "repeated units are identical — index is not in the channel")
+
+
+func test_row_with_zero_count_is_legal_and_empty() -> void:
+	var tree := {"row": {"name": "block", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 0, "count 0 still produced parts")
+	assert_eq(out["frame"]["height"], 0.0, "an empty row claimed height")
+	assert_eq(out["frame"]["footprint"], Vector2.ZERO,
+			"an empty row claimed a footprint")
+
+
+func test_row_frame_spans_its_children_and_takes_the_tallest() -> void:
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("a", 2.0, 1.0, 1.0),
+		_box("b", 2.0, 3.0, 5.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 4.0, 1e-5,
+			"row width should span first near edge to last far edge")
+	assert_almost_eq(out["frame"]["footprint"].y, 3.0, 1e-5,
+			"row depth should be its deepest child")
+	assert_almost_eq(out["frame"]["height"], 5.0, 1e-5,
+			"row height should be its tallest child")

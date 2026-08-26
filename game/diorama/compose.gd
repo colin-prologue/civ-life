@@ -75,6 +75,8 @@ static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 		return _mass(node["mass"], ctx)
 	if node.has("stack"):
 		return _stack(node["stack"], ctx)
+	if node.has("row"):
+		return _row(node["row"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
 	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
 
@@ -163,3 +165,63 @@ static func _assert_unique_names(children: Array, path: String) -> void:
 			assert(not seen.has(nm),
 					"duplicate sibling name '%s' under '%s'" % [nm, path])
 			seen[nm] = true
+
+
+## Children along local X. The cursor advances by `advance` x the PRECEDING
+## child's width, so spacing scales with the building rather than being an
+## absolute distance. 1.0 is flush, below 1.0 overlaps, above 1.0 leaves a gap.
+##
+## Named `advance` and not `gap` on purpose: the value that reproduces the
+## original terraced housing is 0.95, and calling that "a gap of 0.95" reads as
+## a large separation when it is really a 5% overlap.
+static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var seed: int = ctx["seed"]
+	var id: int = ctx["id"]
+	var has_template := n.has("of")
+	assert(not (has_template and n.has("children")),
+			"'%s' has both 'count'/'of' and 'children' — pick one" % path)
+	var children: Array = []
+	if has_template:
+		# floor, not round: round() reaches the upper bound, so [1, 3.99]
+		# yields 4 as well as 1-3. With floor, [1, 4.0] gives exactly 1-3 and
+		# each is equally likely — h01 never returns 1.0.
+		var count := int(floor(sample(n.get("count"), seed, id, path,
+				"count", 1.0)))
+		for i in range(maxi(0, count)):
+			children.append(_indexed(n["of"], i))
+	else:
+		children = n.get("children", [])
+		_assert_unique_names(children, path)
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
+	var parts: Array = []
+	var cursor := 0.0
+	var span := 0.0
+	var deepest := 0.0
+	var tallest := 0.0
+	for child in children:
+		var child_ctx := {"seed": seed, "id": id, "path": path,
+				"frame": {"xf": base_xf.translated_local(Vector3(cursor, 0, 0)),
+						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
+		var out := resolve(child, child_ctx)
+		parts.append_array(out["parts"])
+		var f: Dictionary = out["frame"]
+		span = cursor + f["footprint"].x
+		deepest = maxf(deepest, f["footprint"].y)
+		tallest = maxf(tallest, f["height"])
+		cursor += f["footprint"].x * advance
+	return {"parts": parts,
+			"frame": {"xf": base_xf, "footprint": Vector2(span, deepest),
+					"height": tallest}}
+
+
+## Suffix a template's name with its index so repeated units get distinct
+## channels — otherwise `count: 3` produces the same building three times.
+static func _indexed(template: Dictionary, i: int) -> Dictionary:
+	var out := {}
+	for type_key: String in template:
+		var body: Dictionary = template[type_key].duplicate(true)
+		body["name"] = "%s%d" % [body.get("name", "item"), i]
+		out[type_key] = body
+	return out
