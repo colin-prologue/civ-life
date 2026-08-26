@@ -324,13 +324,14 @@ func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
 		inner,
 		_box("tail", 2.0, 2.0, 1.0)]}}
 	var out := DioramaCompose.resolve(outer, _ctx())
-	# outer: inner really occupies [-2, 3] and is 5 wide; tail is 2 wide and
-	# flush, stepping by (2.5 + 1), so it occupies [3, 5]. Union is [-2, 5] —
-	# width 6.5, centre +1.25. Using the cursor instead of inner's reported
-	# centre would misplace both the span and the centre.
-	assert_almost_eq(out["frame"]["footprint"].x, 6.5, 1e-5,
+	# outer: inner really occupies [-2, 3]. Placing tail flush means its near
+	# edge meets inner's far edge at 3, so tail occupies [3, 5] — which needs
+	# inner's centre offset (+0.5), not just its width, or tail lands at
+	# [2.5, 4.5] and overlaps by half a unit at advance 1.0. Union is [-2, 5]:
+	# width 7, centre +1.5.
+	assert_almost_eq(out["frame"]["footprint"].x, 7.0, 1e-5,
 			"outer row's span ignored the nested row's real extent")
-	assert_almost_eq(out["frame"]["xf"].origin.x, 1.25, 1e-5,
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.5, 1e-5,
 			"outer row's centre ignored the nested row's real extent")
 
 
@@ -411,3 +412,23 @@ func test_a_round_mass_reports_the_footprint_it_actually_occupies() -> void:
 	var out := DioramaCompose.resolve(tree, _ctx())
 	assert_eq(out["frame"]["footprint"], Vector2(2.0, 2.0),
 			"round mass reported its declared depth, not its emitted radius")
+
+
+## Flush placement has to use where a child's edges ACTUALLY are, which for a
+## composite is not derivable from its width alone. A nested row of unequal
+## widths reports a centre off its own origin; stepping by widths alone then
+## overlaps it even at advance 1.0, which is meant to be exactly flush.
+func test_a_composite_neighbour_is_placed_from_its_real_edge() -> void:
+	var inner := {"row": {"name": "inner", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 1.0, 2.0, 1.0)]}}
+	# inner: wide [-2, 2], narrow flush at [2, 3]. Far edge 3, centre +0.5.
+	var tree := {"row": {"name": "outer", "advance": 1.0, "children": [
+		inner, _box("tail", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var tail: Dictionary = out["parts"][2]
+	# tail is 2 wide, so flush against inner's far edge of 3 puts its centre
+	# at 4. Ignoring inner's +0.5 offset would land it at 3.5 — a half-unit
+	# overlap at the one advance value that is supposed to mean "touching".
+	assert_almost_eq(tail["xf"].origin.x, 4.0, 1e-5,
+			"a composite neighbour was placed from its width, not its edge")

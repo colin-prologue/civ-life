@@ -289,30 +289,38 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		resolved.append(resolve(child, child_ctx))
 	var cursor := 0.0
 	var prev_half := 0.0
+	var prev_centre := 0.0     # previous child's centre, in ROW space
 	var placed_any := false
 	for out: Dictionary in resolved:
 		var f: Dictionary = out["frame"]
 		var half: float = f["footprint"].x * 0.5
+		var child_xf: Transform3D = f["xf"]
+		# Where the child says its centre is, relative to where it resolved.
+		# For a mass that is zero; for a composite it need not be.
+		var offset: float = (base_inv * child_xf.origin).x
 		if f["height"] > EPS:
-			# Step edge to edge: half the previous child plus half of this one.
-			# Advancing by the preceding width alone is only flush when
-			# neighbours are the same size — which a style that samples each
-			# unit's width independently never is, so `advance: 0.95` was
-			# producing visible gaps instead of a 5% overlap.
 			if placed_any:
-				cursor += (prev_half + half) * advance
+				# Solve for the shift that puts this child's NEAR edge against
+				# the previous child's FAR edge, in row space:
+				#     (cursor + offset) - half == prev_centre + prev_half
+				# scaled by advance, so 1.0 is flush and 0.95 overlaps by 5%.
+				# Stepping by widths alone is only correct when every child's
+				# centre coincides with where it was placed, which composites
+				# break — a nested row of unequal widths reports a centre off
+				# its own origin, and the next child then overlaps it.
+				cursor = prev_centre + (prev_half + half) * advance - offset
 			placed_any = true
+			prev_centre = cursor + offset
 			prev_half = half
-		# Children were resolved at the origin; shift them into place. A child
-		# that resolved to nothing contributes no parts and no bounds, and does
-		# not move the cursor.
+		# Children were resolved at the row's origin; shift them into place. A
+		# child that resolved to nothing contributes no parts, no bounds, and
+		# does not move the cursor.
 		var shift := base_xf * Transform3D(Basis.IDENTITY,
 				Vector3(cursor, 0, 0)) * base_inv
 		for part: Dictionary in out["parts"]:
 			part["xf"] = shift * part["xf"]
 		parts.append_array(out["parts"])
 		if f["height"] > EPS:
-			var child_xf: Transform3D = f["xf"]
 			var local: Vector3 = base_inv * child_xf.origin
 			bounds.add(Vector2(local.x + cursor, local.z), f["footprint"])
 			tallest = maxf(tallest, f["height"])
