@@ -145,3 +145,21 @@ func test_both_new_styles_are_deterministic() -> void:
 	for tree in [DioramaStyles.civic(), DioramaStyles.stepped()]:
 		assert_eq(DioramaCompose.build(tree, 7, 3),
 				DioramaCompose.build(tree, 7, 3), "style is not deterministic")
+
+
+## An arch's two piers must reach the same height or the arc rests on one and
+## floats above the other. They sampled independently — the cost of channels
+## keyed on names showing up in the one place where two siblings are supposed
+## to be the same thing.
+func test_the_arch_springs_from_two_piers_of_equal_height() -> void:
+	for id in range(8):
+		var parts := DioramaCompose.build(DioramaStyles.hero_arch(), 42, id)
+		var piers: Array = []
+		for p: Dictionary in parts:
+			if p["kind"] == "box" and p["params"]["size"].y > 0.9 \
+					and p["params"]["size"].x < 0.6:
+				piers.append(p["params"]["size"].y)
+		assert_eq(piers.size(), 2, "id %d: expected two piers" % id)
+		if piers.size() == 2:
+			assert_almost_eq(piers[0], piers[1], 1e-5,
+					"id %d: the arch's piers are different heights" % id)

@@ -38,6 +38,15 @@ static func residential() -> Dictionary:
 ## vocabulary here, which is the whole point — the next monument does not
 ## re-derive them.
 ##
+## The pier height is a SCALAR and not a range, which is a modelling statement
+## rather than a limitation worked around: a pier's height is not its own
+## property, it is where the arch springs from, and the two ends of one arch
+## are the same thing. Written as a range they sampled independently — channels
+## are keyed on node names, so `west` and `east` drew different values and the
+## arc rested on the taller while floating above the shorter. The vocabulary
+## has no way to say "these two siblings share a draw"; if a style ever wants
+## genuinely coupled-but-varying dimensions, that is the gap to close.
+##
 ## Read outward: a base slab, then two piers with a clear opening between them,
 ## then the arc spanning that opening, then a beam across the top and a brass
 ## finial above it. `gap` is what makes the opening sayable — as a ratio it
@@ -50,11 +59,9 @@ static func hero_arch() -> Dictionary:
 				"role": "plaster_dim"}},
 		{"row": {"name": "piers", "gap": 2.6, "children": [
 			{"mass": {"name": "west", "kind": "box",
-					"w": 0.42, "d": 0.63, "h": [1.4, 2.0],
-					"role": "plaster"}},
+					"w": 0.42, "d": 0.63, "h": 1.62, "role": "plaster"}},
 			{"mass": {"name": "east", "kind": "box",
-					"w": 0.42, "d": 0.63, "h": [1.4, 2.0],
-					"role": "plaster"}}]}},
+					"w": 0.42, "d": 0.63, "h": 1.62, "role": "plaster"}}]}},
 		{"ring": {"name": "span", "radius": 1.51, "from": 0.0, "to": PI,
 				"count": 9,
 				"of": {"mass": {"name": "voussoir", "kind": "box",

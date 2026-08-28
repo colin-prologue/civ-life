@@ -439,8 +439,15 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 				Vector3(cos(mid) * radius, sin(mid) * radius, 0)) \
 				* Transform3D(Basis.IDENTITY, Vector3(0, -seg_len * 0.5, 0))
 		var size := Vector3(thickness, seg_len, depth)
-		parts.append({"kind": body.get("kind", "box"), "xf": xf,
-				"params": {"size": size}, "color": Color.MAGENTA,
+		# Through the same kind-aware path a mass uses. Building params.size
+		# regardless of kind meant a ring of columns emitted "prism" with box
+		# params, and emit() reads params.radius — a missing-key crash from a
+		# style that looks entirely valid.
+		var kind: String = body.get("kind", "box")
+		var params := _params_for(kind, body, thickness, depth, seg_len,
+				seed, id, child_path)
+		parts.append({"kind": kind, "xf": xf,
+				"params": params, "color": Color.MAGENTA,
 				"tag": "", "y": 0.0, "role": body.get("role", "plaster")})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their

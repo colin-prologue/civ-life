@@ -633,3 +633,23 @@ func test_a_row_can_run_along_z() -> void:
 			"a z-row's depth should span its children")
 	assert_almost_eq(out["frame"]["footprint"].x, 3.0, 1e-5,
 			"a z-row's width should be its widest child, not their sum")
+
+
+## A ring built its parts with `params.size` whatever kind the template
+## declared, so a documented ring-of-columns emitted kind "prism" with box
+## params and `emit()` died on a missing `radius`. Rings go through the same
+## kind-aware path masses do.
+func test_a_ring_of_round_primitives_gets_round_params() -> void:
+	var out := DioramaCompose.resolve({"ring": {"name": "colonnade",
+			"radius": 3.0, "from": 0.0, "to": PI, "count": 4,
+			"of": {"mass": {"name": "column", "kind": "prism",
+					"w": 0.5, "d": 0.5, "role": "plaster"}}}},
+			DioramaCompose.new_ctx(9, 0))
+	assert_gt(out["parts"].size(), 0, "ring emitted nothing")
+	for p: Dictionary in out["parts"]:
+		assert_eq(p["kind"], "prism", "kind was not carried through")
+		assert_true(p["params"].has("radius"),
+				"a prism needs a radius — emit() reads it and would crash")
+		assert_true(p["params"].has("height"), "a prism needs a height")
+		assert_false(p["params"].has("size"),
+				"a prism should not be handed box params")
