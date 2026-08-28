@@ -27,3 +27,35 @@ static func residential() -> Dictionary:
 					"role": "plaster"}},
 			{"mass": {"name": "roof", "kind": "tapered", "taper": 0.8,
 					"h": 0.22, "oversize": 1.08, "role": "ochre"}}]}}}}
+
+
+## The hero structure: a monument whose scale breaks the settlement's
+## hierarchy. Compare DioramaGrammar.hero_arch(), which says this in about
+## forty lines of trigonometry — the arc, the tangent rotation and the pier
+## placement were all hand-derived there and are vocabulary here.
+##
+## Read outward: a base slab, then two piers with a clear opening between them,
+## then the arc spanning that opening, then a beam across the top and a brass
+## finial above it. `gap` is what makes the opening sayable — as a ratio it
+## would be a number derived from the pier thickness, which is not something a
+## style author can write down.
+static func hero_arch() -> Dictionary:
+	return {"stack": {"name": "arch", "children": [
+		{"mass": {"name": "plinth", "kind": "box",
+				"w": [4.6, 5.4], "d": 1.2, "h": 0.33,
+				"role": "plaster_dim"}},
+		{"row": {"name": "piers", "gap": 2.6, "children": [
+			{"mass": {"name": "west", "kind": "box",
+					"w": 0.42, "d": 0.63, "h": [1.4, 2.0],
+					"role": "plaster"}},
+			{"mass": {"name": "east", "kind": "box",
+					"w": 0.42, "d": 0.63, "h": [1.4, 2.0],
+					"role": "plaster"}}]}},
+		{"ring": {"name": "span", "radius": 1.51, "from": 0.0, "to": PI,
+				"count": 9,
+				"of": {"mass": {"name": "voussoir", "kind": "box",
+						"w": 0.42, "d": 0.63, "role": "plaster"}}}},
+		{"mass": {"name": "entablature", "kind": "box",
+				"h": 0.45, "oversize": 1.1, "role": "ochre"}},
+		{"mass": {"name": "finial", "kind": "cone",
+				"w": 0.31, "d": 0.31, "h": 1.5, "role": "brass"}}]}}

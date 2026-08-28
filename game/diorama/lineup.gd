@@ -15,6 +15,10 @@ extends Node3D
 ## at diorama distance behind two trees, so a style is chosen on this sheet and
 ## CONFIRMED in the valley.
 
+## Which style the sheet compares. A sheet is only useful against one style at
+## a time — the axis it varies is the seed, so mixing styles would confound the
+## thing it exists to isolate.
+@export_enum("residential", "hero_arch") var style: String = "residential"
 @export var world_seed: int = 20260826
 @export var specimen_count: int = 12
 @export var columns: int = 4
@@ -72,7 +76,9 @@ func _build() -> void:
 ## of guessing a constant that goes stale the moment a style's proportions
 ## change.
 func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
-	var parts := DioramaCompose.build(DioramaStyles.residential(), world_seed, i)
+	var tree: Dictionary = DioramaStyles.hero_arch() if style == "hero_arch" \
+			else DioramaStyles.residential()
+	var parts := DioramaCompose.build(tree, world_seed, i)
 	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)

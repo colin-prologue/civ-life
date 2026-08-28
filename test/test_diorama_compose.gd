@@ -146,10 +146,12 @@ func test_row_advances_by_a_fraction_of_the_previous_width() -> void:
 		_box("a", 2.0, 1.0, 1.0),
 		_box("b", 2.0, 1.0, 1.0)]}}
 	var out := DioramaCompose.resolve(tree, _ctx())
-	assert_almost_eq(out["parts"][0]["xf"].origin.x, 0.0, 1e-5,
-			"first child of a row should start at the origin")
-	assert_almost_eq(out["parts"][1]["xf"].origin.x, 1.0, 1e-5,
-			"advance 0.5 on a width-2 child should step 1.0, not 2.0")
+	# Asserted as a STEP rather than as absolute positions: a row centres itself
+	# on the transform it was handed, so where the pair sits depends on the
+	# group's extent, while the step between them is the thing `advance` means.
+	var step: float = out["parts"][1]["xf"].origin.x - out["parts"][0]["xf"].origin.x
+	assert_almost_eq(step, 1.0, 1e-5,
+			"advance 0.5 on width-2 children should step 1.0, not 2.0")
 
 
 func test_row_template_repeats_with_distinct_channels_per_index() -> void:
@@ -222,8 +224,16 @@ func test_row_frame_spans_true_edges_with_unequal_widths() -> void:
 	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
 			"row width should span the first child's near edge to the last "
 			+ "child's far edge, not the origin to the last child's far edge")
-	assert_almost_eq(out["frame"]["xf"].origin.x, 1.0, 1e-5,
-			"row frame origin should be the true centre of its span")
+	# The frame's origin is the transform the row was handed — the row centres
+	# its geometry there rather than growing away from it.
+	assert_almost_eq(out["frame"]["xf"].origin.x, 0.0, 1e-5,
+			"a row's frame should stay on the transform it was handed")
+	var a_lo: float = out["parts"][0]["xf"].origin.x \
+			- out["parts"][0]["params"]["size"].x * 0.5
+	var b_hi: float = out["parts"][1]["xf"].origin.x \
+			+ out["parts"][1]["params"]["size"].x * 0.5
+	assert_almost_eq((a_lo + b_hi) * 0.5, 0.0, 1e-5,
+			"the row's geometry is not centred")
 
 
 func _tower() -> Dictionary:
@@ -303,9 +313,17 @@ func test_a_mass_stacked_on_a_row_is_centred_over_it() -> void:
 	# Units are 4, 1 and 2 wide, each flush against the last: a occupies
 	# [-2, 2], b steps by (2 + 0.5) to occupy [2, 3], c steps by (0.5 + 1) to
 	# occupy [3, 5]. The terrace is therefore -2..5 — 7 wide, centred on +1.5.
-	assert_almost_eq(roof["xf"].origin.x, 1.5, 1e-5,
+	# The terrace centres itself, so both it and the roof sit on the stack's
+	# own axis; what matters is that they coincide and that the roof covers it.
+	var t_lo := INF
+	var t_hi := -INF
+	for i in range(3):
+		var half: float = out["parts"][i]["params"]["size"].x * 0.5
+		t_lo = minf(t_lo, out["parts"][i]["xf"].origin.x - half)
+		t_hi = maxf(t_hi, out["parts"][i]["xf"].origin.x + half)
+	assert_almost_eq(roof["xf"].origin.x, (t_lo + t_hi) * 0.5, 1e-5,
 			"roof did not land over the terrace's centre")
-	assert_almost_eq(roof["params"]["size"].x, 7.0, 1e-5,
+	assert_almost_eq(roof["params"]["size"].x, t_hi - t_lo, 1e-5,
 			"roof did not span the whole terrace")
 
 
@@ -331,8 +349,8 @@ func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
 	# width 7, centre +1.5.
 	assert_almost_eq(out["frame"]["footprint"].x, 7.0, 1e-5,
 			"outer row's span ignored the nested row's real extent")
-	assert_almost_eq(out["frame"]["xf"].origin.x, 1.5, 1e-5,
-			"outer row's centre ignored the nested row's real extent")
+	assert_almost_eq(out["frame"]["xf"].origin.x, 0.0, 1e-5,
+			"a row's frame should stay on the transform it was handed")
 
 
 ## An optional child that resolves to nothing must not widen the row it is in.
@@ -397,7 +415,8 @@ func test_row_advance_is_measured_between_adjacent_edges() -> void:
 	var out := DioramaCompose.resolve(tree, _ctx())
 	# wide occupies [-2, 2]; flush means narrow's near edge is at 2, so its
 	# centre is 3 — a step of (4 + 2) / 2, not of 4.
-	assert_almost_eq(out["parts"][1]["xf"].origin.x, 3.0, 1e-5,
+	var step2: float = out["parts"][1]["xf"].origin.x - out["parts"][0]["xf"].origin.x
+	assert_almost_eq(step2, 3.0, 1e-5,
 			"row stepped by the preceding width alone, leaving a gap")
 	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
 			"row span should be the two children flush against each other")
@@ -430,7 +449,14 @@ func test_a_composite_neighbour_is_placed_from_its_real_edge() -> void:
 	# tail is 2 wide, so flush against inner's far edge of 3 puts its centre
 	# at 4. Ignoring inner's +0.5 offset would land it at 3.5 — a half-unit
 	# overlap at the one advance value that is supposed to mean "touching".
-	assert_almost_eq(tail["xf"].origin.x, 4.0, 1e-5,
+	# Flush means zero clearance between inner's far edge and tail's near edge,
+	# wherever the centred group as a whole ends up sitting.
+	var inner_hi := -INF
+	for i in range(2):
+		inner_hi = maxf(inner_hi, out["parts"][i]["xf"].origin.x
+				+ out["parts"][i]["params"]["size"].x * 0.5)
+	var tail_lo: float = tail["xf"].origin.x - tail["params"]["size"].x * 0.5
+	assert_almost_eq(tail_lo - inner_hi, 0.0, 1e-5,
 			"a composite neighbour was placed from its width, not its edge")
 
 
@@ -505,7 +531,11 @@ func test_row_gap_is_an_absolute_edge_to_edge_distance() -> void:
 	var out := DioramaCompose.resolve(tree, _ctx())
 	# left occupies [-0.5, 0.5]; a clear gap of 3 puts right's near edge at 3.5,
 	# so its centre is 4.0 — regardless of how wide either pier happens to be.
-	assert_almost_eq(out["parts"][1]["xf"].origin.x, 4.0, 1e-5,
+	var left_far: float = out["parts"][0]["xf"].origin.x \
+			+ out["parts"][0]["params"]["size"].x * 0.5
+	var right_near: float = out["parts"][1]["xf"].origin.x \
+			- out["parts"][1]["params"]["size"].x * 0.5
+	assert_almost_eq(right_near - left_far, 3.0, 1e-5,
 			"gap was not measured edge to edge")
 	assert_almost_eq(out["frame"]["footprint"].x, 5.0, 1e-5,
 			"row span should cover both piers and the opening between them")
@@ -517,5 +547,41 @@ func test_row_gap_holds_when_the_children_differ_in_width() -> void:
 		_box("thin", 1.0, 1.0, 1.0)]}}
 	var out := DioramaCompose.resolve(tree, _ctx())
 	# fat occupies [-2, 2]; clear gap 2 puts thin's near edge at 4, centre 4.5.
-	assert_almost_eq(out["parts"][1]["xf"].origin.x, 4.5, 1e-5,
+	var fat_far: float = out["parts"][0]["xf"].origin.x \
+			+ out["parts"][0]["params"]["size"].x * 0.5
+	var thin_near: float = out["parts"][1]["xf"].origin.x \
+			- out["parts"][1]["params"]["size"].x * 0.5
+	assert_almost_eq(thin_near - fat_far, 2.0, 1e-5,
 			"gap should be independent of the children's widths")
+
+
+## A node occupies a box CENTRED on the transform it was handed. `_row` built
+## rightward from its first child instead, so a symmetric pair came back
+## centred half its own span to the right — and in a stack, everything above it
+## inherited that offset. The hero arch showed it plainly: the plinth sat under
+## nothing, and the arch floated off to one side of its own base.
+func test_a_row_is_centred_on_the_transform_it_was_handed() -> void:
+	var tree := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("left", 1.0, 1.0, 2.0),
+		_box("right", 1.0, 1.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["frame"]["xf"].origin.x, 0.0, 1e-5,
+			"a row's frame should be centred where it was placed")
+	var lo := INF
+	var hi := -INF
+	for p: Dictionary in out["parts"]:
+		var half: float = p["params"]["size"].x * 0.5
+		lo = minf(lo, p["xf"].origin.x - half)
+		hi = maxf(hi, p["xf"].origin.x + half)
+	assert_almost_eq((lo + hi) * 0.5, 0.0, 1e-5,
+			"the row's geometry is not centred on its origin")
+	assert_almost_eq(hi - lo, 4.0, 1e-5, "span changed unexpectedly")
+
+
+func test_a_ring_is_centred_on_the_transform_it_was_handed() -> void:
+	var out := DioramaCompose.resolve({"ring": {"name": "span",
+			"radius": 2.0, "from": 0.0, "to": PI, "count": 9,
+			"of": {"mass": {"name": "v", "kind": "box", "w": 0.4, "d": 0.4,
+					"role": "plaster"}}}}, _ctx())
+	assert_almost_eq(out["frame"]["xf"].origin.x, 0.0, 1e-5,
+			"a ring's frame should be centred where it was placed")

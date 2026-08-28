@@ -354,10 +354,19 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			tallest = maxf(tallest, f["height"])
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
+	# A node occupies a box CENTRED on the transform it was handed. The layout
+	# above builds rightward from the first child, so recentre the finished
+	# group. Without this a symmetric pair comes back offset by half its own
+	# span and everything stacked above inherits that — the hero arch showed it
+	# as a plinth sitting under nothing.
 	var mid := bounds.mid()
+	var recentre := base_xf * Transform3D(Basis.IDENTITY,
+			Vector3(-mid.x, 0, -mid.y)) * base_inv
+	for part: Dictionary in parts:
+		part["xf"] = recentre * part["xf"]
 	return {"parts": parts,
-			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
-					"footprint": bounds.span(), "height": tallest}}
+			"frame": {"xf": base_xf, "footprint": bounds.span(),
+					"height": tallest}}
 
 
 ## Children on an arc, each rotated so its long axis lies TANGENT to it.
@@ -426,11 +435,14 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 					top = maxf(top, c.y)
 	if lo.x == INF:
 		return {"parts": parts, "frame": zero_frame(base_xf)}
+	# Centred on what it was handed, like every other node.
 	var mid_xz := (lo + hi) * 0.5
+	var recentre := base_xf * Transform3D(Basis.IDENTITY,
+			Vector3(-mid_xz.x, 0, -mid_xz.y)) * base_xf.affine_inverse()
+	for part: Dictionary in parts:
+		part["xf"] = recentre * part["xf"]
 	return {"parts": parts,
-			"frame": {"xf": base_xf.translated_local(
-					Vector3(mid_xz.x, 0, mid_xz.y)),
-					"footprint": hi - lo, "height": top}}
+			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top}}
 
 
 ## Suffix a template's name with its index so repeated units get distinct
