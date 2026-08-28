@@ -102,3 +102,46 @@ func test_hero_arch_is_deterministic() -> void:
 	assert_eq(DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0),
 			DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0),
 			"same seed produced two different arches")
+
+
+# ------------------------------------------------- civic and stepped (slice 2)
+
+func test_civic_has_a_colonnade_standing_in_front_of_its_hall() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.civic(), 42, 0)
+	var columns: Array = []
+	var walls: Array = []
+	for p: Dictionary in parts:
+		if p["kind"] == "prism":
+			columns.append(p)
+		elif p["kind"] == "box" and p["params"]["size"].y > 0.5:
+			walls.append(p)
+	assert_eq(columns.size(), 5, "a portico needs its five columns")
+	assert_eq(walls.size(), 1, "expected exactly one hall block")
+	if walls.size() == 1 and columns.size() > 0:
+		for c: Dictionary in columns:
+			assert_gt(c["xf"].origin.z, walls[0]["xf"].origin.z,
+					"a column is not in front of the hall")
+	var xs: Array = []
+	for c: Dictionary in columns:
+		xs.append(c["xf"].origin.x)
+	xs.sort()
+	assert_gt(xs[-1] - xs[0], 0.5, "the columns are not spread across the front")
+
+
+func test_stepped_tiers_shrink_as_they_rise() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.stepped(), 42, 0)
+	var boxes: Array = []
+	for p: Dictionary in parts:
+		if p["kind"] == "box":
+			boxes.append(p)
+	assert_gt(boxes.size(), 3, "a stepped monument needs a plinth and tiers")
+	for i in range(2, boxes.size()):
+		assert_lt(boxes[i]["params"]["size"].x,
+				boxes[i - 1]["params"]["size"].x,
+				"tier %d is not narrower than the one below it" % i)
+
+
+func test_both_new_styles_are_deterministic() -> void:
+	for tree in [DioramaStyles.civic(), DioramaStyles.stepped()]:
+		assert_eq(DioramaCompose.build(tree, 7, 3),
+				DioramaCompose.build(tree, 7, 3), "style is not deterministic")

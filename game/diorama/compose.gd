@@ -87,6 +87,14 @@ static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> in
 	return lo + int(floor(c * span))
 
 
+static func seed_of(ctx: Dictionary) -> int:
+	return ctx["seed"]
+
+
+static func id_of(ctx: Dictionary) -> int:
+	return ctx["id"]
+
+
 static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
@@ -207,6 +215,12 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# on. Zero until a child reports a centre of its own.
 	var centre := Vector2.ZERO
 	var bounds := Bounds.new()
+	# Each successive child inherits a footprint this much smaller than the one
+	# below — a stepped monument's taper. It shrinks what a child INHERITS, not
+	# what it declares, so a style can still break the taper deliberately by
+	# stating a width.
+	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
+			"setback", 0.0)
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
 				"frame": {"xf": base_xf.translated_local(
@@ -225,8 +239,8 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			var child_xf: Transform3D = f["xf"]
 			var local: Vector3 = base_inv * child_xf.origin
 			centre = Vector2(local.x, local.z)
-			carried = f["footprint"]
-			bounds.add(centre, carried)
+			bounds.add(centre, f["footprint"])
+			carried = f["footprint"] * (1.0 - setback)
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
 	var mid := bounds.mid()
@@ -296,6 +310,11 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# dimensions and unwritable as a literal.
 	assert(not (n.has("advance") and n.has("gap")),
 			"'%s' has both 'advance' and 'gap' — pick one" % path)
+	# A portico is a colonnade standing IN FRONT OF a hall: the same
+	# side-by-side relationship, along depth instead of width.
+	var is_z: bool = String(n.get("axis", "x")) == "z"
+	assert(String(n.get("axis", "x")) in ["x", "z"],
+			"'%s' row axis must be \"x\" or \"z\"" % path)
 	var has_gap := n.has("gap")
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
 	var gap := sample(n.get("gap"), seed, id, path, "gap", 0.0)
@@ -319,11 +338,13 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var placed_any := false
 	for out: Dictionary in resolved:
 		var f: Dictionary = out["frame"]
-		var half: float = f["footprint"].x * 0.5
+		var fp: Vector2 = f["footprint"]
+		var half: float = (fp.y if is_z else fp.x) * 0.5
 		var child_xf: Transform3D = f["xf"]
 		# Where the child says its centre is, relative to where it resolved.
 		# For a mass that is zero; for a composite it need not be.
-		var offset: float = (base_inv * child_xf.origin).x
+		var child_local: Vector3 = base_inv * child_xf.origin
+		var offset: float = child_local.z if is_z else child_local.x
 		if f["height"] > EPS:
 			if placed_any:
 				# Solve for the shift that puts this child's NEAR edge against
@@ -343,14 +364,14 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# Children were resolved at the row's origin; shift them into place. A
 		# child that resolved to nothing contributes no parts, no bounds, and
 		# does not move the cursor.
-		var shift := base_xf * Transform3D(Basis.IDENTITY,
-				Vector3(cursor, 0, 0)) * base_inv
+		var step := Vector3(0, 0, cursor) if is_z else Vector3(cursor, 0, 0)
+		var shift := base_xf * Transform3D(Basis.IDENTITY, step) * base_inv
 		for part: Dictionary in out["parts"]:
 			part["xf"] = shift * part["xf"]
 		parts.append_array(out["parts"])
 		if f["height"] > EPS:
-			var local: Vector3 = base_inv * child_xf.origin
-			bounds.add(Vector2(local.x + cursor, local.z), f["footprint"])
+			bounds.add(Vector2(child_local.x + (0.0 if is_z else cursor),
+					child_local.z + (cursor if is_z else 0.0)), fp)
 			tallest = maxf(tallest, f["height"])
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}

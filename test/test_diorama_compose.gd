@@ -464,44 +464,45 @@ func test_a_composite_neighbour_is_placed_from_its_real_edge() -> void:
 
 ## The go/no-go for the whole vocabulary: voussoirs tangent to an arc.
 ##
-## This asserts against DioramaGrammar.hero_arch(), which is hand-written and
-## known good, rather than against numbers of my own choosing — a golden
-## comparison, not a structural hand-wave. The lab finding it encodes is that a
-## voussoir's long axis lies TANGENT to the arc; orienting them radially makes
-## an M-shaped scallop instead of an arch.
-func test_ring_reproduces_the_hand_written_voussoirs_exactly() -> void:
-	var seed := 42
-	var s := 1.5
-	var w := (2.2 + DioramaHexKit.h01(seed, 81, 0) * 0.8) * s
-	var h := (2.6 + DioramaHexKit.h01(seed, 82, 0) * 0.6) * s
-	var t := 0.28 * s
-	var base_h := 0.22 * s
-	var radius := (w - 2.0 * t) * 0.5 + t * 0.5
-	var pier_h := maxf(0.05, h - radius)
-
-	var hand: Array = []
-	for p: Dictionary in DioramaGrammar.hero_arch(seed):
-		if p["tag"] == "upper" and p["kind"] == "box" \
-				and p["params"]["size"].y > 0.3 and p["params"]["size"].x < 0.5:
-			hand.append(p)
-	assert_eq(hand.size(), 9, "fixture drifted: expected 9 hand-written voussoirs")
-
-	var ctx := DioramaCompose.new_ctx(seed, 0)
-	ctx["frame"]["xf"] = Transform3D(Basis.IDENTITY,
-			Vector3(0, base_h + pier_h, 0))
+## This began as a golden comparison against the hand-written hero_arch recipe,
+## which was known to look right, and it passed at zero position and zero basis
+## delta. That referent is gone now — the hardcoded recipes were the thing
+## slice 2 removed — so the property it was really checking is asserted
+## directly instead: each voussoir's long axis is PERPENDICULAR to its own
+## radius, which is what "tangent" means. That is a stronger check than
+## agreeing with another implementation, because it cannot both be wrong in the
+## same way.
+##
+## The lab finding it encodes: voussoirs lie tangent, not radial. Radial
+## orientation makes an M-shaped scallop rather than an arch.
+func test_ring_lays_its_children_tangent_to_the_arc() -> void:
+	var radius := 2.0
 	var out := DioramaCompose.resolve({"ring": {"name": "span",
 			"radius": radius, "from": 0.0, "to": PI, "count": 9,
 			"of": {"mass": {"name": "voussoir", "kind": "box",
-					"w": t, "d": t * 1.5, "role": "plaster"}}}}, ctx)
-	var mine: Array = out["parts"]
-	assert_eq(mine.size(), 9, "ring produced the wrong number of voussoirs")
-	for i in range(mini(hand.size(), mine.size())):
-		var a: Transform3D = hand[i]["xf"]
-		var b: Transform3D = mine[i]["xf"]
-		assert_almost_eq((a.origin - b.origin).length(), 0.0, 1e-5,
-				"voussoir %d is in the wrong place" % i)
-		assert_almost_eq((a.basis.y - b.basis.y).length(), 0.0, 1e-5,
-				"voussoir %d is not tangent to the arc" % i)
+					"w": 0.4, "d": 0.6, "role": "plaster"}}}},
+			DioramaCompose.new_ctx(42, 0))
+	var parts: Array = out["parts"]
+	assert_eq(parts.size(), 9, "ring produced the wrong number of voussoirs")
+	var seen_angles: Array = []
+	for i in range(parts.size()):
+		var xf: Transform3D = parts[i]["xf"]
+		var size: Vector3 = parts[i]["params"]["size"]
+		# Centre of the voussoir: the box builds upward from its own origin.
+		var centre: Vector3 = xf * Vector3(0, size.y * 0.5, 0)
+		var radial := Vector2(centre.x, centre.y).normalized()
+		var long_axis := Vector2(xf.basis.y.x, xf.basis.y.y).normalized()
+		assert_almost_eq(absf(radial.dot(long_axis)), 0.0, 1e-4,
+				"voussoir %d is not tangent — its long axis is not "
+				% i + "perpendicular to its own radius")
+		assert_almost_eq(Vector2(centre.x, centre.y).length(), radius, 1e-4,
+				"voussoir %d does not sit on the arc" % i)
+		seen_angles.append(atan2(centre.y, centre.x))
+	# Evenly spaced across the half-turn, in order.
+	for i in range(1, seen_angles.size()):
+		var d: float = seen_angles[i] - seen_angles[i - 1]
+		assert_almost_eq(d, PI / 9.0, 1e-4,
+				"voussoirs %d and %d are not evenly spaced" % [i - 1, i])
 
 
 ## A ring's footprint has to describe the geometry it actually emitted, not the
@@ -585,3 +586,50 @@ func test_a_ring_is_centred_on_the_transform_it_was_handed() -> void:
 					"role": "plaster"}}}}, _ctx())
 	assert_almost_eq(out["frame"]["xf"].origin.x, 0.0, 1e-5,
 			"a ring's frame should be centred where it was placed")
+
+
+## `setback` shrinks each successive child of a stack relative to the one below
+## — a stepped monument's tiers. Held back from slice 1 because nothing called
+## it; `stepped` calls it now.
+func test_stack_setback_shrinks_each_tier_against_the_one_below() -> void:
+	var tree := {"stack": {"name": "ziggurat", "setback": 0.25, "children": [
+		_box("t0", 4.0, 4.0, 1.0),
+		{"mass": {"name": "t1", "kind": "box", "h": 1.0, "role": "plaster"}},
+		{"mass": {"name": "t2", "kind": "box", "h": 1.0, "role": "plaster"}}]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var w0: float = out["parts"][0]["params"]["size"].x
+	var w1: float = out["parts"][1]["params"]["size"].x
+	var w2: float = out["parts"][2]["params"]["size"].x
+	assert_almost_eq(w1, w0 * 0.75, 1e-5, "tier 1 did not set back from tier 0")
+	assert_almost_eq(w2, w1 * 0.75, 1e-5, "setback did not compound per tier")
+
+
+func test_setback_leaves_a_child_that_states_its_own_width_alone() -> void:
+	# Setback shrinks what a child INHERITS. A child that declares a width means
+	# that width, or a style could never break the taper deliberately.
+	var tree := {"stack": {"name": "s", "setback": 0.5, "children": [
+		_box("a", 4.0, 4.0, 1.0),
+		_box("b", 3.0, 3.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["parts"][1]["params"]["size"].x, 3.0, 1e-5,
+			"setback overrode a width the child stated explicitly")
+
+
+## A portico is a colonnade standing IN FRONT OF a hall — side by side in
+## depth, not stacked and not side by side in width. Same row semantics, other
+## axis.
+func test_a_row_can_run_along_z() -> void:
+	var tree := {"row": {"name": "portico", "axis": "z", "children": [
+		_box("colonnade", 3.0, 1.0, 2.0),
+		_box("hall", 3.0, 2.0, 3.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var dz: float = out["parts"][1]["xf"].origin.z - out["parts"][0]["xf"].origin.z
+	assert_almost_eq(dz, 1.5, 1e-5,
+			"children should step along z by half of each depth")
+	assert_almost_eq(out["parts"][0]["xf"].origin.x,
+			out["parts"][1]["xf"].origin.x, 1e-5,
+			"a z-row should not spread its children in x")
+	assert_almost_eq(out["frame"]["footprint"].y, 3.0, 1e-5,
+			"a z-row's depth should span its children")
+	assert_almost_eq(out["frame"]["footprint"].x, 3.0, 1e-5,
+			"a z-row's width should be its widest child, not their sum")

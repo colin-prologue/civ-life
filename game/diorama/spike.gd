@@ -35,6 +35,14 @@ extends Node3D
 @export var sun_energy: float = 1.25
 @export var ambient_energy: float = 0.45
 
+@export_group("Buildings")
+## How big a building stands in the valley. A style tree states a building's
+## PROPORTIONS; the diorama states its size, so the same style can stand at
+## village and at city scale without restating every dimension. These match the
+## 0.72 and 1.5 the hardcoded recipes used to bake in.
+@export var building_scale: float = 0.72
+@export var hero_scale: float = 1.5
+
 @export var rebuild: bool = false:
 	set(_v):
 		_build()
@@ -311,22 +319,30 @@ func _build_settlement(valley: SynthValley, mat: StandardMaterial3D) -> void:
 			"stepped", "residential", "residential", "civic", "residential"]
 	for i in range(valley.sites.size()):
 		var site := valley.sites[i]
-		var parts: Array
+		var tree: Dictionary
 		match kinds[i % kinds.size()]:
 			"civic":
-				parts = DioramaGrammar.civic(world_seed, i)
+				tree = DioramaStyles.civic()
 			"stepped":
-				parts = DioramaGrammar.stepped(world_seed, i)
+				tree = DioramaStyles.stepped()
 			_:
-				parts = DioramaGrammar.residential(world_seed, i)
-		var world := Transform3D(Basis(Vector3.UP, site.z),
+				tree = DioramaStyles.residential()
+		var parts := DioramaCompose.build(tree, world_seed, i)
+		DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+		# Scale belongs to PLACEMENT, not to a style: the same style should be
+		# able to stand at village and at city size, so the diorama says how big
+		# its buildings are rather than every style restating it.
+		var world := Transform3D(
+				Basis(Vector3.UP, site.z).scaled(Vector3.ONE * building_scale),
 				Vector3(site.x, _height(valley, site.x, site.y), site.y))
 		DioramaGrammar.emit(b, parts, world)
 	# the hero breaks the scale hierarchy, per the intent's composition rule:
 	# huge valley, small town, thin road, one enormous civic structure
 	var hs := valley.hero_site
-	var hero := DioramaGrammar.hero_arch(world_seed)
-	var hero_world := Transform3D(Basis(Vector3.UP, hs.z),
+	var hero := DioramaCompose.build(DioramaStyles.hero_arch(), world_seed, 0)
+	DioramaCompose.apply_roles(hero, DioramaStyles.ROLES)
+	var hero_world := Transform3D(
+			Basis(Vector3.UP, hs.z).scaled(Vector3.ONE * hero_scale),
 			Vector3(hs.x, _height(valley, hs.x, hs.y), hs.y))
 	DioramaGrammar.emit(b, hero, hero_world)
 	var inst := MeshInstance3D.new()
