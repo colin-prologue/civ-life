@@ -66,7 +66,7 @@ What is worth keeping, and is treated as fixed by this design:
 |---|---|
 | `mass` | one primitive (`box` / `tapered` / `prism` / `cone` / `dome`) with a proportion spec |
 | `stack` | children bottom-to-top, each sitting on the frame of the one below |
-| `row` | children along local X, spaced by an `advance` fraction of the preceding width |
+| `row` | children along local X, adjacent centres spaced by `advance` x half of each width |
 | `ring` | children repeated around a centre (columns, voussoirs) |
 | `attach` | a child placed against a named anchor of its parent |
 
@@ -216,10 +216,16 @@ defining it here would ship an untested feature whose semantics (does it
 override the child's own footprint, or scale it?) nothing yet forces us to
 decide.
 
-**FR-5** `row` places children along local X. The cursor advances by
-`advance` x the preceding child's width — a fraction, so it scales with the
-building instead of being an absolute distance. `advance = 1.0` is flush,
-`< 1.0` overlaps, `> 1.0` leaves a gap; the current `residential` uses `0.95`,
+**FR-5** `row` places children along local X. `advance` scales the distance
+between the centres of two ADJACENT children — half of each one's width, so
+`centre-to-centre = (previous_width + this_width) / 2 * advance`. That makes
+`advance = 1.0` put their edges exactly together, `< 1.0` overlap by that
+fraction, and `> 1.0` open a gap; widths 4 and 2 at `advance: 0.5` move their
+centres by 1.5, not 2.0. A child reporting a centre away from where it was
+placed — any composite — is measured from its real edge, so the rule holds for
+nested rows too. Scaling the PRECEDING width alone is the wrong reading: it is
+flush only when neighbours are the same size, which a style sampling each
+unit's width independently never is. The current `residential` uses `0.95`,
 a deliberate slight overlap so terraced units read as joined. Named `advance`
 rather than `gap` because a "gap" of 0.95 would naturally be read as a large
 separation and it is the opposite. The row's frame footprint spans from the

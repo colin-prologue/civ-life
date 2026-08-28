@@ -246,9 +246,22 @@ static func _assert_unique_names(children: Array, path: String) -> void:
 			seen[nm] = true
 
 
-## Children along local X. The cursor advances by `advance` x the PRECEDING
-## child's width, so spacing scales with the building rather than being an
-## absolute distance. 1.0 is flush, below 1.0 overlaps, above 1.0 leaves a gap.
+## Children along local X. `advance` scales the distance between the centres of
+## two ADJACENT children — half of each one's width, not the preceding width
+## alone:
+##
+##     centre-to-centre = (previous_width + this_width) / 2 * advance
+##
+## so 1.0 puts their edges exactly together, below 1.0 overlaps them by that
+## fraction, and above 1.0 opens a gap. Widths 4 and 2 at `advance: 0.5` move
+## their centres by 1.5, not by 2.0. A child that reports a centre away from
+## where it was placed — any composite — is measured from its real edge, so the
+## rule holds for nested rows as well as for plain masses.
+##
+## Scaling the preceding width alone is the older, wrong reading of this: it is
+## only flush when neighbours happen to be the same size, and a style that
+## samples each unit's width independently is never that. It shipped as visible
+## gaps between houses that were supposed to be a terrace.
 ##
 ## Named `advance` and not `gap` on purpose: the value that reproduces the
 ## original terraced housing is 0.95, and calling that "a gap of 0.95" reads as
