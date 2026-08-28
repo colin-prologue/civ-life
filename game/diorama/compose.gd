@@ -1,0 +1,414 @@
+class_name DioramaCompose
+extends RefCounted
+## Resolves a style tree into the parts the diorama already renders.
+##
+## A style is data: nested dictionaries of node types, each keyed by its type
+## name ("mass", "stack", "row"). resolve() folds that tree into a flat parts
+## list plus a FRAME — the space the node occupies — and it is the frame that
+## lets a parent place the next sibling without re-deriving arithmetic. That is
+## the whole trick: `x += w * 0.95` and `y += tier_h` exist once here instead of
+## once per recipe.
+##
+## Nothing in this file renders, touches the scene tree, or does I/O. It runs
+## headless and must produce identical output in separate processes.
+
+const FNV_OFFSET := 1469598103934665603
+const FNV_PRIME := 1099511628211
+const EPS := 1e-6
+
+
+## FNV-1a over a string. Godot's builtin hash() is deliberately NOT used: it
+## carries no documented cross-platform stability guarantee, and this repo
+## asserts that generation reproduces across separate processes. Mirrors the
+## mixing already used by DioramaMeshKit.fingerprint().
+static func str_hash(s: String) -> int:
+	var acc := FNV_OFFSET
+	for i in range(s.length()):
+		acc = ((acc ^ s.unicode_at(i)) * FNV_PRIME) & 0x7FFFFFFFFFFFFFFF
+	return acc
+
+
+## A variation channel, keyed on the node's NAME PATH rather than its index
+## path. The difference matters: with index paths, inserting one node shifts
+## every sibling after it, so adding a porch rearranges the whole town. With
+## names, adding "porch" leaves "tier1" untouched.
+##
+## Cost of that choice: renaming a node re-rolls its subtree. That is the right
+## default — a rename is usually a redesign — but it surprises you once.
+static func channel(seed: int, building_id: int, path: String,
+		purpose: String) -> float:
+	return DioramaHexKit.h01(seed, building_id, str_hash(path),
+			str_hash(purpose))
+
+
+## A proportion spec is a scalar (fixed), a two-element array (sampled), or
+## absent (the caller's default).
+static func sample(spec: Variant, seed: int, building_id: int, path: String,
+		purpose: String, dflt: float) -> float:
+	if spec == null:
+		return dflt
+	if spec is float or spec is int:
+		return float(spec)
+	assert(spec is Array, "'%s' on '%s' must be a number or [lo, hi]"
+			% [purpose, path])
+	assert(spec.size() == 2, "'%s' on '%s' must have exactly two bounds"
+			% [purpose, path])
+	var lo := float(spec[0])
+	var hi := float(spec[1])
+	# Not swapped silently: a reversed range is a typo, and quietly "fixing" it
+	# hides the typo while changing what the style means.
+	assert(lo <= hi, "'%s' on '%s' has lo > hi" % [purpose, path])
+	return lo + (hi - lo) * channel(seed, building_id, path, purpose)
+
+
+## `count` is inclusive integer bounds: a scalar is that exact count, and
+## [lo, hi] means lo, lo+1, ..., hi with equal probability — so a style reads
+## "[1, 3]" and means what it says, rather than "[1, 4.0]" meaning "1 to 3"
+## because the sampler floors under the hood.
+##
+## floor, not round: round() would reach one past hi (round(2.99) is 3, but so
+## is round(3.49)), so it is not the hi bound itself that needs reaching — it
+## is that floor(c * span), scaled across span = hi - lo + 1 rather than
+## hi - lo, lands exactly on hi when the channel value approaches 1 (which
+## h01 never quite returns, so hi is a reachable outcome, not an asymptote,
+## and nothing beyond it is ever produced).
+static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> int:
+	if spec == null:
+		return 1
+	if spec is float or spec is int:
+		return int(spec)
+	assert(spec is Array, "'count' on '%s' must be a number or [lo, hi]" % path)
+	assert(spec.size() == 2, "'count' on '%s' must have exactly two bounds" % path)
+	var lo := int(spec[0])
+	var hi := int(spec[1])
+	assert(lo <= hi, "'count' on '%s' has lo > hi" % path)
+	var span := hi - lo + 1
+	var c := channel(seed, id, path, "count")
+	return lo + int(floor(c * span))
+
+
+static func zero_frame(xf: Transform3D) -> Dictionary:
+	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
+
+
+static func new_ctx(seed: int, building_id: int) -> Dictionary:
+	return {"seed": seed, "id": building_id, "path": "",
+			"frame": zero_frame(Transform3D.IDENTITY)}
+
+
+static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
+	if node.has("mass"):
+		return _mass(node["mass"], ctx)
+	if node.has("stack"):
+		return _stack(node["stack"], ctx)
+	if node.has("row"):
+		return _row(node["row"], ctx)
+	assert(false, "unknown node type: %s" % str(node.keys()))
+	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
+
+
+static func _path_of(ctx: Dictionary, n: Dictionary) -> String:
+	var nm: String = n.get("name", "")
+	assert(nm != "", "every node needs a name — channels are keyed on it")
+	return nm if ctx["path"] == "" else ctx["path"] + "/" + nm
+
+
+static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var seed: int = ctx["seed"]
+	var id: int = ctx["id"]
+	var xf: Transform3D = ctx["frame"]["xf"]
+	var inherited: Vector2 = ctx["frame"]["footprint"]
+	var oversize := sample(n.get("oversize"), seed, id, path, "oversize", 1.0)
+	# A mass with no w/d takes the footprint it is standing on. That is how a
+	# roof overhangs its body without restating the body's dimensions.
+	var w := sample(n.get("w"), seed, id, path, "w", inherited.x) * oversize
+	var d := sample(n.get("d"), seed, id, path, "d", inherited.y) * oversize
+	var h := sample(n.get("h"), seed, id, path, "h", 0.0)
+	if w <= EPS or d <= EPS or h <= EPS:
+		return {"parts": [], "frame": zero_frame(xf)}
+	var kind: String = n.get("kind", "box")
+	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
+	# the renderer. Reporting (w, d) would describe geometry that does not
+	# exist, and everything stacking on this frame inherits the lie.
+	if kind == "prism" or kind == "cone":
+		d = w
+	var params := _params_for(kind, n, w, d, h, seed, id, path)
+	var part := {"kind": kind, "xf": xf, "params": params,
+			"color": Color.MAGENTA, "tag": "", "y": 0.0,
+			"role": n.get("role", "plaster")}
+	return {"parts": [part],
+			"frame": {"xf": xf, "footprint": Vector2(w, d), "height": h}}
+
+
+## Maps a footprint and height onto whatever DioramaMeshKit's helper for this
+## primitive expects. Round primitives take a radius from half the width.
+static func _params_for(kind: String, n: Dictionary, w: float, d: float,
+		h: float, seed: int, id: int, path: String) -> Dictionary:
+	match kind:
+		"box":
+			return {"size": Vector3(w, h, d)}
+		"tapered":
+			return {"size": Vector3(w, h, d),
+					"taper": sample(n.get("taper"), seed, id, path, "taper", 0.5)}
+		"prism", "cone":
+			return {"radius": w * 0.5, "height": h}
+	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
+	return {}
+
+
+## The union of what a node's children actually occupy, in the node's own local
+## space. Both combinators need exactly this, and they had drifted apart on it
+## four separate times — the frame origin, following a child's reported centre,
+## skipping children that resolved to nothing, and what to report when NOTHING
+## accumulated. Each was found in one and missed in the other, because they were
+## written separately and each kept its own copy of the arithmetic. One
+## accumulator, used by both, retires the whole class.
+class Bounds:
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+
+	## `centre` is where the child says it is; `footprint` is how much room it
+	## takes. A child that resolved to nothing is simply never added.
+	func add(centre: Vector2, footprint: Vector2) -> void:
+		var half := footprint * 0.5
+		lo = Vector2(minf(lo.x, centre.x - half.x),
+				minf(lo.y, centre.y - half.y))
+		hi = Vector2(maxf(hi.x, centre.x + half.x),
+				maxf(hi.y, centre.y + half.y))
+
+	## True when nothing was ever added — which is NOT the same as "the node had
+	## no children". A node can declare several and have every one resolve away.
+	func is_empty() -> bool:
+		return lo.x == INF
+
+	func span() -> Vector2:
+		return Vector2.ZERO if is_empty() else hi - lo
+
+	func mid() -> Vector2:
+		return Vector2.ZERO if is_empty() else (lo + hi) * 0.5
+
+
+## Children bottom-to-top. Each child is handed the frame of the one below it,
+## which is both where it sits and the footprint it inherits if it declares
+## none — so a roof can say "cover whatever I am on, 8% bigger".
+static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var children: Array = n.get("children", [])
+	_assert_unique_names(children, path)
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var base_inv := base_xf.affine_inverse()
+	var parts: Array = []
+	var carried: Vector2 = ctx["frame"]["footprint"]
+	var y := 0.0
+	# Horizontal offset, in base-local space, of the thing the next child sits
+	# on. Zero until a child reports a centre of its own.
+	var centre := Vector2.ZERO
+	var bounds := Bounds.new()
+	for child in children:
+		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
+				"frame": {"xf": base_xf.translated_local(
+						Vector3(centre.x, y, centre.y)),
+						"footprint": carried, "height": 0.0}}
+		var out := resolve(child, child_ctx)
+		parts.append_array(out["parts"])
+		var f: Dictionary = out["frame"]
+		y += f["height"]
+		if f["height"] > EPS:
+			# A child may report a centre that is NOT the transform it was
+			# handed — a row of unequal widths advancing by a fraction of each
+			# width does not end up centred on where it started. Follow it, or
+			# whatever stacks on top lands over the wrong place: correctly
+			# sized, and hanging off one end.
+			var child_xf: Transform3D = f["xf"]
+			var local: Vector3 = base_inv * child_xf.origin
+			centre = Vector2(local.x, local.z)
+			carried = f["footprint"]
+			bounds.add(centre, carried)
+	if bounds.is_empty():
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	var mid := bounds.mid()
+	return {"parts": parts,
+			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
+					"footprint": bounds.span(), "height": y}}
+
+
+## Two siblings sharing a name would share every channel and come out
+## identical. That is never the intent and is otherwise invisible — the
+## buildings just look oddly repetitive.
+static func _assert_unique_names(children: Array, path: String) -> void:
+	var seen := {}
+	for child: Dictionary in children:
+		for type_key: String in child:
+			var nm: String = child[type_key].get("name", "")
+			assert(not seen.has(nm),
+					"duplicate sibling name '%s' under '%s'" % [nm, path])
+			seen[nm] = true
+
+
+## Children along local X. `advance` scales the distance between the centres of
+## two ADJACENT children — half of each one's width, not the preceding width
+## alone:
+##
+##     centre-to-centre = (previous_width + this_width) / 2 * advance
+##
+## so 1.0 puts their edges exactly together, below 1.0 overlaps them by that
+## fraction, and above 1.0 opens a gap. Widths 4 and 2 at `advance: 0.5` move
+## their centres by 1.5, not by 2.0. A child that reports a centre away from
+## where it was placed — any composite — is measured from its real edge, so the
+## rule holds for nested rows as well as for plain masses.
+##
+## Scaling the preceding width alone is the older, wrong reading of this: it is
+## only flush when neighbours happen to be the same size, and a style that
+## samples each unit's width independently is never that. It shipped as visible
+## gaps between houses that were supposed to be a terrace.
+##
+## Named `advance` and not `gap` on purpose: the value that reproduces the
+## original terraced housing is 0.95, and calling that "a gap of 0.95" reads as
+## a large separation when it is really a 5% overlap.
+static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var seed: int = ctx["seed"]
+	var id: int = ctx["id"]
+	var has_template := n.has("of")
+	assert(not (has_template and n.has("children")),
+			"'%s' has both 'count'/'of' and 'children' — pick one" % path)
+	assert(not (n.has("count") and not has_template),
+			"'%s' has 'count' without 'of' — count only repeats a template" % path)
+	var children: Array = []
+	if has_template:
+		var count := _sample_count(n.get("count"), seed, id, path)
+		for i in range(maxi(0, count)):
+			children.append(_indexed(n["of"], i))
+	else:
+		children = n.get("children", [])
+		_assert_unique_names(children, path)
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var base_inv := base_xf.affine_inverse()
+	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
+	var parts: Array = []
+	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
+	# xf.origin sits at ITS centre, not its near edge.
+	var bounds := Bounds.new()
+	var tallest := 0.0
+	# Two passes, because placing a child flush against the one before it needs
+	# BOTH their widths, and a child's width is only known once it is resolved.
+	# Resolve every child at the row's own origin first, then lay them out.
+	var resolved: Array = []
+	for child in children:
+		var child_ctx := {"seed": seed, "id": id, "path": path,
+				"frame": {"xf": base_xf,
+						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
+		resolved.append(resolve(child, child_ctx))
+	var cursor := 0.0
+	var prev_half := 0.0
+	var prev_centre := 0.0     # previous child's centre, in ROW space
+	var placed_any := false
+	for out: Dictionary in resolved:
+		var f: Dictionary = out["frame"]
+		var half: float = f["footprint"].x * 0.5
+		var child_xf: Transform3D = f["xf"]
+		# Where the child says its centre is, relative to where it resolved.
+		# For a mass that is zero; for a composite it need not be.
+		var offset: float = (base_inv * child_xf.origin).x
+		if f["height"] > EPS:
+			if placed_any:
+				# Solve for the shift that puts this child's NEAR edge against
+				# the previous child's FAR edge, in row space:
+				#     (cursor + offset) - half == prev_centre + prev_half
+				# scaled by advance, so 1.0 is flush and 0.95 overlaps by 5%.
+				# Stepping by widths alone is only correct when every child's
+				# centre coincides with where it was placed, which composites
+				# break — a nested row of unequal widths reports a centre off
+				# its own origin, and the next child then overlaps it.
+				cursor = prev_centre + (prev_half + half) * advance - offset
+			placed_any = true
+			prev_centre = cursor + offset
+			prev_half = half
+		# Children were resolved at the row's origin; shift them into place. A
+		# child that resolved to nothing contributes no parts, no bounds, and
+		# does not move the cursor.
+		var shift := base_xf * Transform3D(Basis.IDENTITY,
+				Vector3(cursor, 0, 0)) * base_inv
+		for part: Dictionary in out["parts"]:
+			part["xf"] = shift * part["xf"]
+		parts.append_array(out["parts"])
+		if f["height"] > EPS:
+			var local: Vector3 = base_inv * child_xf.origin
+			bounds.add(Vector2(local.x + cursor, local.z), f["footprint"])
+			tallest = maxf(tallest, f["height"])
+	if bounds.is_empty():
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	var mid := bounds.mid()
+	return {"parts": parts,
+			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
+					"footprint": bounds.span(), "height": tallest}}
+
+
+## Suffix a template's name with its index so repeated units get distinct
+## channels — otherwise `count: 3` produces the same building three times.
+static func _indexed(template: Dictionary, i: int) -> Dictionary:
+	var out := {}
+	for type_key: String in template:
+		var body: Dictionary = template[type_key].duplicate(true)
+		body["name"] = "%s%d" % [body.get("name", "item"), i]
+		out[type_key] = body
+	return out
+
+
+## Public entry point. Resolve the tree, then derive what no node should have
+## to author: each part's centre height and its structural tag.
+static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
+	var out := resolve(tree, new_ctx(seed, building_id))
+	var parts: Array = out["parts"]
+	_finish(parts)
+	return parts
+
+
+## Tags fall out of normalised height once the building's full extent is known,
+## so a style author never labels a part and can never forget to. That is what
+## makes ruins and the assembly tween automatic for every new style.
+static func _finish(parts: Array) -> void:
+	if parts.is_empty():
+		return
+	var total := 0.0
+	var biggest_area := 0.0
+	for p: Dictionary in parts:
+		total = maxf(total, p["xf"].origin.y + _height_of(p))
+		biggest_area = maxf(biggest_area, _area_of(p))
+	for p: Dictionary in parts:
+		var h := _height_of(p)
+		p["y"] = p["xf"].origin.y + h * 0.5
+		var t: float = p["y"] / maxf(total, EPS)
+		if (p["kind"] == "cone" or p["kind"] == "prism") \
+				and _area_of(p) < biggest_area * 0.25:
+			p["tag"] = "accent"
+		elif t < 0.20:
+			p["tag"] = "base"
+		elif t < 0.65:
+			p["tag"] = "mid"
+		else:
+			p["tag"] = "upper"
+
+
+static func _height_of(p: Dictionary) -> float:
+	var params: Dictionary = p["params"]
+	return params["size"].y if params.has("size") else params.get("height", 0.0)
+
+
+static func _area_of(p: Dictionary) -> float:
+	var params: Dictionary = p["params"]
+	if params.has("size"):
+		return params["size"].x * params["size"].z
+	var r: float = params.get("radius", 0.0)
+	return r * r * 4.0
+
+
+## Resolve each part's role into a concrete colour. Kept separate from build()
+## so one tree can be rendered in several palettes — which is what makes
+## culture a mapping rather than a fork of the geometry.
+static func apply_roles(parts: Array, roles: Dictionary) -> void:
+	for p: Dictionary in parts:
+		var role: String = p.get("role", "")
+		assert(roles.has(role), "no colour for role '%s'" % role)
+		p["color"] = roles[role]

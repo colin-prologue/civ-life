@@ -236,7 +236,7 @@ run_fingerprints() {
 # stream. A combined stream is non-empty as soon as *either* half produces
 # lines, so a generator that silently stopped emitting would leave the
 # emptiness guard green and take its own coverage down with it unnoticed.
-for gen in tools/world_fingerprint.gd tools/diorama_fingerprint.gd; do
+for gen in tools/world_fingerprint.gd tools/diorama_fingerprint.gd tools/diorama_compose_fingerprint.gd; do
   run_fingerprints "$gen" > "$fp1"
   run_fingerprints "$gen" > "$fp2"
 

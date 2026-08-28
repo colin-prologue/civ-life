@@ -1,0 +1,434 @@
+extends GutTest
+## Resolver invariants for the style-tree composer.
+##
+## These are asserted on returned data rather than on a picture, so they run on
+## a host with no rendering context — the same reason test_diorama_mesh_kit.gd
+## checks buffers instead of frames.
+
+const SEED := 4242
+
+
+func _ctx() -> Dictionary:
+	return DioramaCompose.new_ctx(SEED, 7)
+
+
+func _box(name: String, w: Variant, d: Variant, h: Variant) -> Dictionary:
+	return {"mass": {"name": name, "kind": "box", "w": w, "d": d, "h": h,
+			"role": "plaster"}}
+
+
+func test_str_hash_is_stable_and_distinguishes() -> void:
+	assert_eq(DioramaCompose.str_hash("body"), DioramaCompose.str_hash("body"),
+			"same string hashed twice differs")
+	assert_ne(DioramaCompose.str_hash("body"), DioramaCompose.str_hash("roof"),
+			"different strings collided")
+
+
+func test_channel_is_deterministic_and_in_range() -> void:
+	var a := DioramaCompose.channel(SEED, 7, "block/unit/body", "w")
+	var b := DioramaCompose.channel(SEED, 7, "block/unit/body", "w")
+	assert_eq(a, b, "same channel gave two values")
+	assert_between(a, 0.0, 1.0, "channel escaped [0,1]")
+
+
+func test_channel_varies_by_path_purpose_and_building() -> void:
+	var base := DioramaCompose.channel(SEED, 7, "block/unit/body", "w")
+	assert_ne(base, DioramaCompose.channel(SEED, 7, "block/unit/roof", "w"),
+			"two different nodes drew the same value")
+	assert_ne(base, DioramaCompose.channel(SEED, 7, "block/unit/body", "h"),
+			"two fields of one node drew the same value")
+	assert_ne(base, DioramaCompose.channel(SEED, 8, "block/unit/body", "w"),
+			"two buildings drew the same value")
+
+
+func test_sample_scalar_is_fixed_and_range_is_inside_bounds() -> void:
+	assert_eq(DioramaCompose.sample(0.75, SEED, 7, "p", "w", 1.0), 0.75,
+			"a scalar spec was not returned verbatim")
+	var v := DioramaCompose.sample([0.5, 1.5], SEED, 7, "p", "w", 1.0)
+	assert_between(v, 0.5, 1.5, "sampled value escaped its range")
+	assert_eq(DioramaCompose.sample(null, SEED, 7, "p", "w", 0.25), 0.25,
+			"a missing spec did not fall back to the default")
+
+
+func test_mass_emits_one_part_with_the_contract_keys() -> void:
+	var out := DioramaCompose.resolve(_box("body", 1.0, 2.0, 3.0), _ctx())
+	assert_eq(out["parts"].size(), 1, "a mass produced the wrong part count")
+	var p: Dictionary = out["parts"][0]
+	for key in ["kind", "xf", "params", "color", "tag", "y"]:
+		assert_true(p.has(key), "part is missing contract key '%s'" % key)
+	assert_eq(p["kind"], "box", "part kind was not carried through")
+	assert_eq(p["params"]["size"], Vector3(1.0, 3.0, 2.0),
+			"box size is (w, h, d) — check the axis order")
+
+
+func test_mass_frame_reports_its_own_extent() -> void:
+	var out := DioramaCompose.resolve(_box("body", 1.0, 2.0, 3.0), _ctx())
+	assert_eq(out["frame"]["footprint"], Vector2(1.0, 2.0), "footprint wrong")
+	assert_eq(out["frame"]["height"], 3.0, "frame height wrong")
+
+
+func test_mass_with_a_zero_dimension_emits_nothing() -> void:
+	var out := DioramaCompose.resolve(_box("body", 1.0, 0.0, 3.0), _ctx())
+	assert_eq(out["parts"].size(), 0,
+			"a degenerate mass still emitted a part")
+	assert_eq(out["frame"]["height"], 0.0,
+			"a degenerate mass claimed vertical extent")
+
+
+func test_mass_inherits_the_incoming_footprint_when_it_omits_one() -> void:
+	# A roof declares no w/d: it takes the frame it sits on, scaled by oversize.
+	var ctx := _ctx()
+	ctx["frame"]["footprint"] = Vector2(2.0, 4.0)
+	var roof := {"mass": {"name": "roof", "kind": "box", "h": 0.5,
+			"oversize": 1.5, "role": "ochre"}}
+	var out := DioramaCompose.resolve(roof, ctx)
+	assert_eq(out["frame"]["footprint"], Vector2(3.0, 6.0),
+			"oversize did not scale the inherited footprint")
+
+
+func _two_tier() -> Dictionary:
+	return {"stack": {"name": "unit", "children": [
+		_box("lower", 2.0, 2.0, 1.0),
+		_box("upper", 1.0, 1.0, 3.0)]}}
+
+
+func test_stack_sums_height_and_takes_the_widest_footprint() -> void:
+	var out := DioramaCompose.resolve(_two_tier(), _ctx())
+	assert_eq(out["parts"].size(), 2, "stack lost a child")
+	assert_almost_eq(out["frame"]["height"], 4.0, 1e-5,
+			"stack height is not the sum of its children")
+	assert_eq(out["frame"]["footprint"], Vector2(2.0, 2.0),
+			"stack footprint is not the widest child's")
+
+
+func test_stack_places_each_child_on_top_of_the_one_below() -> void:
+	var out := DioramaCompose.resolve(_two_tier(), _ctx())
+	var lower: Dictionary = out["parts"][0]
+	var upper: Dictionary = out["parts"][1]
+	assert_almost_eq(lower["xf"].origin.y, 0.0, 1e-5,
+			"first child should sit on the incoming base plane")
+	assert_almost_eq(upper["xf"].origin.y, 1.0, 1e-5,
+			"second child should sit on top of the first, at its height")
+
+
+func test_a_zero_height_child_does_not_lift_its_successor() -> void:
+	var tree := {"stack": {"name": "unit", "children": [
+		_box("ghost", 1.0, 1.0, 0.0),
+		_box("real", 1.0, 1.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 1, "the degenerate child emitted a part")
+	assert_almost_eq(out["parts"][0]["xf"].origin.y, 0.0, 1e-5,
+			"a zero-height child still pushed its successor upward")
+
+
+func test_adding_a_named_sibling_does_not_disturb_the_others() -> void:
+	# The whole reason channels are keyed on names. If this fails, someone has
+	# reintroduced index-based hashing and every edit will reshuffle the town.
+	var before := DioramaCompose.resolve(
+			{"stack": {"name": "unit", "children": [
+				_box("body", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("roof", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0])]}}, _ctx())
+	var after := DioramaCompose.resolve(
+			{"stack": {"name": "unit", "children": [
+				_box("porch", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("body", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]),
+				_box("roof", [1.0, 2.0], [1.0, 2.0], [1.0, 2.0])]}}, _ctx())
+	assert_eq(before["parts"][0]["params"]["size"],
+			after["parts"][1]["params"]["size"],
+			"inserting 'porch' re-rolled 'body'")
+	assert_eq(before["parts"][1]["params"]["size"],
+			after["parts"][2]["params"]["size"],
+			"inserting 'porch' re-rolled 'roof'")
+
+
+func test_row_advances_by_a_fraction_of_the_previous_width() -> void:
+	var tree := {"row": {"name": "block", "advance": 0.5, "children": [
+		_box("a", 2.0, 1.0, 1.0),
+		_box("b", 2.0, 1.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["parts"][0]["xf"].origin.x, 0.0, 1e-5,
+			"first child of a row should start at the origin")
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 1.0, 1e-5,
+			"advance 0.5 on a width-2 child should step 1.0, not 2.0")
+
+
+func test_row_template_repeats_with_distinct_channels_per_index() -> void:
+	var tree := {"row": {"name": "block", "count": 3, "advance": 1.0,
+			"of": _box("unit", [1.0, 3.0], 1.0, 1.0)}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 3, "count did not repeat the template")
+	var w0: float = out["parts"][0]["params"]["size"].x
+	var w1: float = out["parts"][1]["params"]["size"].x
+	assert_ne(w0, w1, "repeated units are identical — index is not in the channel")
+
+
+func test_row_template_growing_count_does_not_disturb_earlier_units() -> void:
+	# The row analogue of test_adding_a_named_sibling_does_not_disturb_the_others
+	# above: this branch's central claim is that channels are keyed on a
+	# NAME path rather than an index path, and it is precisely as fragile
+	# here as it is for a stack — growing a templated row's count must not
+	# re-roll the units that were already there, because each repeat's
+	# channel is keyed on its own indexed name ("unit0", "unit1", ...) rather
+	# than on the total count.
+	var two := DioramaCompose.resolve(
+			{"row": {"name": "block", "count": 2, "advance": 1.0, "of":
+				_box("unit", [1.0, 3.0], [1.0, 3.0], [1.0, 3.0])}}, _ctx())
+	var three := DioramaCompose.resolve(
+			{"row": {"name": "block", "count": 3, "advance": 1.0, "of":
+				_box("unit", [1.0, 3.0], [1.0, 3.0], [1.0, 3.0])}}, _ctx())
+	assert_eq(two["parts"][0]["params"]["size"], three["parts"][0]["params"]["size"],
+			"growing count from 2 to 3 re-rolled the first unit")
+	assert_eq(two["parts"][1]["params"]["size"], three["parts"][1]["params"]["size"],
+			"growing count from 2 to 3 re-rolled the second unit")
+
+
+func test_row_with_zero_count_is_legal_and_empty() -> void:
+	var tree := {"row": {"name": "block", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["parts"].size(), 0, "count 0 still produced parts")
+	assert_eq(out["frame"]["height"], 0.0, "an empty row claimed height")
+	assert_eq(out["frame"]["footprint"], Vector2.ZERO,
+			"an empty row claimed a footprint")
+
+
+func test_row_frame_spans_its_children_and_takes_the_tallest() -> void:
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("a", 2.0, 1.0, 1.0),
+		_box("b", 2.0, 3.0, 5.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 4.0, 1e-5,
+			"row width should span first near edge to last far edge")
+	assert_almost_eq(out["frame"]["footprint"].y, 3.0, 1e-5,
+			"row depth should be its deepest child")
+	assert_almost_eq(out["frame"]["height"], 5.0, 1e-5,
+			"row height should be its tallest child")
+
+
+func test_row_frame_spans_true_edges_with_unequal_widths() -> void:
+	# test_row_frame_spans_its_children_and_takes_the_tallest above uses two
+	# EQUAL-width children, so "far edge of the last child minus the row's own
+	# origin" and "true near-edge-to-far-edge span" come out equal by
+	# coincidence and the bug they are meant to catch is invisible. A wide
+	# first child and a narrower last child pulls them apart. `a` is 4 wide,
+	# centred on the row origin, so it occupies [-2, 2]. `b` is 2 wide and sits
+	# flush against it — the cursor steps by half of each, (2 + 1) = 3 — so it
+	# occupies [2, 4]. The true span is -2..4, i.e. 6, centred on +1. The old
+	# "row origin to the last child's far edge" arithmetic reported 5.
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("a", 4.0, 1.0, 1.0),
+		_box("b", 2.0, 1.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
+			"row width should span the first child's near edge to the last "
+			+ "child's far edge, not the origin to the last child's far edge")
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.0, 1e-5,
+			"row frame origin should be the true centre of its span")
+
+
+func _tower() -> Dictionary:
+	return {"stack": {"name": "tower", "children": [
+		_box("plinth", 4.0, 4.0, 1.0),
+		_box("shaft", 3.0, 3.0, 6.0),
+		{"mass": {"name": "spire", "kind": "cone", "w": 0.4, "d": 0.4,
+				"h": 3.0, "role": "brass"}}]}}
+
+
+func test_build_tags_every_part() -> void:
+	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
+		assert_ne(p["tag"], "", "a part came back untagged")
+
+
+func test_tag_bands_follow_height() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_eq(parts[0]["tag"], "base", "the bottom part is not tagged base")
+	assert_eq(parts[1]["tag"], "mid", "the middle part is not tagged mid")
+
+
+func test_a_small_cone_on_top_is_an_accent() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_eq(parts[2]["tag"], "accent",
+			"a slim cone above the mass should read as an accent")
+
+
+func test_y_is_the_part_centre_height() -> void:
+	var parts := DioramaCompose.build(_tower(), SEED, 1)
+	assert_almost_eq(parts[0]["y"], 0.5, 1e-5, "plinth centre should be h/2")
+	assert_almost_eq(parts[1]["y"], 4.0, 1e-5, "shaft centre should be 1 + 6/2")
+
+
+func test_tags_are_monotonic_in_height() -> void:
+	# The property the ruin filter depends on: nothing tagged base sits above
+	# anything tagged upper. Uses its own four-box fixture rather than _tower()
+	# — the tower tops out in `mid` and `accent`, so running this against it
+	# would pass without ever comparing a base to an upper.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
+	var parts := DioramaCompose.build(tall, SEED, 1)
+	var highest_base := -INF
+	var lowest_upper := INF
+	for p: Dictionary in parts:
+		if p["tag"] == "base":
+			highest_base = maxf(highest_base, p["y"])
+		elif p["tag"] == "upper":
+			lowest_upper = minf(lowest_upper, p["y"])
+	assert_gt(highest_base, -INF, "fixture produced no base part to compare")
+	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
+	assert_lt(highest_base, lowest_upper,
+			"a base part sits above an upper part")
+
+
+## A mass stacked on a row has to land over the row's CENTRE, not over the
+## transform the row was handed.
+##
+## `_row` returns a frame whose `xf` is the true centre of its children — it
+## has to, because a row of unequal widths advancing by a fraction of each
+## width does not end up centred on where it started. `_stack` was handing
+## every child `base_xf` and reading only the child's footprint, so the roof
+## came out correctly SIZED and in the wrong PLACE: over a 4/1/2 terrace
+## spanning -2..6 it sat at -4..4, overhanging empty ground on one side and
+## leaving the last unit bare. Nothing caught it because the shipped
+## `residential` puts its roofs inside each unit's stack, with the row on the
+## outside — the arrangement that breaks is the one slice 2 reaches for first.
+func test_a_mass_stacked_on_a_row_is_centred_over_it() -> void:
+	var tree := {"stack": {"name": "terrace", "children": [
+		{"row": {"name": "units", "advance": 1.0, "children": [
+			_box("a", 4.0, 2.0, 1.0),
+			_box("b", 1.0, 2.0, 1.0),
+			_box("c", 2.0, 2.0, 1.0)]}},
+		{"mass": {"name": "roof", "kind": "box", "h": 0.5, "role": "ochre"}}]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var roof: Dictionary = out["parts"][3]
+	# Units are 4, 1 and 2 wide, each flush against the last: a occupies
+	# [-2, 2], b steps by (2 + 0.5) to occupy [2, 3], c steps by (0.5 + 1) to
+	# occupy [3, 5]. The terrace is therefore -2..5 — 7 wide, centred on +1.5.
+	assert_almost_eq(roof["xf"].origin.x, 1.5, 1e-5,
+			"roof did not land over the terrace's centre")
+	assert_almost_eq(roof["params"]["size"].x, 7.0, 1e-5,
+			"roof did not span the whole terrace")
+
+
+## The mirror of test_a_mass_stacked_on_a_row_is_centred_over_it: a row whose
+## child reports a centre of its own has to follow it too, or the outer row
+## reports bounds that do not cover its own geometry.
+func test_a_row_follows_a_nested_row_s_reported_centre() -> void:
+	var inner := {"row": {"name": "inner", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 1.0, 2.0, 1.0)]}}
+	# inner: wide sits at 0 spanning [-2, 2]; narrow is 1 wide and flush against
+	# it, stepping by (2 + 0.5), so it occupies [2, 3]. inner spans [-2, 3] —
+	# width 5, centre +0.5, which is half a unit to the RIGHT of the transform
+	# it was handed.
+	var outer := {"row": {"name": "outer", "advance": 1.0, "children": [
+		inner,
+		_box("tail", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(outer, _ctx())
+	# outer: inner really occupies [-2, 3]. Placing tail flush means its near
+	# edge meets inner's far edge at 3, so tail occupies [3, 5] — which needs
+	# inner's centre offset (+0.5), not just its width, or tail lands at
+	# [2.5, 4.5] and overlaps by half a unit at advance 1.0. Union is [-2, 5]:
+	# width 7, centre +1.5.
+	assert_almost_eq(out["frame"]["footprint"].x, 7.0, 1e-5,
+			"outer row's span ignored the nested row's real extent")
+	assert_almost_eq(out["frame"]["xf"].origin.x, 1.5, 1e-5,
+			"outer row's centre ignored the nested row's real extent")
+
+
+## An optional child that resolves to nothing must not widen the row it is in.
+## `count: 0` is the supported way for a style to say "sometimes absent", so a
+## row carrying one has to come out the same size as a row without it.
+func test_an_empty_child_does_not_widen_a_row() -> void:
+	var absent := {"row": {"name": "maybe", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var with_gap := {"row": {"name": "outer", "advance": 1.0, "children": [
+		_box("real", 2.0, 2.0, 1.0), absent]}}
+	var without := {"row": {"name": "outer", "advance": 1.0, "children": [
+		_box("real", 2.0, 2.0, 1.0)]}}
+	var a := DioramaCompose.resolve(with_gap, _ctx())
+	var b := DioramaCompose.resolve(without, _ctx())
+	assert_almost_eq(a["frame"]["footprint"].x, b["frame"]["footprint"].x, 1e-5,
+			"an empty child widened the row")
+	assert_almost_eq(a["frame"]["xf"].origin.x, b["frame"]["xf"].origin.x, 1e-5,
+			"an empty child pushed the row off centre")
+
+
+## A row whose declared children ALL resolve to nothing must report a zero
+## frame, not -INF and NaN. Guarding the accumulation but then testing the
+## declared child count instead of whether anything accumulated leaves the
+## sentinels in place, and an enclosing row's cursor goes infinite.
+func test_a_row_of_only_empty_children_is_a_zero_frame() -> void:
+	var nothing := {"row": {"name": "gone", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var all_empty := {"row": {"name": "outer", "advance": 1.0, "children": [
+		nothing, _box("ghost", 1.0, 1.0, 0.0)]}}
+	var out := DioramaCompose.resolve(all_empty, _ctx())
+	assert_eq(out["parts"].size(), 0, "an all-empty row produced parts")
+	assert_eq(out["frame"]["footprint"], Vector2.ZERO,
+			"an all-empty row reported a non-zero footprint")
+	assert_eq(out["frame"]["height"], 0.0, "an all-empty row claimed height")
+	assert_true(is_finite(out["frame"]["xf"].origin.x),
+			"an all-empty row's centre is not a finite number")
+
+
+## And it must not poison a row that contains it alongside real geometry.
+func test_an_all_empty_row_does_not_poison_its_parent() -> void:
+	var nothing := {"row": {"name": "gone", "count": 0, "advance": 1.0,
+			"of": _box("unit", 1.0, 1.0, 1.0)}}
+	var mixed := {"row": {"name": "outer", "advance": 1.0, "children": [
+		nothing, _box("real", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(mixed, _ctx())
+	assert_almost_eq(out["frame"]["footprint"].x, 2.0, 1e-5,
+			"an all-empty child changed the parent's width")
+	assert_true(is_finite(out["parts"][0]["xf"].origin.x),
+			"the real child got a non-finite transform")
+
+
+## `advance` is documented as "1.0 is flush, below overlaps, above gaps". That
+## is only true when neighbours are the same width: stepping by the PRECEDING
+## width alone leaves a width-4 child and a width-2 child one unit apart at
+## advance 1.0. residential samples every unit's width independently, so its
+## intended 5% overlap can come out as a visible gap — which is what the
+## committed specimen sheet shows on several cells.
+func test_row_advance_is_measured_between_adjacent_edges() -> void:
+	var tree := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	# wide occupies [-2, 2]; flush means narrow's near edge is at 2, so its
+	# centre is 3 — a step of (4 + 2) / 2, not of 4.
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 3.0, 1e-5,
+			"row stepped by the preceding width alone, leaving a gap")
+	assert_almost_eq(out["frame"]["footprint"].x, 6.0, 1e-5,
+			"row span should be the two children flush against each other")
+
+
+## A cone or prism is emitted as a circle of radius w/2 — `d` never reaches the
+## renderer. Reporting a frame of (w, d) therefore describes geometry that does
+## not exist, and anything stacking on it inherits the lie.
+func test_a_round_mass_reports_the_footprint_it_actually_occupies() -> void:
+	var tree := {"mass": {"name": "spire", "kind": "cone",
+			"w": 2.0, "d": 5.0, "h": 3.0, "role": "brass"}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	assert_eq(out["frame"]["footprint"], Vector2(2.0, 2.0),
+			"round mass reported its declared depth, not its emitted radius")
+
+
+## Flush placement has to use where a child's edges ACTUALLY are, which for a
+## composite is not derivable from its width alone. A nested row of unequal
+## widths reports a centre off its own origin; stepping by widths alone then
+## overlaps it even at advance 1.0, which is meant to be exactly flush.
+func test_a_composite_neighbour_is_placed_from_its_real_edge() -> void:
+	var inner := {"row": {"name": "inner", "advance": 1.0, "children": [
+		_box("wide", 4.0, 2.0, 1.0),
+		_box("narrow", 1.0, 2.0, 1.0)]}}
+	# inner: wide [-2, 2], narrow flush at [2, 3]. Far edge 3, centre +0.5.
+	var tree := {"row": {"name": "outer", "advance": 1.0, "children": [
+		inner, _box("tail", 2.0, 2.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	var tail: Dictionary = out["parts"][2]
+	# tail is 2 wide, so flush against inner's far edge of 3 puts its centre
+	# at 4. Ignoring inner's +0.5 offset would land it at 3.5 — a half-unit
+	# overlap at the one advance value that is supposed to mean "touching".
+	assert_almost_eq(tail["xf"].origin.x, 4.0, 1e-5,
+			"a composite neighbour was placed from its width, not its edge")
