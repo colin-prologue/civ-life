@@ -432,3 +432,90 @@ func test_a_composite_neighbour_is_placed_from_its_real_edge() -> void:
 	# overlap at the one advance value that is supposed to mean "touching".
 	assert_almost_eq(tail["xf"].origin.x, 4.0, 1e-5,
 			"a composite neighbour was placed from its width, not its edge")
+
+
+# ------------------------------------------------------------------ ring
+
+## The go/no-go for the whole vocabulary: voussoirs tangent to an arc.
+##
+## This asserts against DioramaGrammar.hero_arch(), which is hand-written and
+## known good, rather than against numbers of my own choosing — a golden
+## comparison, not a structural hand-wave. The lab finding it encodes is that a
+## voussoir's long axis lies TANGENT to the arc; orienting them radially makes
+## an M-shaped scallop instead of an arch.
+func test_ring_reproduces_the_hand_written_voussoirs_exactly() -> void:
+	var seed := 42
+	var s := 1.5
+	var w := (2.2 + DioramaHexKit.h01(seed, 81, 0) * 0.8) * s
+	var h := (2.6 + DioramaHexKit.h01(seed, 82, 0) * 0.6) * s
+	var t := 0.28 * s
+	var base_h := 0.22 * s
+	var radius := (w - 2.0 * t) * 0.5 + t * 0.5
+	var pier_h := maxf(0.05, h - radius)
+
+	var hand: Array = []
+	for p: Dictionary in DioramaGrammar.hero_arch(seed):
+		if p["tag"] == "upper" and p["kind"] == "box" \
+				and p["params"]["size"].y > 0.3 and p["params"]["size"].x < 0.5:
+			hand.append(p)
+	assert_eq(hand.size(), 9, "fixture drifted: expected 9 hand-written voussoirs")
+
+	var ctx := DioramaCompose.new_ctx(seed, 0)
+	ctx["frame"]["xf"] = Transform3D(Basis.IDENTITY,
+			Vector3(0, base_h + pier_h, 0))
+	var out := DioramaCompose.resolve({"ring": {"name": "span",
+			"radius": radius, "from": 0.0, "to": PI, "count": 9,
+			"of": {"mass": {"name": "voussoir", "kind": "box",
+					"w": t, "d": t * 1.5, "role": "plaster"}}}}, ctx)
+	var mine: Array = out["parts"]
+	assert_eq(mine.size(), 9, "ring produced the wrong number of voussoirs")
+	for i in range(mini(hand.size(), mine.size())):
+		var a: Transform3D = hand[i]["xf"]
+		var b: Transform3D = mine[i]["xf"]
+		assert_almost_eq((a.origin - b.origin).length(), 0.0, 1e-5,
+				"voussoir %d is in the wrong place" % i)
+		assert_almost_eq((a.basis.y - b.basis.y).length(), 0.0, 1e-5,
+				"voussoir %d is not tangent to the arc" % i)
+
+
+## A ring's footprint has to describe the geometry it actually emitted, not the
+## circle it was described by: tangent boxes stick out past the arc by half
+## their thickness, so 2*radius under-reports by ~14% on this arch.
+func test_ring_reports_the_footprint_it_actually_occupies() -> void:
+	var ctx := DioramaCompose.new_ctx(7, 0)
+	var out := DioramaCompose.resolve({"ring": {"name": "span",
+			"radius": 2.0, "from": 0.0, "to": PI, "count": 9,
+			"of": {"mass": {"name": "v", "kind": "box", "w": 0.4, "d": 0.4,
+					"role": "plaster"}}}}, ctx)
+	assert_gt(out["frame"]["footprint"].x, 4.0,
+			"ring reported 2*radius, ignoring the thickness of its own parts")
+	assert_lt(out["frame"]["footprint"].x, 4.5,
+			"ring footprint is implausibly large for radius 2 thickness 0.4")
+
+
+## `advance` is a ratio, so it cannot say "these two are a specific distance
+## apart". The arch's piers need exactly that: their clear opening is a real
+## dimension of the building, and expressing it as a ratio would make the style
+## carry `w/t - 1` — a number derived from other sampled dimensions, which no
+## author can write as a literal.
+func test_row_gap_is_an_absolute_edge_to_edge_distance() -> void:
+	var tree := {"row": {"name": "piers", "gap": 3.0, "children": [
+		_box("left", 1.0, 1.0, 2.0),
+		_box("right", 1.0, 1.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	# left occupies [-0.5, 0.5]; a clear gap of 3 puts right's near edge at 3.5,
+	# so its centre is 4.0 — regardless of how wide either pier happens to be.
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 4.0, 1e-5,
+			"gap was not measured edge to edge")
+	assert_almost_eq(out["frame"]["footprint"].x, 5.0, 1e-5,
+			"row span should cover both piers and the opening between them")
+
+
+func test_row_gap_holds_when_the_children_differ_in_width() -> void:
+	var tree := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("fat", 4.0, 1.0, 1.0),
+		_box("thin", 1.0, 1.0, 1.0)]}}
+	var out := DioramaCompose.resolve(tree, _ctx())
+	# fat occupies [-2, 2]; clear gap 2 puts thin's near edge at 4, centre 4.5.
+	assert_almost_eq(out["parts"][1]["xf"].origin.x, 4.5, 1e-5,
+			"gap should be independent of the children's widths")

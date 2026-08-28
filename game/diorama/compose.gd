@@ -103,6 +103,8 @@ static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 		return _stack(node["stack"], ctx)
 	if node.has("row"):
 		return _row(node["row"], ctx)
+	if node.has("ring"):
+		return _ring(node["ring"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
 	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
 
@@ -285,7 +287,18 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		_assert_unique_names(children, path)
 	var base_xf: Transform3D = ctx["frame"]["xf"]
 	var base_inv := base_xf.affine_inverse()
+	# Two ways to space a row, and they answer different questions. `advance` is
+	# a RATIO of the neighbours' half-widths, so spacing scales with whatever
+	# the style sampled — right for a terrace. `gap` is an ABSOLUTE clear
+	# distance between adjacent edges, which is the only way to state a real
+	# dimension of the building: an arch's opening is a length, not a ratio, and
+	# as a ratio it would come out as `w/t - 1` — derived from other sampled
+	# dimensions and unwritable as a literal.
+	assert(not (n.has("advance") and n.has("gap")),
+			"'%s' has both 'advance' and 'gap' — pick one" % path)
+	var has_gap := n.has("gap")
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
+	var gap := sample(n.get("gap"), seed, id, path, "gap", 0.0)
 	var parts: Array = []
 	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
 	# xf.origin sits at ITS centre, not its near edge.
@@ -321,7 +334,9 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 				# centre coincides with where it was placed, which composites
 				# break — a nested row of unequal widths reports a centre off
 				# its own origin, and the next child then overlaps it.
-				cursor = prev_centre + (prev_half + half) * advance - offset
+				cursor = prev_centre - offset + (
+						(prev_half + half + gap) if has_gap
+						else (prev_half + half) * advance)
 			placed_any = true
 			prev_centre = cursor + offset
 			prev_half = half
@@ -343,6 +358,79 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	return {"parts": parts,
 			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
 					"footprint": bounds.span(), "height": tallest}}
+
+
+## Children on an arc, each rotated so its long axis lies TANGENT to it.
+##
+## This is the node the whole vocabulary was staked on, because an arch's
+## voussoirs are the one thing the hand-written grammar does that translation
+## alone cannot express. The lab finding it encodes: voussoirs lie tangent, not
+## radial — radial orientation makes an M-shaped scallop rather than an arch.
+##
+## `from` and `to` are angles in radians measured from +X, counter-clockwise in
+## the XY plane, so a semicircular arch is 0 to PI. `radius` is to the arc's
+## centreline. Each child is stretched to the arc length of its own segment,
+## with a small overlap so the joints close.
+##
+## Always tangent. A style wanting children that stay upright around a circle
+## can have that when one exists to need it; guessing at the option now would
+## be a parameter with no caller.
+static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var seed: int = ctx["seed"]
+	var id: int = ctx["id"]
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var radius := sample(n.get("radius"), seed, id, path, "radius", 1.0)
+	var from := sample(n.get("from"), seed, id, path, "from", 0.0)
+	var to := sample(n.get("to"), seed, id, path, "to", PI)
+	var count := _sample_count(n.get("count"), seed, id, path)
+	var template: Dictionary = n.get("of", {})
+	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
+	var parts: Array = []
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+	var top := 0.0
+	for i in range(maxi(0, count)):
+		var a0 := from + (to - from) * i / float(count)
+		var a1 := from + (to - from) * (i + 1) / float(count)
+		var mid := (a0 + a1) * 0.5
+		# Stretched to its own arc length, plus a little, so the joints close.
+		var seg_len := radius * (a1 - a0) * 1.15
+		var child := _indexed(template, i)
+		var body: Dictionary = child[child.keys()[0]]
+		var child_path := path + "/" + String(body["name"])
+		var thickness := sample(body.get("w"), seed, id, child_path, "w", 0.2)
+		var depth := sample(body.get("d"), seed, id, child_path, "d", thickness)
+		if thickness <= EPS or depth <= EPS or seg_len <= EPS:
+			continue
+		# Rotate first, then drop by half the segment so the box — which builds
+		# upward from its own origin — straddles the arc centreline.
+		var xf := base_xf * Transform3D(Basis(Vector3(0, 0, 1), mid),
+				Vector3(cos(mid) * radius, sin(mid) * radius, 0)) \
+				* Transform3D(Basis.IDENTITY, Vector3(0, -seg_len * 0.5, 0))
+		var size := Vector3(thickness, seg_len, depth)
+		parts.append({"kind": body.get("kind", "box"), "xf": xf,
+				"params": {"size": size}, "color": Color.MAGENTA,
+				"tag": "", "y": 0.0, "role": body.get("role", "plaster")})
+		# A ring's frame must describe what it EMITTED, not the circle it was
+		# described by: tangent boxes stick out past the arc by half their
+		# thickness, so 2*radius under-reports the real width by ~14% on a
+		# typical arch. Take the hull of the transformed corners instead.
+		for cx in [-0.5, 0.5]:
+			for cy in [0.0, 1.0]:
+				for cz in [-0.5, 0.5]:
+					var c: Vector3 = base_xf.affine_inverse() * (xf * Vector3(
+							size.x * cx, size.y * cy, size.z * cz))
+					lo = Vector2(minf(lo.x, c.x), minf(lo.y, c.z))
+					hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.z))
+					top = maxf(top, c.y)
+	if lo.x == INF:
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	var mid_xz := (lo + hi) * 0.5
+	return {"parts": parts,
+			"frame": {"xf": base_xf.translated_local(
+					Vector3(mid_xz.x, 0, mid_xz.y)),
+					"footprint": hi - lo, "height": top}}
 
 
 ## Suffix a template's name with its index so repeated units get distinct
