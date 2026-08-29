@@ -241,18 +241,23 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# stating a width.
 	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
 			"setback", 0.0)
+	# A part can never outlive what it rests on, so each child inherits the
+	# need of the one below as a floor. Carrying that maximum down the loop IS
+	# the load path — the vocabulary already says what rests on what, so no
+	# style author states it.
+	var running: float = ctx["need_floor"]
 	for child in children:
-		# Stubbed: passed through unchanged for now. The real per-child floor
-		# (derived from what this node itself settles on) lands in the next
-		# task; until then this only keeps the strict ctx["need_floor"] index
-		# in _mass from crashing on a stack's children.
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
-				"need_floor": ctx["need_floor"],
+				"need_floor": running,
 				"frame": {"xf": base_xf.translated_local(
 						Vector3(centre.x, y, centre.y)),
 						"footprint": carried, "height": 0.0}}
 		var out := resolve(child, child_ctx)
 		parts.append_array(out["parts"])
+		# A child that resolved to nothing returns the floor it was handed
+		# unchanged, so raising the running maximum here — before the height
+		# check below — never lets a ghost part inflate what stacks above it.
+		running = maxf(running, out["need"])
 		var f: Dictionary = out["frame"]
 		y += f["height"]
 		if f["height"] > EPS:
@@ -267,15 +272,11 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			bounds.add(centre, f["footprint"])
 			carried = f["footprint"] * (1.0 - setback)
 	if bounds.is_empty():
-		# Stubbed: this node's real rule lands in the next task.
-		return {"parts": parts, "frame": zero_frame(base_xf),
-				"need": ctx["need_floor"]}
+		return {"parts": parts, "frame": zero_frame(base_xf), "need": running}
 	var mid := bounds.mid()
-	# Stubbed: this node's real rule lands in the next task.
-	return {"parts": parts,
+	return {"parts": parts, "need": running,
 			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
-					"footprint": bounds.span(), "height": y},
-			"need": ctx["need_floor"]}
+					"footprint": bounds.span(), "height": y}}
 
 
 ## Two siblings sharing a name would share every channel and come out

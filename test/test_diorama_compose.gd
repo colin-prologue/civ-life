@@ -702,3 +702,48 @@ func test_every_part_of_a_ring_carries_need() -> void:
 	assert_gt(out["parts"].size(), 0, "ring emitted nothing")
 	for p: Dictionary in out["parts"]:
 		assert_true(p.has("need"), "a ring part is missing the 'need' key")
+
+
+func test_need_is_non_decreasing_up_a_stack() -> void:
+	# The load-path property: nothing survives its own support. Swept over many
+	# ids because a single draw could satisfy this by luck.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
+	for id in range(24):
+		var parts := DioramaCompose.build(tall, SEED, id)
+		assert_eq(parts.size(), 4, "fixture should emit four parts")
+		for i in range(1, parts.size()):
+			assert_true(parts[i]["need"] >= parts[i - 1]["need"],
+					"id %d: part %d (need %f) outlives its support (need %f)"
+					% [id, i, parts[i]["need"], parts[i - 1]["need"]])
+
+
+func test_a_stack_reports_the_need_of_its_weakest_link() -> void:
+	# What rests on a stack fails when any part of that stack fails, so the
+	# stack must report its MAXIMUM need, not its minimum or its last child's.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tall, DioramaCompose.new_ctx(SEED, 5))
+	var worst := -INF
+	for p: Dictionary in out["parts"]:
+		worst = maxf(worst, p["need"])
+	assert_almost_eq(out["need"], worst, 1e-6,
+			"stack under-reported how soon it fails")
+
+
+func test_a_stack_child_that_resolves_away_does_not_raise_the_floor() -> void:
+	# A zero-height mass emits nothing. If it still raised the running floor,
+	# a style could make everything above it fragile by declaring a part it
+	# never renders — an invisible cause for a visible problem.
+	var with_ghost := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("ghost", 2.0, 2.0, 0.0),
+		_box("c", 2.0, 2.0, 2.0)]}}
+	var without := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0)]}}
+	var a := DioramaCompose.build(with_ghost, SEED, 5)
+	var b := DioramaCompose.build(without, SEED, 5)
+	assert_eq(a.size(), 2, "the zero-height child should emit nothing")
+	assert_almost_eq(a[1]["need"], b[1]["need"], 1e-6,
+			"a child that emitted nothing changed what stacks above it")
