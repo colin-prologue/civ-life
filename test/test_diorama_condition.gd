@@ -106,3 +106,29 @@ func test_a_ring_survives_or_falls_whole() -> void:
 func test_the_empty_building_filters_to_nothing() -> void:
 	assert_eq(DioramaCondition.filter([], 0.5).size(), 0,
 			"an empty part list should filter to an empty result")
+
+
+func test_a_building_with_levels_to_spare_actually_loses_parts() -> void:
+	# Every other test here asserts that survivors are PRESENT, so all six pass
+	# with `_fragment_floor` mutated to return the maximum `need` — which clamps
+	# every condition up to the top of the band and keeps the whole building at
+	# every rung. Nothing was asserting that a ruin is ever missing anything.
+	#
+	# Guarded on three or more distinct needs, not asserted unconditionally: at
+	# two levels the standing-fragment floor legitimately clamps to the higher
+	# one and the building survives whole, so an unguarded version would be
+	# asserting something the design does not promise. At three the floor is the
+	# SECOND smallest, which leaves at least one strictly greater need above it
+	# — so something must be gone, and that is entailed rather than lucky.
+	for style_name: String in _styles():
+		for id in range(8):
+			var parts := DioramaCompose.build(_styles()[style_name], SEED, id)
+			var distinct := {}
+			for n in _needs(parts):
+				distinct[n] = true
+			if distinct.size() < 3:
+				continue
+			var got := DioramaCondition.filter(parts, 0.05)
+			assert_lt(got.size(), parts.size(),
+					"%s id %d: %d distinct needs and yet nothing was lost at 0.05"
+					% [style_name, id, distinct.size()])

@@ -111,10 +111,32 @@ static func new_ctx(seed: int, building_id: int) -> Dictionary:
 			"frame": zero_frame(Transform3D.IDENTITY)}
 
 
-## A node's own endurance, before the floor its support imposes.
+## A node's endurance: its own draw, interpolated into the headroom left above
+## the floor its support imposes. A part never outlives what it rests on, so the
+## floor is the bottom of the band this node draws from — not a clamp applied
+## afterward.
+##
+## That distinction is the whole point. The previous rule was
+## `maxf(floor, ENDURE_LO + (ENDURE_HI - ENDURE_LO) * u)`, which COLLAPSES a
+## level whenever the draw lands below the floor: the two come out equal and the
+## part falls at the same instant as its support. Deeper stacks carry higher
+## floors, so they collapsed more levels — tall buildings ruined in FEWER steps
+## than short ones, exactly backwards. It cost half the census: 16 of 32 sampled
+## buildings ended with two or fewer distinct needs, and condition.gd's
+## standing-fragment floor then clamps a two-level building to its own maximum,
+## so it kept every part at every condition and never ruined at all.
+##
+## Interpolating instead means a child's need is strictly above its support's
+## for any nonzero draw, so a deep stack sheds fine-grained from the top.
+##
+## `hi` is clamped up to `lo` for the case a caller hands in a floor above
+## ENDURE_HI: the headroom is then empty and the node inherits the floor exactly,
+## rather than interpolating DOWN a negative span and outliving its own support.
 static func _draw_need(ctx: Dictionary, path: String) -> float:
-	return ENDURE_LO + (ENDURE_HI - ENDURE_LO) * channel(
-			ctx["seed"], ctx["id"], path, "endure")
+	var u := channel(ctx["seed"], ctx["id"], path, "endure")
+	var lo := maxf(ctx["need_floor"], ENDURE_LO)
+	var hi := maxf(lo, ENDURE_HI)
+	return lo + (hi - lo) * u
 
 
 static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
@@ -160,10 +182,10 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if kind == "prism" or kind == "cone":
 		d = w
 	var params := _params_for(kind, n, w, d, h, seed, id, path)
-	# A part never outlives the floor it inherits: whatever it stands on
-	# already needs at least this much condition to still be there, so this
-	# part cannot need less than that.
-	var need := maxf(ctx["need_floor"], _draw_need(ctx, path))
+	# A part never outlives the floor it inherits: whatever it stands on already
+	# needs at least this much condition to still be there. _draw_need folds
+	# that floor in as the bottom of the band, so there is nothing to clamp here.
+	var need := _draw_need(ctx, path)
 	var part := {"kind": kind, "xf": xf, "params": params,
 			"color": Color.MAGENTA, "need": need, "y": 0.0,
 			"role": n.get("role", "plaster")}
@@ -459,7 +481,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# Cohesive, unlike a row: an arch is not N independent stones. Remove one
 	# voussoir and the arc collapses, so the ring draws once and every part it
 	# emits carries that same need.
-	var need := maxf(ctx["need_floor"], _draw_need(ctx, path))
+	var need := _draw_need(ctx, path)
 	var parts: Array = []
 	var lo := Vector2.INF
 	var hi := -Vector2.INF
