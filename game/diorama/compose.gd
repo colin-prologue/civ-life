@@ -358,13 +358,20 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# Resolve every child at the row's own origin first, then lay them out.
 	var resolved: Array = []
 	for child in children:
-		# Stubbed: passed through unchanged for now, same as _stack — the real
-		# per-child floor lands in the next task.
+		# Every child inherits the same, unchanged floor — a row does not carry
+		# a running maximum down its children the way a stack does, because
+		# siblings do not rest on one another. Each draws its own need against
+		# only what the ROW itself was handed.
 		var child_ctx := {"seed": seed, "id": id, "path": path,
 				"need_floor": ctx["need_floor"],
 				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
 		resolved.append(resolve(child, child_ctx))
+	# Siblings stand beside one another, so one falling says nothing about the
+	# next — but whatever rests on the ROW fails when any of them does.
+	var need: float = ctx["need_floor"]
+	for out: Dictionary in resolved:
+		need = maxf(need, out["need"])
 	var cursor := 0.0
 	var prev_half := 0.0
 	var prev_centre := 0.0     # previous child's centre, in ROW space
@@ -407,9 +414,7 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 					child_local.z + (cursor if is_z else 0.0)), fp)
 			tallest = maxf(tallest, f["height"])
 	if bounds.is_empty():
-		# Stubbed: this node's real rule lands in the next task.
-		return {"parts": parts, "frame": zero_frame(base_xf),
-				"need": ctx["need_floor"]}
+		return {"parts": parts, "frame": zero_frame(base_xf), "need": need}
 	# A node occupies a box CENTRED on the transform it was handed. The layout
 	# above builds rightward from the first child, so recentre the finished
 	# group. Without this a symmetric pair comes back offset by half its own
@@ -420,11 +425,9 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			Vector3(-mid.x, 0, -mid.y)) * base_inv
 	for part: Dictionary in parts:
 		part["xf"] = recentre * part["xf"]
-	# Stubbed: this node's real rule lands in the next task.
-	return {"parts": parts,
+	return {"parts": parts, "need": need,
 			"frame": {"xf": base_xf, "footprint": bounds.span(),
-					"height": tallest},
-			"need": ctx["need_floor"]}
+					"height": tallest}}
 
 
 ## Children on an arc, each rotated so its long axis lies TANGENT to it.
@@ -453,6 +456,10 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var count := _sample_count(n.get("count"), seed, id, path)
 	var template: Dictionary = n.get("of", {})
 	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
+	# Cohesive, unlike a row: an arch is not N independent stones. Remove one
+	# voussoir and the arc collapses, so the ring draws once and every part it
+	# emits carries that same need.
+	var need := maxf(ctx["need_floor"], _draw_need(ctx, path))
 	var parts: Array = []
 	var lo := Vector2.INF
 	var hi := -Vector2.INF
@@ -483,12 +490,9 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var kind: String = body.get("kind", "box")
 		var params := _params_for(kind, body, thickness, depth, seg_len,
 				seed, id, child_path)
-		# Stubbed: a flat floor-only need, mirroring _mass's degenerate case.
-		# The cohesive per-voussoir draw (matching _mass's _draw_need) lands
-		# in Task 3.
 		parts.append({"kind": kind, "xf": xf,
-				"params": params, "color": Color.MAGENTA, "tag": "",
-				"need": ctx["need_floor"], "y": 0.0,
+				"params": params, "color": Color.MAGENTA,
+				"tag": "", "need": need, "y": 0.0,
 				"role": body.get("role", "plaster")})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their
@@ -503,19 +507,15 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 					hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.z))
 					top = maxf(top, c.y)
 	if lo.x == INF:
-		# Stubbed: this node's real rule lands in the next task.
-		return {"parts": parts, "frame": zero_frame(base_xf),
-				"need": ctx["need_floor"]}
+		return {"parts": parts, "frame": zero_frame(base_xf), "need": need}
 	# Centred on what it was handed, like every other node.
 	var mid_xz := (lo + hi) * 0.5
 	var recentre := base_xf * Transform3D(Basis.IDENTITY,
 			Vector3(-mid_xz.x, 0, -mid_xz.y)) * base_xf.affine_inverse()
 	for part: Dictionary in parts:
 		part["xf"] = recentre * part["xf"]
-	# Stubbed: this node's real rule lands in the next task.
-	return {"parts": parts,
-			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top},
-			"need": ctx["need_floor"]}
+	return {"parts": parts, "need": need,
+			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top}}
 
 
 ## Suffix a template's name with its index so repeated units get distinct

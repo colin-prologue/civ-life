@@ -747,3 +747,58 @@ func test_a_stack_child_that_resolves_away_does_not_raise_the_floor() -> void:
 	assert_eq(a.size(), 2, "the zero-height child should emit nothing")
 	assert_almost_eq(a[1]["need"], b[1]["need"], 1e-6,
 			"a child that emitted nothing changed what stacks above it")
+
+
+func _arch() -> Dictionary:
+	return {"stack": {"name": "a", "children": [
+		_box("plinth", 5.0, 2.0, 0.4),
+		{"ring": {"name": "span", "radius": 1.5, "from": 0.0, "to": PI,
+				"count": 7,
+				"of": {"mass": {"name": "vs", "kind": "box", "w": 0.4,
+						"d": 0.6, "role": "plaster"}}}}]}}
+
+
+func test_every_voussoir_in_a_ring_shares_one_need() -> void:
+	# An arch is not nine independent stones. Remove one and the arc is gone,
+	# so the ring draws once and imposes it on the whole subtree.
+	for id in range(12):
+		var parts := DioramaCompose.build(_arch(), SEED, id)
+		var ring_parts := parts.slice(1)
+		assert_eq(ring_parts.size(), 7, "id %d: expected seven voussoirs" % id)
+		for p: Dictionary in ring_parts:
+			assert_almost_eq(p["need"], ring_parts[0]["need"], 1e-9,
+					"id %d: a voussoir drew its own need" % id)
+
+
+func test_a_ring_never_outlives_what_it_springs_from() -> void:
+	for id in range(12):
+		var parts := DioramaCompose.build(_arch(), SEED, id)
+		assert_true(parts[1]["need"] >= parts[0]["need"],
+				"id %d: the arc (need %f) outlived its plinth (need %f)"
+				% [id, parts[1]["need"], parts[0]["need"]])
+
+
+func test_row_siblings_draw_independently() -> void:
+	# The property that makes a colonnade lose columns rather than vanish.
+	# Asserted by FINDING a seed where two siblings differ — a test that never
+	# observes the difference would pass against a cohesive row too.
+	var terrace := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("west", 2.0, 2.0, 2.0), _box("east", 2.0, 2.0, 2.0)]}}
+	var found := false
+	for id in range(24):
+		var parts := DioramaCompose.build(terrace, SEED, id)
+		assert_eq(parts.size(), 2, "fixture should emit two parts")
+		if not is_equal_approx(parts[0]["need"], parts[1]["need"]):
+			found = true
+	assert_true(found, "24 ids and no row ever had siblings of differing need")
+
+
+func test_a_row_reports_the_need_of_its_weakest_child() -> void:
+	# What rests on a row fails when any of its supports does — an arch falls
+	# when either pier goes, so the row reports the MAXIMUM.
+	var piers := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("west", 0.4, 0.6, 1.6), _box("east", 0.4, 0.6, 1.6)]}}
+	var out := DioramaCompose.resolve(piers, DioramaCompose.new_ctx(SEED, 5))
+	assert_almost_eq(out["need"],
+			maxf(out["parts"][0]["need"], out["parts"][1]["need"]), 1e-6,
+			"row under-reported how soon it fails")
