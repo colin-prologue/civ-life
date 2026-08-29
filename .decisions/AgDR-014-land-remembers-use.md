@@ -1,6 +1,7 @@
 # AgDR-014 — Land remembers what was done to it, per use, and never permanently
 
-**Status:** proposed — awaiting ratification (Gate B)
+**Status:** accepted
+**Ratified:** 2026-08-29 by the owner
 **Date:** 2026-08-29
 **Parent intent:** `world-growth-tone`
 **Amends:** `AgDR-009`, which denied land any memory at all
