@@ -129,9 +129,14 @@ crowding (below) is a required mechanism rather than a tuning detail.
 | Unit | What it is |
 |---|---|
 | **Person** | An `Agent` with a position and a household. No name, no mood, no trait, no skill, no relationship, no preference. |
-| **Household** | The smallest unit that decides. Carries its practice and what it got last cycle. Five to twelve per band. |
+| **Household** | The smallest unit that decides. Carries its practice and what it got last cycle. Five to twelve of them. |
 | **Practice** | A policy — what a person consults to choose their next action. Held by a lineage; a lineage *is* its practice. |
 | **Standing** | Derived, never stored. The share of the band following your practice, which is the same as your lineage's size. |
+
+**"Band" is a word, not an object.** Slice 1 has households in the world and no
+containing entity above them — the band is simply all of them, the way "the
+herds" is all herds. A band as a real object would be needed only once there are
+two of them, which is slice 3 at the earliest. Do not build one now.
 
 **Individuals have bodies, never interiors.** The moment a person has a mood the
 game becomes triage — someone is unhappy, go fix them — which is a management
@@ -241,8 +246,16 @@ of its last interval's surplus. No `Node` dependency, constructible headless.
 adds no branch to `Agent` or `WorldMap` — `AgDR-013` holds: agents report
 quantities and nothing asks them what they are.
 
-**FR-3** Three practices ship: Follow, Tend, Range. Each is best somewhere on
-every seed tested; none exceeds 50% of land tiles at `Herd.DISTANCE_COST`.
+**FR-3** Three practices ship: Follow, Tend, Range. In steady state on the
+standard seed set, **no practice is followed by more than 60% of households**,
+and every practice is followed by at least one household on every seed.
+
+Note the unit change from Probe A, which scored *land tiles* because it had no
+households to count. Tiles measure whether the world affords three strategies;
+households measure whether the system actually produces three. The 60% bound is
+a first-cut threshold chosen to be loose enough not to fail on ordinary
+clustering and tight enough to catch a genuine collapse; if it proves to be the
+wrong number, change it deliberately and say why.
 
 **FR-4** `RECONSIDER_INTERVAL_TURNS` is a single named constant. Changing it
 changes the pacing of every household and nothing else.
@@ -264,7 +277,13 @@ tile rises, read through `forage_demand_at()`.
 A practice that stops paying loses adopters; it does not kill anyone (tone rules
 1 and 2).
 
-**FR-10** Determinism: same seed, 2,000 turns, two worlds equal — including
+**FR-10** Initial households are placed by a generator in the shape of
+`Herd.populate` — bounded attempts rather than looping until it succeeds, drawn
+in grid order so placement never depends on how many draws preceded it. Starting
+practices are distributed across the three rather than all-identical, so the
+first reconsideration has something to compare against.
+
+**FR-11** Determinism: same seed, 2,000 turns, two worlds equal — including
 household practices, member counts, and surplus records.
 
 ## Testing
@@ -275,8 +294,8 @@ Headless, per the repo's rule that the suite runs without a rendering context.
   fingerprint, re-run with the practice system and crowding active, asserting the
   world does **not** settle into a repeating cycle within 200 years. A design
   that converges has failed regardless of how well it is built.
-- **No dominance.** Over a standard seed set, no practice holds more than a
-  stated share of households in steady state.
+- **No dominance.** Over the standard seed set, no practice holds more than 60%
+  of households in steady state, and none holds zero (FR-3).
 - **Diffusion shape.** A practice introduced to one household spreads to some
   but not all, over multiple intervals rather than in one step, with holdouts
   persisting past the median adopter.
