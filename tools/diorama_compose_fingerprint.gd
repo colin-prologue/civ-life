@@ -45,13 +45,28 @@ func _init() -> void:
 	quit()
 
 
-## Builds several specimens of the same style for one seed into a single
-## DioramaMeshKit and folds them into one digest, so the printed line covers
-## more than whichever single building id happened to be picked.
+## Builds several specimens for one seed and folds them into one digest.
+##
+## Two styles, not one: `hero_arch` is the only migrated style with a `ring`,
+## and the ring's cohesive draw is the part of the need computation most likely
+## to diverge across processes.
+##
+## `need` is folded separately from the geometry. The mesh digest would not
+## notice a need that differed between processes, because need changes no
+## vertex — so a silent cross-process divergence in the ruin filter would pass
+## a gate that exists precisely to catch that class of bug.
 static func _fingerprint(world_seed: int) -> int:
 	var b := DioramaMeshKit.new()
-	for id in IDS:
-		var parts := DioramaCompose.build(DioramaStyles.residential(), world_seed, id)
-		DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
-		DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
-	return b.fingerprint()
+	var needs := 0
+	for style in [DioramaStyles.residential(), DioramaStyles.hero_arch()]:
+		for id in IDS:
+			var parts := DioramaCompose.build(style, world_seed, id)
+			DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+			DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
+			for p: Dictionary in parts:
+				# Quantised, because a float printed through two processes must
+				# compare equal bit-for-bit and 1e-6 is far finer than any
+				# visible difference in when a part falls.
+				needs = (needs * 31 + int(round(p["need"] * 1000000.0))) \
+						& 0x7FFFFFFFFFFFFFF
+	return b.fingerprint() ^ needs

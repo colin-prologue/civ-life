@@ -54,7 +54,7 @@ func test_mass_emits_one_part_with_the_contract_keys() -> void:
 	var out := DioramaCompose.resolve(_box("body", 1.0, 2.0, 3.0), _ctx())
 	assert_eq(out["parts"].size(), 1, "a mass produced the wrong part count")
 	var p: Dictionary = out["parts"][0]
-	for key in ["kind", "xf", "params", "color", "tag", "y"]:
+	for key in ["kind", "xf", "params", "color", "need", "y"]:
 		assert_true(p.has(key), "part is missing contract key '%s'" % key)
 	assert_eq(p["kind"], "box", "part kind was not carried through")
 	assert_eq(p["params"]["size"], Vector3(1.0, 3.0, 2.0),
@@ -244,49 +244,10 @@ func _tower() -> Dictionary:
 				"h": 3.0, "role": "brass"}}]}}
 
 
-func test_build_tags_every_part() -> void:
-	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
-		assert_ne(p["tag"], "", "a part came back untagged")
-
-
-func test_tag_bands_follow_height() -> void:
-	var parts := DioramaCompose.build(_tower(), SEED, 1)
-	assert_eq(parts[0]["tag"], "base", "the bottom part is not tagged base")
-	assert_eq(parts[1]["tag"], "mid", "the middle part is not tagged mid")
-
-
-func test_a_small_cone_on_top_is_an_accent() -> void:
-	var parts := DioramaCompose.build(_tower(), SEED, 1)
-	assert_eq(parts[2]["tag"], "accent",
-			"a slim cone above the mass should read as an accent")
-
-
 func test_y_is_the_part_centre_height() -> void:
 	var parts := DioramaCompose.build(_tower(), SEED, 1)
 	assert_almost_eq(parts[0]["y"], 0.5, 1e-5, "plinth centre should be h/2")
 	assert_almost_eq(parts[1]["y"], 4.0, 1e-5, "shaft centre should be 1 + 6/2")
-
-
-func test_tags_are_monotonic_in_height() -> void:
-	# The property the ruin filter depends on: nothing tagged base sits above
-	# anything tagged upper. Uses its own four-box fixture rather than _tower()
-	# — the tower tops out in `mid` and `accent`, so running this against it
-	# would pass without ever comparing a base to an upper.
-	var tall := {"stack": {"name": "t", "children": [
-		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
-		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
-	var parts := DioramaCompose.build(tall, SEED, 1)
-	var highest_base := -INF
-	var lowest_upper := INF
-	for p: Dictionary in parts:
-		if p["tag"] == "base":
-			highest_base = maxf(highest_base, p["y"])
-		elif p["tag"] == "upper":
-			lowest_upper = minf(lowest_upper, p["y"])
-	assert_gt(highest_base, -INF, "fixture produced no base part to compare")
-	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
-	assert_lt(highest_base, lowest_upper,
-			"a base part sits above an upper part")
 
 
 ## A mass stacked on a row has to land over the row's CENTRE, not over the
@@ -802,3 +763,11 @@ func test_a_row_reports_the_need_of_its_weakest_child() -> void:
 	assert_almost_eq(out["need"],
 			maxf(out["parts"][0]["need"], out["parts"][1]["need"]), 1e-6,
 			"row under-reported how soon it fails")
+
+
+func test_parts_no_longer_carry_a_tag() -> void:
+	# The four-way height/kind partition is gone, replaced by `need`. Asserted
+	# so a merge cannot quietly reintroduce a field nothing maintains.
+	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
+		assert_false(p.has("tag"), "a part still carries a tag")
+		assert_true(p.has("need"), "a part is missing its need")

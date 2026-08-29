@@ -165,7 +165,7 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# part cannot need less than that.
 	var need := maxf(ctx["need_floor"], _draw_need(ctx, path))
 	var part := {"kind": kind, "xf": xf, "params": params,
-			"color": Color.MAGENTA, "tag": "", "need": need, "y": 0.0,
+			"color": Color.MAGENTA, "need": need, "y": 0.0,
 			"role": n.get("role", "plaster")}
 	return {"parts": [part], "need": need,
 			"frame": {"xf": xf, "footprint": Vector2(w, d), "height": h}}
@@ -492,7 +492,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 				seed, id, child_path)
 		parts.append({"kind": kind, "xf": xf,
 				"params": params, "color": Color.MAGENTA,
-				"tag": "", "need": need, "y": 0.0,
+				"need": need, "y": 0.0,
 				"role": body.get("role", "plaster")})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their
@@ -529,8 +529,9 @@ static func _indexed(template: Dictionary, i: int) -> Dictionary:
 	return out
 
 
-## Public entry point. Resolve the tree, then derive what no node should have
-## to author: each part's centre height and its structural tag.
+## Public entry point. Resolve the tree, then derive each part's centre height.
+## A part's `need` — the condition at which it survives — was already settled
+## during resolution, where the tree still knows what rests on what.
 static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
 	var out := resolve(tree, new_ctx(seed, building_id))
 	var parts: Array = out["parts"]
@@ -538,43 +539,23 @@ static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
 	return parts
 
 
-## Tags fall out of normalised height once the building's full extent is known,
-## so a style author never labels a part and can never forget to. That is what
-## makes ruins and the assembly tween automatic for every new style.
+## Derives what no node should have to author: each part's centre height.
+##
+## This used to derive a four-way structural tag from normalised height and
+## node kind as well. A census over the four styles killed that scheme:
+## residential emitted 0% `base`, stepped 0% `upper`, and civic 62.5% `accent`
+## — which meant its colonnade, the thing holding the building up, was tagged
+## decorative and stripped first. Height is orthogonal to structural
+## essentiality. `need` replaces it, drawn per node during resolution where the
+## tree still says what rests on what.
 static func _finish(parts: Array) -> void:
-	if parts.is_empty():
-		return
-	var total := 0.0
-	var biggest_area := 0.0
 	for p: Dictionary in parts:
-		total = maxf(total, p["xf"].origin.y + _height_of(p))
-		biggest_area = maxf(biggest_area, _area_of(p))
-	for p: Dictionary in parts:
-		var h := _height_of(p)
-		p["y"] = p["xf"].origin.y + h * 0.5
-		var t: float = p["y"] / maxf(total, EPS)
-		if (p["kind"] == "cone" or p["kind"] == "prism") \
-				and _area_of(p) < biggest_area * 0.25:
-			p["tag"] = "accent"
-		elif t < 0.20:
-			p["tag"] = "base"
-		elif t < 0.65:
-			p["tag"] = "mid"
-		else:
-			p["tag"] = "upper"
+		p["y"] = p["xf"].origin.y + _height_of(p) * 0.5
 
 
 static func _height_of(p: Dictionary) -> float:
 	var params: Dictionary = p["params"]
 	return params["size"].y if params.has("size") else params.get("height", 0.0)
-
-
-static func _area_of(p: Dictionary) -> float:
-	var params: Dictionary = p["params"]
-	if params.has("size"):
-		return params["size"].x * params["size"].z
-	var r: float = params.get("radius", 0.0)
-	return r * r * 4.0
 
 
 ## Resolve each part's role into a concrete colour. Kept separate from build()
