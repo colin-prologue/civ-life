@@ -426,12 +426,12 @@ attrition arithmetic rather than as people choosing.
 ## Explicitly out of scope
 
 Player input and placement (#27), the turn readout that would surface adoption
-(#28), the map overlays that would make vitality visible (#36), predators (#38),
+(#28), the map overlays that would make vitality visible (#37), predators (#39),
 terrain-class change (#31), household growth and splitting, works and monuments,
 storage as a practice, per-culture anything, conquest, Understandings as distinct
 objects, any UI, and the civilization-advancement layer entirely.
 
-Note that #36 is a *dependency in practice even though it is out of scope here*:
+Note that #37 is a *dependency in practice even though it is out of scope here*:
 per-practice vitality is invisible without an overlay, and a system nobody can
 see is a system nobody can judge.
 
