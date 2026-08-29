@@ -9,7 +9,8 @@ headlessly and cannot be reproduced from a seed.
 ## What is here
 
 `main.tscn` is the project's main scene. It generates a world from a fixed seed,
-draws it, and advances the turn when you press Space.
+draws it, and moves the clock — a turn at a time with Space, or on its own with
+`P`, at a speed set by `[` and `]`.
 
 - `main.gd` — the controller. Owns a `WorldMap`, forwards input to it, asks the
   view to redraw. `advance_turn()` calls the world's `advance_turn()` and does
@@ -27,8 +28,22 @@ renderer.
 ## What is deliberately absent
 
 No camera, no scroll, no zoom, no selection, no orders. The whole map is fitted
-to the window and the only input is "advance". Each simulation ticket that adds
-something to the world is expected to make its own addition visible here.
+to the window and every input moves the clock or changes how fast it moves —
+none of them touch the world. Each simulation ticket that adds something to the
+world is expected to make its own addition visible here.
+
+**Why auto-advance is here and not filed under convenience.** A year is 24 turns
+and a herd covers about a tile a year (`AgDR-010`), so everything this world does
+on its own timescale is hundreds of key presses away. A world that can only be
+advanced by hand does not get watched long enough to answer the question
+`world-growth-tone` says the design rests on — whether it is worth watching at
+all. The play button is an instrument for that question.
+
+It is still one path: the timer calls `advance_turn()`, which is the same
+function Space calls and the same one the tests drive. `tick(delta)` is split out
+from `_process` so the timing can be driven with an explicit delta — a test that
+waits for real frames measures the host's frame rate, and under `--headless`
+frames arrive far faster than a second, so the interesting cases never fire.
 
 ## What the tests cannot tell you
 
