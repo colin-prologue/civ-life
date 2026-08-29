@@ -766,7 +766,17 @@ Run: `./test.sh`
 
 `test/test_city.gd` asserts that grain flows end to end and that seasonal variation reaches the city. Both should still hold — a farm still produces, just less as its field wears — but any assertion on an *absolute* quantity will have moved.
 
-Same rule as Task 4: re-derive expectations, never weaken assertions. In particular, **do not** relax `test_city.gd`'s seasonality assertion (peak-season delivery exceeds trough-season delivery by a stated margin) by lowering the margin — if wear has swamped the seasonal signal, that is a real finding about the constants and it should be reported, not tuned away.
+Same rule as Task 4: re-derive expectations, never weaken assertions.
+
+`test_city.gd` now enforces this rather than asking for it. Its stated margins
+sit against floor constants (`SPRING_OVER_WINTER_FLOOR`, `PEAK_OVER_TROUGH_FLOOR`,
+`OBSTRUCTED_SHARE_CEILING`) with `test_the_stated_margins_have_not_been_quietly_weakened`
+guarding them, so lowering a margin to chase a red suite turns a second test red
+rather than passing silently.
+
+If wear has genuinely swamped the seasonal signal, **that is a finding about
+`Land.DEPLETION_PER_UNIT` and it should be reported** — the constants that need
+changing are in `sim/land.gd`, not in the assertions.
 
 - [ ] **Step 6: Commit**
 
