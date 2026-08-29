@@ -1,0 +1,108 @@
+extends GutTest
+## Properties of the ruin filter.
+##
+## These are asserted on returned arrays rather than on a picture, so they run
+## on a host with no rendering context — the same reason test_diorama_compose.gd
+## checks data instead of frames.
+
+const SEED := 4242
+const RUNGS := [1.0, 0.75, 0.5, 0.25, 0.05]
+
+
+func _styles() -> Dictionary:
+	return {"residential": DioramaStyles.residential(),
+			"hero_arch": DioramaStyles.hero_arch(),
+			"civic": DioramaStyles.civic(),
+			"stepped": DioramaStyles.stepped()}
+
+
+func _needs(parts: Array) -> Array:
+	var out: Array = []
+	for p: Dictionary in parts:
+		out.append(p["need"])
+	return out
+
+
+func test_survivors_nest_as_condition_falls() -> void:
+	# AC2, ordered loss. Filtering on a fixed per-part threshold is monotone by
+	# construction, so this cannot fail without the filter having grown a
+	# second rule. Swept over every style and rung pair to keep it honest.
+	for style_name: String in _styles():
+		for id in range(8):
+			var parts := DioramaCompose.build(_styles()[style_name], SEED, id)
+			for i in range(RUNGS.size() - 1):
+				var higher := DioramaCondition.filter(parts, RUNGS[i])
+				var lower := DioramaCondition.filter(parts, RUNGS[i + 1])
+				for p: Dictionary in lower:
+					assert_true(higher.has(p),
+							"%s id %d: a part survived %f but not %f"
+							% [style_name, id, RUNGS[i + 1], RUNGS[i]])
+
+
+func test_condition_zero_means_gone() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.civic(), SEED, 1)
+	assert_eq(DioramaCondition.filter(parts, 0.0).size(), 0,
+			"zero should mean removed, not ruined")
+	assert_eq(DioramaCondition.filter(parts, -1.0).size(), 0,
+			"a negative condition should also be empty")
+
+
+func test_a_ruin_is_never_a_bare_footprint() -> void:
+	# AC4 and AC5. A single slab is a foundation, not a ruin — the intent asks
+	# for a footprint AND a surviving arch or wall.
+	for style_name: String in _styles():
+		for id in range(8):
+			var parts := DioramaCompose.build(_styles()[style_name], SEED, id)
+			var distinct := {}
+			for n in _needs(parts):
+				distinct[n] = true
+			var got := DioramaCondition.filter(parts, 0.01)
+			assert_gt(got.size(), 0,
+					"%s id %d: a positive condition returned nothing"
+					% [style_name, id])
+			if distinct.size() > 1:
+				assert_gt(got.size(), 1,
+						"%s id %d: bottomed out at a single part"
+						% [style_name, id])
+
+
+func test_full_condition_keeps_everything() -> void:
+	for style_name: String in _styles():
+		var parts := DioramaCompose.build(_styles()[style_name], SEED, 2)
+		assert_eq(DioramaCondition.filter(parts, 1.0).size(), parts.size(),
+				"%s lost a part at full condition" % style_name)
+
+
+func _arch() -> Dictionary:
+	# The voussoirs carry a distinct role purely so the test can identify them
+	# structurally. Grouping survivors by their own `need` instead would be
+	# true of any threshold filter, and so could never fail.
+	return {"stack": {"name": "a", "children": [
+		{"mass": {"name": "plinth", "kind": "box", "w": 5.0, "d": 2.0,
+				"h": 0.4, "role": "plaster"}},
+		{"ring": {"name": "span", "radius": 1.5, "from": 0.0, "to": PI,
+				"count": 7,
+				"of": {"mass": {"name": "vs", "kind": "box", "w": 0.4,
+						"d": 0.6, "role": "brass"}}}}]}}
+
+
+func test_a_ring_survives_or_falls_whole() -> void:
+	# The property the whole assemblies design exists for: an arch is not seven
+	# independent stones. Remove one voussoir and the arc collapses, so no
+	# condition may leave a partial arc.
+	for id in range(12):
+		var parts := DioramaCompose.build(_arch(), SEED, id)
+		assert_eq(parts.size(), 8, "id %d: fixture should emit plinth + 7" % id)
+		for c in [0.0, 0.05, 0.2, 0.4, 0.6, 0.8, 1.0]:
+			var standing := 0
+			for p: Dictionary in DioramaCondition.filter(parts, c):
+				if p["role"] == "brass":
+					standing += 1
+			assert_true(standing == 0 or standing == 7,
+					"id %d at condition %f: %d of 7 voussoirs survived"
+					% [id, c, standing])
+
+
+func test_the_empty_building_filters_to_nothing() -> void:
+	assert_eq(DioramaCondition.filter([], 0.5).size(), 0,
+			"an empty part list should filter to an empty result")
