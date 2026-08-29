@@ -690,3 +690,15 @@ func test_a_mass_never_outlives_the_floor_it_was_handed() -> void:
 			"a floor above the draw band should win")
 	assert_almost_eq(out["need"], 0.95, 1e-6,
 			"the node should report the need it settled on")
+
+
+func test_every_part_of_a_ring_carries_need() -> void:
+	# _ring builds its parts directly rather than through _mass, so it has its
+	# own literal to forget the key on — this caught it missing entirely.
+	var out := DioramaCompose.resolve({"ring": {"name": "colonnade",
+			"radius": 3.0, "from": 0.0, "to": PI, "count": 4,
+			"of": {"mass": {"name": "column", "kind": "prism",
+					"w": 0.5, "d": 0.5, "role": "plaster"}}}}, _ctx())
+	assert_gt(out["parts"].size(), 0, "ring emitted nothing")
+	for p: Dictionary in out["parts"]:
+		assert_true(p.has("need"), "a ring part is missing the 'need' key")

@@ -482,9 +482,13 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var kind: String = body.get("kind", "box")
 		var params := _params_for(kind, body, thickness, depth, seg_len,
 				seed, id, child_path)
+		# Stubbed: a flat floor-only need, mirroring _mass's degenerate case.
+		# The cohesive per-voussoir draw (matching _mass's _draw_need) lands
+		# in Task 3.
 		parts.append({"kind": kind, "xf": xf,
-				"params": params, "color": Color.MAGENTA,
-				"tag": "", "y": 0.0, "role": body.get("role", "plaster")})
+				"params": params, "color": Color.MAGENTA, "tag": "",
+				"need": ctx["need_floor"], "y": 0.0,
+				"role": body.get("role", "plaster")})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their
 		# thickness, so 2*radius under-reports the real width by ~14% on a
