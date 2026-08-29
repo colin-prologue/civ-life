@@ -49,6 +49,30 @@ produced this design's central move, so it is recorded rather than left implicit
 The consequence for this design: **influence is not a currency and not a
 persuasion roll. It is the spread of a way of doing things.**
 
+### Manor Lords, on ecology without micromanagement
+
+Researched 2026-08-29 at the owner's request, as the nearest thing to a working
+reference for ebb and flow that does not demand micromanagement.
+
+- **Families are the labour unit; there are no individual workers.** A family is
+  three people assigned as one. That is the game's whole answer to
+  micromanagement, and it is the granularity this design reached independently
+  with households. Two designs converging on the same unit from different
+  directions is worth noting.
+- **Soil fertility is tracked per crop, not per field.** Growing a crop depletes
+  that crop's value; the same crop twice running drops it hard. Fallow restores
+  it; livestock pastured on fallow restores it faster. Terrain sets a ceiling.
+  **The per-use split is what makes rotation a decision rather than a synonym for
+  resting**, and it is the single most transferable idea found.
+- **Deer are a spawn rate against a harvest rate**, and players find the
+  sustainable band by watching rather than by reading a number.
+- **Fertility is shown as a map overlay**, green to red — the cheapest possible
+  fix for "I cannot tell how the field is doing."
+- **What is explicitly not taken:** its absorbing states. Fully depleted deer
+  stop regrowing; berry bushes destroyed by logging never return; stone does not
+  come back. Permanent loss from ordinary play is forbidden here (tone rules 1
+  and 2).
+
 ## The move this design rests on
 
 The project's own README already describes the player as *"a clan, a house, a
@@ -213,29 +237,75 @@ is what stops it becoming a currency the player totals (tone rule 6), and it
 makes placement matter: a household with a good year and nothing near it to
 spend on has wasted the year.
 
-### Crowding is required, not optional
+### Crowding, and the land remembering what was done to it
 
 Probe B says the world stops varying. Rather than importing variation from
-outside (terrain change, weather), the social system generates its own:
+outside, the social system generates its own — and the mechanism is the same one
+that makes a garden need rotating.
 
-**A practice's payoff falls as more households adopt it**, read through the
-existing per-tile census `forage_demand_at()`.
+**A tile carries a vitality per practice, not one vitality overall.** Working a
+tile with a practice draws that practice's vitality down; resting restores it,
+unconditionally, toward a ceiling the terrain sets.
 
-Four properties, and the last is why it is in the design rather than being a
-balance patch:
+The per-*use* split is the load-bearing part, and it is borrowed from Manor
+Lords, where soil fertility is tracked per crop rather than per field. That is
+what makes rotation a real decision instead of a synonym for resting: growing
+barley does not deplete what emmer needs. Here, **ground worn out by Tend is
+still good ground for Follow.**
 
-- It generates variation endogenously, needing no new world state.
-- It is tone rule 3's restoring force, structurally rather than by tuning.
-- It is tone rule 4 exactly — two existing systems reading each other rather
-  than a third being added.
-- **Influence becomes self-limiting.** You cannot have the whole band adopt your
-  way, because the moment they do, your way stops being the best one. Success
-  carries its own ceiling and nobody had to author a penalty. This is what keeps
-  "you will want things you cannot simply cause" true even while you are winning.
+Five things fall out of one mechanism:
 
-**Crowding is a hypothesis, not a measured result.** It cannot be spiked without
-the practice system existing, which is why re-running Probe B against it is an
-acceptance criterion rather than a follow-up.
+- **Rotation.** Practices are the crops, and practice diversity is what keeps
+  land healthy.
+- **Crowding.** A practice becoming widespread depletes precisely the thing that
+  practice depends on.
+- **Variation.** The best practice at a place changes because the last one used
+  it up — which is the periodicity fix, from inside the system.
+- **Restoring force.** Recovery is unconditional (tone rule 3), so a worn place
+  comes back whether or not anyone intended it to.
+- **Influence is self-limiting.** You cannot have the whole band adopt your way,
+  because the moment they do, your way wears out the ground it works. Success
+  carries its own ceiling and nobody authored a penalty.
+
+**The rule this must obey, and it is the owner's phrasing (2026-08-29):
+depletion moves the answer, it never removes the question.** A worn tile changes
+*where* you work, never whether you can. Depletion that closes options is the
+scarcity model this project rejects; depletion that reshuffles them is the
+garden. This is testable and is FR-8a below.
+
+**No absorbing states.** Manor Lords is instructive here by counter-example:
+its deer stop regrowing if fully depleted, and berry bushes destroyed by logging
+never return. Both are permanent losses caused by ordinary play, and both would
+violate tone rules 1 and 2 here. Every vitality has a floor above zero and an
+unconditional pull back toward baseline. Take the renewal; refuse the cliff.
+
+**Crowding is not an untested hypothesis — it is already the pattern this
+codebase uses.** `Herd.ration_at()` is `heads_supported_by(forage) / mouths`,
+where `mouths` comes from the same per-tile census (`forage_demand_at`), and it
+is what stops herds growing without bound today. What is new here is the *memory*
+— the census is instantaneous, and vitality is what the tile remembers
+afterwards.
+
+### Oscillation is wanted; synchronisation is not
+
+Populations that boom and crash locally are the story (owner, 2026-08-29): a
+large map with room to migrate makes a regional collapse an event rather than an
+ending. The failure mode is not crashing, it is **phase-locking** — every region
+oscillating together, so the world booms and crashes as one body.
+
+The risk is real and already observed: Probe B found a *global* cycle, and every
+herd reads one global season, which is exactly the kind of shared driver that
+locks phases together.
+
+Three criteria, all assertable (see Testing):
+
+- **Global stability** — total population never approaches the floor
+- **Local drama** — individual regions do reach lows, often
+- **Decorrelation** — regions are not in phase with one another
+
+Plus the tone check: **every region that empties must refill.** A valley
+emptying and repopulating from its neighbours is the intended story; a
+permanently dead valley is tone rule 2 violated.
 
 ## Functional requirements
 
@@ -270,8 +340,24 @@ tiles during the interval — never a global ranking.
 **FR-7** Surplus is computed per household per interval, is not carried across
 intervals, and is not transferable between households.
 
-**FR-8** A practice's realised payoff on a tile falls as forage demand on that
-tile rises, read through `forage_demand_at()`.
+**FR-8** A tile carries a vitality per practice. Working it with a practice
+lowers that practice's vitality; not working it raises that vitality back toward
+a terrain-set ceiling. Recovery is unconditional and requires no intervention.
+
+**FR-8a** **Depletion moves the answer, never removes the question.** For every
+household and every herd, the count of reachable tiles above a viability
+threshold never reaches zero, and over a long run the *identity* of the best
+reachable tile changes repeatedly. The first half is the tone guarantee; the
+second is the variation the design runs on.
+
+**FR-8b** No vitality reaches zero and none is permanently lost. Every value has
+a floor above zero and recovers from it. No sequence of ordinary play produces an
+irreversible loss of any tile's capacity.
+
+**FR-8c** A practice's realised payoff also falls as more agents compete for the
+same tile in the present, read through the existing `forage_demand_at()` census.
+Vitality is what the tile remembers; the census is what is happening on it now,
+and both bear on payoff.
 
 **FR-9** Nothing in this system removes a person, a household, or anything built.
 A practice that stops paying loses adopters; it does not kill anyone (tone rules
@@ -304,6 +390,14 @@ Headless, per the repo's rule that the suite runs without a rendering context.
   test most likely to catch a regression to index-based hashing.
 - **Restoring force.** Perturb — force the whole band onto one practice — run
   forward, and assert adoption diversifies again. Tone rule 3, assertable.
+- **Options never close (FR-8a).** Over a long run, no household or herd ever has
+  zero viable tiles within reach, and the identity of the best reachable tile
+  changes repeatedly rather than settling.
+- **No absorbing states (FR-8b).** Deplete a region as hard as the rules allow,
+  stop, run forward, and assert full recovery toward the terrain ceiling.
+- **Decorrelation.** Over 500 years: total population never approaches the floor;
+  individual regions do reach lows; regional series are not in phase with one
+  another; and every region that empties refills.
 - **No erasure.** After any run, every household and every placed thing still
   exists.
 - **Determinism** across two processes, via the existing fingerprint mechanism.
@@ -314,7 +408,9 @@ Headless, per the repo's rule that the suite runs without a rendering context.
 - Three practices as policies consulted by `Agent.step()`
 - Punctuated, staggered reconsideration on one tunable constant
 - Perishable surplus computed from the existing `forage_demand()`
+- Per-practice tile vitality, depleting with use and recovering unconditionally
 - The non-convergence test green over 200 years on the standard seed set
+- FR-8a and FR-8b green: options never close, and nothing is permanently lost
 - The tests above green in `./test.sh`
 - A decision record (below)
 
@@ -330,9 +426,14 @@ attrition arithmetic rather than as people choosing.
 ## Explicitly out of scope
 
 Player input and placement (#27), the turn readout that would surface adoption
-(#28), household growth and splitting, works and monuments, storage as a
-practice, per-culture anything, conquest, Understandings as distinct objects,
-any UI, and the civilization-advancement layer entirely.
+(#28), the map overlays that would make vitality visible (#36), predators (#38),
+terrain-class change (#31), household growth and splitting, works and monuments,
+storage as a practice, per-culture anything, conquest, Understandings as distinct
+objects, any UI, and the civilization-advancement layer entirely.
+
+Note that #36 is a *dependency in practice even though it is out of scope here*:
+per-practice vitality is invisible without an overlay, and a system nobody can
+see is a system nobody can judge.
 
 ## The arc (not specified here)
 
@@ -350,10 +451,38 @@ any UI, and the civilization-advancement layer entirely.
 
 ## Risks
 
-**Crowding may not break periodicity.** It is the load-bearing untested
-assumption and it is the plan's first task. If it fails, the fallback is
-exogenous variation via terrain change (#31), which is more machinery for the
-same result.
+**Vitality may not break periodicity.** Still the plan's first task, but a
+smaller risk than first written: crowding via the per-tile census is already how
+`Herd.ration_at` bounds herd growth, so the pattern is proven in this codebase
+and what is unproven is the *memory* layered on it. Fallback remains exogenous
+variation via terrain change (#31).
+
+**Three clocks now have to be in proportion.** Season length (6 turns), the
+vitality depletion/recovery time constant, and `RECONSIDER_INTERVAL_TURNS`. Land
+that wears faster than a season makes the map flicker; slower than a working
+lifetime and nobody feels it. The *ratio* is the design decision — name the
+constants relative to each other rather than tuning them independently.
+
+**Migration may not be a real escape route.** A herd's `move_range` is 1 and its
+`sense_range` is 4, so on a 40×30 map a herd in a collapsed region cannot see a
+better one — it random-walks at the population floor until conditions return to
+it. Adding depletion and predators without revisiting sense range builds the
+pressure and not the release. `AgDR-010` already found this exact class of
+problem once, and its line applies again: a migration that only happens by
+accident of placement is not migration.
+
+**The comparison to Manor Lords may flatter us.** Its ebb and flow is legible
+partly *because* it threatens the player — the community discussion around
+hunting is all shortage. This project removes the threat by design, and whether
+watching land wear and recover still holds attention without it is the same
+refutation `world-growth-tone` already names, arriving from a new direction.
+
+**Sustainability here cannot be a player decision.** In Manor Lords you keep the
+deer alive by not assigning a second family to the camp — a direct order the
+player gives. Nobody in this design gives orders, so sustainability has to emerge
+from adoption dynamics. The upside is that it works without anyone knowing the
+rule; the risk is a world that quietly over-uses itself with no one at fault and
+no lever to pull.
 
 **Drift may be emotionally flat.** Membership changing by slow percentage risks
 reading as attrition rather than as people choosing. #28's readout is what would
