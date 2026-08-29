@@ -67,6 +67,16 @@ static func _fingerprint(world_seed: int) -> int:
 				# Quantised, because a float printed through two processes must
 				# compare equal bit-for-bit and 1e-6 is far finer than any
 				# visible difference in when a part falls.
+				#
+				# Masked to 52 bits, not 60: int64 signed overflow on the `* 31`
+				# below is the same unspecified-behaviour smell str_hash() exists
+				# to avoid — it happens to wrap identically on two processes of
+				# the same binary, but that is an accident of platform, not a
+				# guarantee, and this fold sits inside a gate whose only job is
+				# to catch exactly that class of accident. 52 bits keeps
+				# `needs * 31` (~1.4e17 at most) comfortably under int64's
+				# ~9.2e18 ceiling, so the multiply never overflows in the first
+				# place — nothing to wrap, nothing platform-dependent to trust.
 				needs = (needs * 31 + int(round(p["need"] * 1000000.0))) \
-						& 0x7FFFFFFFFFFFFFF
+						& 0xFFFFFFFFFFFFF
 	return b.fingerprint() ^ needs
