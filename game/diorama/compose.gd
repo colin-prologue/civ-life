@@ -87,6 +87,14 @@ static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> in
 	return lo + int(floor(c * span))
 
 
+static func seed_of(ctx: Dictionary) -> int:
+	return ctx["seed"]
+
+
+static func id_of(ctx: Dictionary) -> int:
+	return ctx["id"]
+
+
 static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
@@ -103,6 +111,8 @@ static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 		return _stack(node["stack"], ctx)
 	if node.has("row"):
 		return _row(node["row"], ctx)
+	if node.has("ring"):
+		return _ring(node["ring"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
 	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
 
@@ -205,6 +215,12 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# on. Zero until a child reports a centre of its own.
 	var centre := Vector2.ZERO
 	var bounds := Bounds.new()
+	# Each successive child inherits a footprint this much smaller than the one
+	# below — a stepped monument's taper. It shrinks what a child INHERITS, not
+	# what it declares, so a style can still break the taper deliberately by
+	# stating a width.
+	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
+			"setback", 0.0)
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
 				"frame": {"xf": base_xf.translated_local(
@@ -223,8 +239,8 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			var child_xf: Transform3D = f["xf"]
 			var local: Vector3 = base_inv * child_xf.origin
 			centre = Vector2(local.x, local.z)
-			carried = f["footprint"]
-			bounds.add(centre, carried)
+			bounds.add(centre, f["footprint"])
+			carried = f["footprint"] * (1.0 - setback)
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
 	var mid := bounds.mid()
@@ -285,7 +301,23 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		_assert_unique_names(children, path)
 	var base_xf: Transform3D = ctx["frame"]["xf"]
 	var base_inv := base_xf.affine_inverse()
+	# Two ways to space a row, and they answer different questions. `advance` is
+	# a RATIO of the neighbours' half-widths, so spacing scales with whatever
+	# the style sampled — right for a terrace. `gap` is an ABSOLUTE clear
+	# distance between adjacent edges, which is the only way to state a real
+	# dimension of the building: an arch's opening is a length, not a ratio, and
+	# as a ratio it would come out as `w/t - 1` — derived from other sampled
+	# dimensions and unwritable as a literal.
+	assert(not (n.has("advance") and n.has("gap")),
+			"'%s' has both 'advance' and 'gap' — pick one" % path)
+	# A portico is a colonnade standing IN FRONT OF a hall: the same
+	# side-by-side relationship, along depth instead of width.
+	var is_z: bool = String(n.get("axis", "x")) == "z"
+	assert(String(n.get("axis", "x")) in ["x", "z"],
+			"'%s' row axis must be \"x\" or \"z\"" % path)
+	var has_gap := n.has("gap")
 	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
+	var gap := sample(n.get("gap"), seed, id, path, "gap", 0.0)
 	var parts: Array = []
 	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
 	# xf.origin sits at ITS centre, not its near edge.
@@ -306,11 +338,13 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var placed_any := false
 	for out: Dictionary in resolved:
 		var f: Dictionary = out["frame"]
-		var half: float = f["footprint"].x * 0.5
+		var fp: Vector2 = f["footprint"]
+		var half: float = (fp.y if is_z else fp.x) * 0.5
 		var child_xf: Transform3D = f["xf"]
 		# Where the child says its centre is, relative to where it resolved.
 		# For a mass that is zero; for a composite it need not be.
-		var offset: float = (base_inv * child_xf.origin).x
+		var child_local: Vector3 = base_inv * child_xf.origin
+		var offset: float = child_local.z if is_z else child_local.x
 		if f["height"] > EPS:
 			if placed_any:
 				# Solve for the shift that puts this child's NEAR edge against
@@ -321,28 +355,122 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 				# centre coincides with where it was placed, which composites
 				# break — a nested row of unequal widths reports a centre off
 				# its own origin, and the next child then overlaps it.
-				cursor = prev_centre + (prev_half + half) * advance - offset
+				cursor = prev_centre - offset + (
+						(prev_half + half + gap) if has_gap
+						else (prev_half + half) * advance)
 			placed_any = true
 			prev_centre = cursor + offset
 			prev_half = half
 		# Children were resolved at the row's origin; shift them into place. A
 		# child that resolved to nothing contributes no parts, no bounds, and
 		# does not move the cursor.
-		var shift := base_xf * Transform3D(Basis.IDENTITY,
-				Vector3(cursor, 0, 0)) * base_inv
+		var step := Vector3(0, 0, cursor) if is_z else Vector3(cursor, 0, 0)
+		var shift := base_xf * Transform3D(Basis.IDENTITY, step) * base_inv
 		for part: Dictionary in out["parts"]:
 			part["xf"] = shift * part["xf"]
 		parts.append_array(out["parts"])
 		if f["height"] > EPS:
-			var local: Vector3 = base_inv * child_xf.origin
-			bounds.add(Vector2(local.x + cursor, local.z), f["footprint"])
+			bounds.add(Vector2(child_local.x + (0.0 if is_z else cursor),
+					child_local.z + (cursor if is_z else 0.0)), fp)
 			tallest = maxf(tallest, f["height"])
 	if bounds.is_empty():
 		return {"parts": parts, "frame": zero_frame(base_xf)}
+	# A node occupies a box CENTRED on the transform it was handed. The layout
+	# above builds rightward from the first child, so recentre the finished
+	# group. Without this a symmetric pair comes back offset by half its own
+	# span and everything stacked above inherits that — the hero arch showed it
+	# as a plinth sitting under nothing.
 	var mid := bounds.mid()
+	var recentre := base_xf * Transform3D(Basis.IDENTITY,
+			Vector3(-mid.x, 0, -mid.y)) * base_inv
+	for part: Dictionary in parts:
+		part["xf"] = recentre * part["xf"]
 	return {"parts": parts,
-			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
-					"footprint": bounds.span(), "height": tallest}}
+			"frame": {"xf": base_xf, "footprint": bounds.span(),
+					"height": tallest}}
+
+
+## Children on an arc, each rotated so its long axis lies TANGENT to it.
+##
+## This is the node the whole vocabulary was staked on, because an arch's
+## voussoirs are the one thing the hand-written grammar does that translation
+## alone cannot express. The lab finding it encodes: voussoirs lie tangent, not
+## radial — radial orientation makes an M-shaped scallop rather than an arch.
+##
+## `from` and `to` are angles in radians measured from +X, counter-clockwise in
+## the XY plane, so a semicircular arch is 0 to PI. `radius` is to the arc's
+## centreline. Each child is stretched to the arc length of its own segment,
+## with a small overlap so the joints close.
+##
+## Always tangent. A style wanting children that stay upright around a circle
+## can have that when one exists to need it; guessing at the option now would
+## be a parameter with no caller.
+static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
+	var path := _path_of(ctx, n)
+	var seed: int = ctx["seed"]
+	var id: int = ctx["id"]
+	var base_xf: Transform3D = ctx["frame"]["xf"]
+	var radius := sample(n.get("radius"), seed, id, path, "radius", 1.0)
+	var from := sample(n.get("from"), seed, id, path, "from", 0.0)
+	var to := sample(n.get("to"), seed, id, path, "to", PI)
+	var count := _sample_count(n.get("count"), seed, id, path)
+	var template: Dictionary = n.get("of", {})
+	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
+	var parts: Array = []
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+	var top := 0.0
+	for i in range(maxi(0, count)):
+		var a0 := from + (to - from) * i / float(count)
+		var a1 := from + (to - from) * (i + 1) / float(count)
+		var mid := (a0 + a1) * 0.5
+		# Stretched to its own arc length, plus a little, so the joints close.
+		var seg_len := radius * (a1 - a0) * 1.15
+		var child := _indexed(template, i)
+		var body: Dictionary = child[child.keys()[0]]
+		var child_path := path + "/" + String(body["name"])
+		var thickness := sample(body.get("w"), seed, id, child_path, "w", 0.2)
+		var depth := sample(body.get("d"), seed, id, child_path, "d", thickness)
+		if thickness <= EPS or depth <= EPS or seg_len <= EPS:
+			continue
+		# Rotate first, then drop by half the segment so the box — which builds
+		# upward from its own origin — straddles the arc centreline.
+		var xf := base_xf * Transform3D(Basis(Vector3(0, 0, 1), mid),
+				Vector3(cos(mid) * radius, sin(mid) * radius, 0)) \
+				* Transform3D(Basis.IDENTITY, Vector3(0, -seg_len * 0.5, 0))
+		var size := Vector3(thickness, seg_len, depth)
+		# Through the same kind-aware path a mass uses. Building params.size
+		# regardless of kind meant a ring of columns emitted "prism" with box
+		# params, and emit() reads params.radius — a missing-key crash from a
+		# style that looks entirely valid.
+		var kind: String = body.get("kind", "box")
+		var params := _params_for(kind, body, thickness, depth, seg_len,
+				seed, id, child_path)
+		parts.append({"kind": kind, "xf": xf,
+				"params": params, "color": Color.MAGENTA,
+				"tag": "", "y": 0.0, "role": body.get("role", "plaster")})
+		# A ring's frame must describe what it EMITTED, not the circle it was
+		# described by: tangent boxes stick out past the arc by half their
+		# thickness, so 2*radius under-reports the real width by ~14% on a
+		# typical arch. Take the hull of the transformed corners instead.
+		for cx in [-0.5, 0.5]:
+			for cy in [0.0, 1.0]:
+				for cz in [-0.5, 0.5]:
+					var c: Vector3 = base_xf.affine_inverse() * (xf * Vector3(
+							size.x * cx, size.y * cy, size.z * cz))
+					lo = Vector2(minf(lo.x, c.x), minf(lo.y, c.z))
+					hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.z))
+					top = maxf(top, c.y)
+	if lo.x == INF:
+		return {"parts": parts, "frame": zero_frame(base_xf)}
+	# Centred on what it was handed, like every other node.
+	var mid_xz := (lo + hi) * 0.5
+	var recentre := base_xf * Transform3D(Basis.IDENTITY,
+			Vector3(-mid_xz.x, 0, -mid_xz.y)) * base_xf.affine_inverse()
+	for part: Dictionary in parts:
+		part["xf"] = recentre * part["xf"]
+	return {"parts": parts,
+			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top}}
 
 
 ## Suffix a template's name with its index so repeated units get distinct

@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://game/diorama/lineup.gd" id="1"]
+
+[node name="Lineup" type="Node3D"]
+script = ExtResource("1")
+style = "hero_arch"
+specimen_count = 6
+columns = 3
+cell_size = 9.0

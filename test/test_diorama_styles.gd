@@ -52,3 +52,114 @@ func test_roles_resolve_to_palette_colours() -> void:
 
 func test_same_seed_and_id_rebuild_identically() -> void:
 	assert_eq(_built(5), _built(5), "same inputs produced different buildings")
+
+
+# ------------------------------------------------------- hero arch (slice 2)
+
+## The vocabulary's real test. `hero_arch` is the hardest thing the hand-written
+## grammar does — a base, two piers with a clear opening between them, nine
+## voussoirs tangent to a semicircular arc, a beam across the top and a finial.
+## If the tree cannot say that, the design does not reach.
+##
+## Asserted structurally rather than against the old function's exact numbers:
+## per the owner's standing ruling the current models are disposable proof of
+## concept, so matching this specimen's dimensions is not the goal. What must
+## hold is that every FEATURE is expressible and lands in a sane relationship.
+func test_hero_arch_has_every_feature_the_hand_written_one_has() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0)
+	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+	assert_gt(parts.size(), 12, "hero arch is too simple to be an arch")
+
+	var voussoirs := 0
+	var rotated := 0
+	for p: Dictionary in parts:
+		var b: Basis = p["xf"].basis
+		if not b.is_equal_approx(Basis.IDENTITY):
+			rotated += 1
+			voussoirs += 1
+	assert_gt(voussoirs, 6, "the arc has too few voussoirs to read as an arch")
+	assert_gt(rotated, 0, "nothing is rotated — the arc is not an arc")
+
+
+func test_the_arch_has_a_clear_opening_between_its_piers() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0)
+	# Find the lowest band of parts — the piers sit there, either side of a void.
+	var lowest := INF
+	for p: Dictionary in parts:
+		lowest = minf(lowest, p["xf"].origin.y)
+	var low_xs: Array = []
+	for p: Dictionary in parts:
+		if p["xf"].origin.y < lowest + 0.4 and p["params"].has("size") \
+				and p["params"]["size"].y > 0.5:
+			low_xs.append(p["xf"].origin.x)
+	assert_eq(low_xs.size(), 2, "expected exactly two piers at the base")
+	if low_xs.size() == 2:
+		assert_gt(absf(low_xs[0] - low_xs[1]), 1.0,
+				"the piers are not separated — there is no opening to span")
+
+
+func test_hero_arch_is_deterministic() -> void:
+	assert_eq(DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0),
+			DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0),
+			"same seed produced two different arches")
+
+
+# ------------------------------------------------- civic and stepped (slice 2)
+
+func test_civic_has_a_colonnade_standing_in_front_of_its_hall() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.civic(), 42, 0)
+	var columns: Array = []
+	var walls: Array = []
+	for p: Dictionary in parts:
+		if p["kind"] == "prism":
+			columns.append(p)
+		elif p["kind"] == "box" and p["params"]["size"].y > 0.5:
+			walls.append(p)
+	assert_eq(columns.size(), 5, "a portico needs its five columns")
+	assert_eq(walls.size(), 1, "expected exactly one hall block")
+	if walls.size() == 1 and columns.size() > 0:
+		for c: Dictionary in columns:
+			assert_gt(c["xf"].origin.z, walls[0]["xf"].origin.z,
+					"a column is not in front of the hall")
+	var xs: Array = []
+	for c: Dictionary in columns:
+		xs.append(c["xf"].origin.x)
+	xs.sort()
+	assert_gt(xs[-1] - xs[0], 0.5, "the columns are not spread across the front")
+
+
+func test_stepped_tiers_shrink_as_they_rise() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.stepped(), 42, 0)
+	var boxes: Array = []
+	for p: Dictionary in parts:
+		if p["kind"] == "box":
+			boxes.append(p)
+	assert_gt(boxes.size(), 3, "a stepped monument needs a plinth and tiers")
+	for i in range(2, boxes.size()):
+		assert_lt(boxes[i]["params"]["size"].x,
+				boxes[i - 1]["params"]["size"].x,
+				"tier %d is not narrower than the one below it" % i)
+
+
+func test_both_new_styles_are_deterministic() -> void:
+	for tree in [DioramaStyles.civic(), DioramaStyles.stepped()]:
+		assert_eq(DioramaCompose.build(tree, 7, 3),
+				DioramaCompose.build(tree, 7, 3), "style is not deterministic")
+
+
+## An arch's two piers must reach the same height or the arc rests on one and
+## floats above the other. They sampled independently — the cost of channels
+## keyed on names showing up in the one place where two siblings are supposed
+## to be the same thing.
+func test_the_arch_springs_from_two_piers_of_equal_height() -> void:
+	for id in range(8):
+		var parts := DioramaCompose.build(DioramaStyles.hero_arch(), 42, id)
+		var piers: Array = []
+		for p: Dictionary in parts:
+			if p["kind"] == "box" and p["params"]["size"].y > 0.9 \
+					and p["params"]["size"].x < 0.6:
+				piers.append(p["params"]["size"].y)
+		assert_eq(piers.size(), 2, "id %d: expected two piers" % id)
+		if piers.size() == 2:
+			assert_almost_eq(piers[0], piers[1], 1e-5,
+					"id %d: the arch's piers are different heights" % id)
