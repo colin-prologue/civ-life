@@ -653,3 +653,40 @@ func test_a_ring_of_round_primitives_gets_round_params() -> void:
 		assert_true(p["params"].has("height"), "a prism needs a height")
 		assert_false(p["params"].has("size"),
 				"a prism should not be handed box params")
+
+
+# --------------------------------------------------------------- need (slice 3)
+
+func test_a_mass_draws_its_need_in_band_and_deterministically() -> void:
+	var tree := _box("solo", 2.0, 2.0, 2.0)
+	var a := DioramaCompose.build(tree, SEED, 3)
+	var b := DioramaCompose.build(tree, SEED, 3)
+	assert_eq(a.size(), 1, "fixture should emit exactly one part")
+	assert_eq(a[0]["need"], b[0]["need"], "same seed and id gave two needs")
+	assert_true(a[0]["need"] >= DioramaCompose.ENDURE_LO,
+			"need %f fell below the band floor" % a[0]["need"])
+	assert_true(a[0]["need"] <= DioramaCompose.ENDURE_HI,
+			"need %f rose above the band ceiling" % a[0]["need"])
+
+
+func test_two_ids_draw_different_needs() -> void:
+	# Otherwise every building in a city ruins identically, which is the whole
+	# reason need is drawn rather than computed from geometry.
+	var tree := _box("solo", 2.0, 2.0, 2.0)
+	var differ := false
+	for id in range(12):
+		if not is_equal_approx(
+				DioramaCompose.build(tree, SEED, 0)[0]["need"],
+				DioramaCompose.build(tree, SEED, id)[0]["need"]):
+			differ = true
+	assert_true(differ, "twelve ids all drew the same need")
+
+
+func test_a_mass_never_outlives_the_floor_it_was_handed() -> void:
+	var ctx := DioramaCompose.new_ctx(SEED, 7)
+	ctx["need_floor"] = 0.95
+	var out := DioramaCompose.resolve(_box("solo", 2.0, 2.0, 2.0), ctx)
+	assert_almost_eq(out["parts"][0]["need"], 0.95, 1e-6,
+			"a floor above the draw band should win")
+	assert_almost_eq(out["need"], 0.95, 1e-6,
+			"the node should report the need it settled on")

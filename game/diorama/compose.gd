@@ -16,6 +16,13 @@ const FNV_OFFSET := 1469598103934665603
 const FNV_PRIME := 1099511628211
 const EPS := 1e-6
 
+## The band a part's endurance is drawn from. `need` is the condition at or
+## above which a part survives, so a LOW need is a DURABLE part. The band is
+## deliberately short of [0, 1]: nothing is indestructible and nothing is
+## made of paper, and the sheet is what tunes these.
+const ENDURE_LO := 0.10
+const ENDURE_HI := 0.90
+
 
 ## FNV-1a over a string. Godot's builtin hash() is deliberately NOT used: it
 ## carries no documented cross-platform stability guarantee, and this repo
@@ -100,8 +107,14 @@ static func zero_frame(xf: Transform3D) -> Dictionary:
 
 
 static func new_ctx(seed: int, building_id: int) -> Dictionary:
-	return {"seed": seed, "id": building_id, "path": "",
+	return {"seed": seed, "id": building_id, "path": "", "need_floor": 0.0,
 			"frame": zero_frame(Transform3D.IDENTITY)}
+
+
+## A node's own endurance, before the floor its support imposes.
+static func _draw_need(ctx: Dictionary, path: String) -> float:
+	return ENDURE_LO + (ENDURE_HI - ENDURE_LO) * channel(
+			ctx["seed"], ctx["id"], path, "endure")
 
 
 static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
@@ -114,7 +127,8 @@ static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 	if node.has("ring"):
 		return _ring(node["ring"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
-	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"])}
+	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"]),
+			"need": ctx["need_floor"]}
 
 
 static func _path_of(ctx: Dictionary, n: Dictionary) -> String:
@@ -135,8 +149,10 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var w := sample(n.get("w"), seed, id, path, "w", inherited.x) * oversize
 	var d := sample(n.get("d"), seed, id, path, "d", inherited.y) * oversize
 	var h := sample(n.get("h"), seed, id, path, "h", 0.0)
+	# A node that emits nothing must not raise the floor for whatever stacks
+	# above it — it reports the floor unchanged rather than a drawn need.
 	if w <= EPS or d <= EPS or h <= EPS:
-		return {"parts": [], "frame": zero_frame(xf)}
+		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_floor"]}
 	var kind: String = n.get("kind", "box")
 	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
 	# the renderer. Reporting (w, d) would describe geometry that does not
@@ -144,10 +160,14 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if kind == "prism" or kind == "cone":
 		d = w
 	var params := _params_for(kind, n, w, d, h, seed, id, path)
+	# A part never outlives the floor it inherits: whatever it stands on
+	# already needs at least this much condition to still be there, so this
+	# part cannot need less than that.
+	var need := maxf(ctx["need_floor"], _draw_need(ctx, path))
 	var part := {"kind": kind, "xf": xf, "params": params,
-			"color": Color.MAGENTA, "tag": "", "y": 0.0,
+			"color": Color.MAGENTA, "tag": "", "need": need, "y": 0.0,
 			"role": n.get("role", "plaster")}
-	return {"parts": [part],
+	return {"parts": [part], "need": need,
 			"frame": {"xf": xf, "footprint": Vector2(w, d), "height": h}}
 
 
@@ -222,7 +242,12 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
 			"setback", 0.0)
 	for child in children:
+		# Stubbed: passed through unchanged for now. The real per-child floor
+		# (derived from what this node itself settles on) lands in the next
+		# task; until then this only keeps the strict ctx["need_floor"] index
+		# in _mass from crashing on a stack's children.
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
+				"need_floor": ctx["need_floor"],
 				"frame": {"xf": base_xf.translated_local(
 						Vector3(centre.x, y, centre.y)),
 						"footprint": carried, "height": 0.0}}
@@ -242,11 +267,15 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			bounds.add(centre, f["footprint"])
 			carried = f["footprint"] * (1.0 - setback)
 	if bounds.is_empty():
-		return {"parts": parts, "frame": zero_frame(base_xf)}
+		# Stubbed: this node's real rule lands in the next task.
+		return {"parts": parts, "frame": zero_frame(base_xf),
+				"need": ctx["need_floor"]}
 	var mid := bounds.mid()
+	# Stubbed: this node's real rule lands in the next task.
 	return {"parts": parts,
 			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
-					"footprint": bounds.span(), "height": y}}
+					"footprint": bounds.span(), "height": y},
+			"need": ctx["need_floor"]}
 
 
 ## Two siblings sharing a name would share every channel and come out
@@ -328,7 +357,10 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# Resolve every child at the row's own origin first, then lay them out.
 	var resolved: Array = []
 	for child in children:
+		# Stubbed: passed through unchanged for now, same as _stack — the real
+		# per-child floor lands in the next task.
 		var child_ctx := {"seed": seed, "id": id, "path": path,
+				"need_floor": ctx["need_floor"],
 				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
 		resolved.append(resolve(child, child_ctx))
@@ -374,7 +406,9 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 					child_local.z + (cursor if is_z else 0.0)), fp)
 			tallest = maxf(tallest, f["height"])
 	if bounds.is_empty():
-		return {"parts": parts, "frame": zero_frame(base_xf)}
+		# Stubbed: this node's real rule lands in the next task.
+		return {"parts": parts, "frame": zero_frame(base_xf),
+				"need": ctx["need_floor"]}
 	# A node occupies a box CENTRED on the transform it was handed. The layout
 	# above builds rightward from the first child, so recentre the finished
 	# group. Without this a symmetric pair comes back offset by half its own
@@ -385,9 +419,11 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			Vector3(-mid.x, 0, -mid.y)) * base_inv
 	for part: Dictionary in parts:
 		part["xf"] = recentre * part["xf"]
+	# Stubbed: this node's real rule lands in the next task.
 	return {"parts": parts,
 			"frame": {"xf": base_xf, "footprint": bounds.span(),
-					"height": tallest}}
+					"height": tallest},
+			"need": ctx["need_floor"]}
 
 
 ## Children on an arc, each rotated so its long axis lies TANGENT to it.
@@ -462,15 +498,19 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 					hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.z))
 					top = maxf(top, c.y)
 	if lo.x == INF:
-		return {"parts": parts, "frame": zero_frame(base_xf)}
+		# Stubbed: this node's real rule lands in the next task.
+		return {"parts": parts, "frame": zero_frame(base_xf),
+				"need": ctx["need_floor"]}
 	# Centred on what it was handed, like every other node.
 	var mid_xz := (lo + hi) * 0.5
 	var recentre := base_xf * Transform3D(Basis.IDENTITY,
 			Vector3(-mid_xz.x, 0, -mid_xz.y)) * base_xf.affine_inverse()
 	for part: Dictionary in parts:
 		part["xf"] = recentre * part["xf"]
+	# Stubbed: this node's real rule lands in the next task.
 	return {"parts": parts,
-			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top}}
+			"frame": {"xf": base_xf, "footprint": hi - lo, "height": top},
+			"need": ctx["need_floor"]}
 
 
 ## Suffix a template's name with its index so repeated units get distinct
