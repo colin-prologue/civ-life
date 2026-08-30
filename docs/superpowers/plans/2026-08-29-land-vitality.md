@@ -111,15 +111,20 @@ func test_no_use_is_no_depletion() -> void:
 	assert_eq(Land.depleted(0.7, 0.0), 0.7, "land nobody worked is land unchanged")
 
 
-func test_continuous_maximum_use_settles_at_the_floor_not_below() -> void:
-	# Depletion and recovery are calibrated against each other: the equilibrium
-	# under unbroken maximum use is the floor. If someone retunes one constant
-	# without the other, this is what catches it.
+func test_continuous_maximum_use_settles_one_recovery_step_above_the_floor() -> void:
+	# The turn order is deplete-then-recover, so ground worked flat out is
+	# clamped to the floor and then lifted one step before the turn ends. The
+	# attractor is therefore MIN_VITALITY + one recovery step, not MIN_VITALITY.
+	#
+	# Asserted tightly and against a derived value rather than a literal: a loose
+	# tolerance here is what let an earlier, wrong claim about this equilibrium
+	# pass by about 0.007.
 	var v := Land.MAX_VITALITY
 	for i in range(400):
 		v = Land.recovered(Land.depleted(v, 1.0))
-	assert_almost_eq(v, Land.MIN_VITALITY, 0.05,
-			"equilibrium under continuous full use sits at the floor")
+	assert_almost_eq(v, Land.continuous_use_equilibrium(), 0.001,
+			"continuous full use settles one recovery step above the floor")
+	assert_gt(v, Land.MIN_VITALITY, "and therefore strictly above it")
 
 
 func test_intensity_scales_how_fast_land_wears() -> void:
@@ -187,12 +192,16 @@ const RECOVERY_HALF_LIFE_TURNS := Seasons.TURNS_PER_SEASON * 2
 
 ## How much one turn of maximum-intensity use takes off a tile.
 ##
-## Calibrated against the recovery rate rather than chosen independently. Under
-## unbroken use at intensity 1.0 the two balance at
-## `MAX_VITALITY - DEPLETION_PER_UNIT / recovery_rate()`, and this value puts
-## that equilibrium at the floor: land worked as hard as the rules allow, without
-## pause, settles at `MIN_VITALITY` and no lower. Retuning either constant
-## without the other moves that equilibrium, which `test_land.gd` will catch.
+## Sets how fast worn ground approaches its limit, and where land settles under
+## *partial* use — at a steady intensity `I` that does not reach the floor,
+## vitality converges on `1 - DEPLETION_PER_UNIT * I * (1 - r) / r`.
+##
+## It does **not** set where continuous maximum use settles. That is fixed by the
+## floor and the turn order instead — see `continuous_use_equilibrium()`. An
+## earlier version of this comment claimed the constant was calibrated to put
+## full-use equilibrium at `MIN_VITALITY`; that was wrong, and the tripwire test
+## written against it passed with about 0.007 of slack. Caught in review on
+## PR #40.
 const DEPLETION_PER_UNIT := 0.048
 
 
@@ -200,6 +209,19 @@ const DEPLETION_PER_UNIT := 0.048
 ## the half-life. Not a `const` because `pow()` is not a constant expression.
 static func recovery_rate() -> float:
 	return 1.0 - pow(0.5, 1.0 / float(RECOVERY_HALF_LIFE_TURNS))
+
+
+## Where a tile settles under unbroken maximum use.
+##
+## **Not `MIN_VITALITY`.** Depletion clamps at the floor and then the same turn's
+## recovery lifts it one step, so the attractor sits exactly one recovery step
+## above the floor — and it does so for *any* depletion large enough to reach the
+## floor at all, which is why retuning `DEPLETION_PER_UNIT` does not move it.
+##
+## Derived rather than written down so the test can assert it tightly: changing
+## either the floor or the half-life moves this value and `test_land.gd` says so.
+static func continuous_use_equilibrium() -> float:
+	return MIN_VITALITY + recovery_rate() * (MAX_VITALITY - MIN_VITALITY)
 
 
 ## One turn of nobody working this tile, for this use.
@@ -250,6 +272,7 @@ git commit -m "Land: what a tile remembers about being worked, and how it comes 
   - `WorldMap.vitality_by_index(i: int, use: int) -> float`
   - `WorldMap.vitality_data(use: int) -> PackedFloat32Array`
   - `WorldMap.forage_for_use(coord: Vector2i, use: int) -> float`
+  - `WorldMap.forage_for_use_by_index(i: int, use: int) -> float`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -374,6 +397,18 @@ func vitality_data(use: int) -> PackedFloat32Array:
 func forage_for_use(coord: Vector2i, use: int) -> float:
 	var i := grid.index_of(coord)
 	assert(i >= 0, "cannot read forage off the map")
+	return forage_for_use_by_index(i, use)
+
+
+## The same value by index, for callers scanning many tiles per turn.
+##
+## `Herd._best_ground()` scores every tile in its sense range every time it
+## re-plans and reads by index for exactly that reason. It needs this rather than
+## raw `forage_by_index()`, or destinations stay blind to wear while the tile
+## underfoot is not — and a herd that cannot see worn ground keeps walking onto
+## it, which would leave the rotation this whole record is about with no effect
+## on where anything goes.
+func forage_for_use_by_index(i: int, use: int) -> float:
 	return _forage[i] * vitality_by_index(i, use)
 ```
 
@@ -535,7 +570,7 @@ git commit -m "Vitality recovers every turn, unconditionally, and never past ful
 - Test: `test/test_vitality.gd`
 
 **Interfaces:**
-- Consumes: `Land.depleted`, `Land.Use.GRAZE`, `WorldMap.forage_for_use`
+- Consumes: `Land.depleted`, `Land.Use.GRAZE`, `WorldMap.forage_for_use`, `WorldMap.forage_for_use_by_index`
 - Produces: `WorldMap.draw_vitality(coord: Vector2i, use: int, intensity: float) -> void`
 
 - [ ] **Step 1: Write the failing test**
@@ -561,19 +596,33 @@ func test_standing_on_barren_ground_costs_nothing() -> void:
 	# The bug this guards against: wear computed from how hungry the herd was
 	# rather than from what it ate would floor every tile in the world each
 	# winter, when nothing grows and every ration is bad.
-	var world := _world()
-	var land := _first_land_coord(world)
-	world.set_terrain(land, WorldGen.Terrain.MOUNTAIN)
-	var herd := Herd.new(1, land, Species.grazer(), 40.0)
+	#
+	# Built on an empty grid rather than a generated world, with a herd that
+	# cannot move or sense. A generated world already holds fourteen herds that
+	# would wander across the watched tile during the eighteen turns this waits
+	# for winter, and a mobile subject would wander off it — either way the
+	# assertion would be measuring something other than what it claims. The
+	# species is pinned immobile so the scenario is forced rather than hoped for.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	var land := Vector2i.ZERO
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.MOUNTAIN)
+
+	# name, consumption/head, growth, decline, move_range, sense_range, min, start
+	var rooted := Species.new("rooted", 0.006, 0.070, 0.110, 0, 0, 2.0, 40.0)
+	var herd := Herd.new(1, land, rooted, 40.0)
 	world.add_agent(herd)
 
 	# Winter on a mountain is the least forage the table offers.
 	while world.season() != Seasons.Season.WINTER:
 		world.advance_turn()
+	assert_eq(herd.coord, land, "the subject stayed on the watched tile")
 	var before := world.vitality_at(land, Land.Use.GRAZE)
 	for i in range(Seasons.TURNS_PER_SEASON):
 		world.advance_turn()
 
+	assert_eq(herd.coord, land, "and stayed there for the measurement")
 	assert_gt(world.vitality_at(land, Land.Use.GRAZE), before - 0.05,
 			"a herd on ground that fed it nothing barely wore it")
 
@@ -639,6 +688,24 @@ func ration_at(world: WorldMap, candidate: Vector2i) -> float:
 	return supported / maxf(mouths, species.minimum_population)
 ```
 
+**And `_best_ground` too — this is the one that matters.** It does not call
+`ration_at`; it re-implements the same scoring by index, because it runs over the
+whole sense-range disc every time a herd re-plans. Changing only `ration_at`
+would leave the tile underfoot vitality-aware while every destination still
+looked fully productive, so herds would keep walking onto worn ground and the
+rotation would have no effect on migration at all. In `_best_ground`, change:
+
+```gdscript
+			var supported := species.heads_supported_by(world.forage_by_index(i))
+```
+
+to:
+
+```gdscript
+			var supported := species.heads_supported_by(
+					world.forage_for_use_by_index(i, Land.Use.GRAZE))
+```
+
 And in `_graze`, after the population is updated, report what was taken:
 
 ```gdscript
@@ -651,20 +718,25 @@ func _graze(world: WorldMap) -> void:
 		scaled = population * (1.0 - species.decline_rate * minf(1.0 - ration, 1.0))
 	world.set_herd_population(self, maxf(scaled, species.minimum_population))
 
-	# Wear is what was actually eaten, not how hungry the herd was.
+	# Wear is what THIS herd actually ate. Two mistakes are easy here and both
+	# were made in earlier drafts of this plan.
 	#
-	# The tempting version is `1.0 / ration` — the fraction of the tile's
-	# capacity the herd wanted. It is wrong at exactly the case that matters: on
-	# a tile supporting nothing, ration is zero, so that expression saturates and
-	# a herd standing on dead winter grass would wear the ground as hard as one
-	# grazing a spring meadow. Every tile would floor itself each winter.
+	# First: wear is not how hungry the herd was. The tempting `1.0 / ration`
+	# saturates on a tile supporting nothing, so a herd on dead winter grass
+	# would wear the ground as hard as one on a spring meadow and every tile
+	# would floor itself each winter.
 	#
-	# Taking the minimum of what is there and what is wanted makes barren ground
-	# cost nothing to stand on, which is both physically right and what keeps
-	# FR-8a satisfiable.
+	# Second, and subtler: `forage_demand_at()` is the tile's TOTAL demand, every
+	# agent standing there. Every co-located herd runs this same code, so
+	# charging the tile the total once per herd bills it N times over for N
+	# herds — flooring exactly the popular tiles the periodicity experiment is
+	# measuring. Charge this herd for its own share: what it wanted, or its
+	# proportional cut of what was there when that is less.
 	var available := world.forage_for_use(coord, Land.Use.GRAZE)
-	var wanted := world.forage_demand_at(coord) * species.consumption_per_head
-	world.draw_vitality(coord, Land.Use.GRAZE, minf(available, wanted) / Seasons.MAX_FORAGE)
+	var mouths := maxf(world.forage_demand_at(coord), species.minimum_population)
+	var my_share := available * (forage_demand() / mouths)
+	var my_want := population * species.consumption_per_head
+	world.draw_vitality(coord, Land.Use.GRAZE, minf(my_share, my_want) / Seasons.MAX_FORAGE)
 ```
 
 - [ ] **Step 4: Run the test and watch it pass**
@@ -897,7 +969,7 @@ git commit -m "FR-8a: depletion moves the answer and never removes the question"
 **Interfaces:**
 - Consumes: `WorldGen.generate` (which populates herds itself — do not populate again), `WorldMap.advance_turn`, `WorldMap.vitality_data`
 
-This is the spec's primary acceptance test and the reason `AgDR-014` was written. The baseline being beaten was measured before any of this existed: worlds settled into a repeating annual cycle at year 9, 36 and 43 on three of four seeds, one of them fully static.
+This is the spec's primary acceptance test and the reason `AgDR-014` was written. The baseline being beaten was measured before any of this existed: **every seed** settled into a repeating annual cycle — years 7, 17, 11 and 5 — with three of the four becoming completely static.
 
 It lives in `tools/` rather than `test/` because it runs thousands of turns — the same reason `world_fingerprint.gd` lives there, and because GUT treats a non-`GutTest` script under `test/` as a broken test.
 
@@ -1114,6 +1186,8 @@ Check each against the ticket before opening the PR:
 
 - [ ] Vitality is per use, stored as flat arrays in grid order (#38 AC1)
 - [ ] Working a tile lowers that use's vitality; not working it raises it (AC2)
+- [ ] `_best_ground()` scores destinations through vitality, not raw forage — otherwise migration ignores wear entirely
+- [ ] Each herd is charged only for its own share of a shared tile's grazing
 - [ ] Recovery is unconditional — no policy, structure or action required (AC3)
 - [ ] Options never close: no agent ever has zero viable tiles in reach (AC4)
 - [ ] The best reachable tile changes repeatedly rather than settling (AC5)
