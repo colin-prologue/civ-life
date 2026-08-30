@@ -655,12 +655,24 @@ func test_two_herds_sharing_a_tile_do_not_overcharge_it() -> void:
 	# grazed and left divides by a smaller denominator and claims a share the
 	# tile was charged for a moment earlier — so a shared tile wears faster than
 	# a tile carrying the same total number of animals in one herd.
+	# The populations are sized so the tile CANNOT feed them, and that is the
+	# whole point. Grass in spring is 0.95 forage against 0.006 consumption per
+	# head, so one tile supports about 158 animals. With 40 the herds always want
+	# less than their share, `minf(my_share, my_want)` always picks `my_want`,
+	# the denominator never enters the calculation, and this test passes happily
+	# with the sharing bug put back. 300 animals forces the proportional branch.
 	var shared := _bare_world()
 	var solo := _bare_world()
 	var where := Vector2i.ZERO
-	shared.add_agent(Herd.new(1, where, Species.grazer(), 20.0))
-	shared.add_agent(Herd.new(2, where, Species.grazer(), 20.0))
-	solo.add_agent(Herd.new(1, where, Species.grazer(), 40.0))
+	shared.add_agent(Herd.new(1, where, Species.grazer(), 150.0))
+	shared.add_agent(Herd.new(2, where, Species.grazer(), 150.0))
+	solo.add_agent(Herd.new(1, where, Species.grazer(), 300.0))
+
+	# Assert the premise rather than trusting it: if a later change to the forage
+	# table makes this tile generous enough to feed them, the comparison below
+	# stops testing anything and this is what says so.
+	assert_lt(shared.herds()[0].ration_at(shared, where), 1.0,
+			"the tile is forage-limited, so the proportional-share branch runs")
 
 	for i in range(Seasons.TURNS_PER_SEASON):
 		shared.advance_turn()
@@ -670,7 +682,7 @@ func test_two_herds_sharing_a_tile_do_not_overcharge_it() -> void:
 		shared.vitality_at(where, Land.Use.GRAZE),
 		solo.vitality_at(where, Land.Use.GRAZE),
 		0.02,
-		"forty animals wear a tile the same whether they arrived as one herd or two"
+		"three hundred animals wear a tile the same whether they came as one herd or two"
 	)
 
 
@@ -774,9 +786,20 @@ In `sim/herd.gd`, change `ration_at` to read the grazing share rather than the r
 ```gdscript
 func ration_at(world: WorldMap, candidate: Vector2i) -> float:
 	var supported := species.heads_supported_by(world.forage_for_use(candidate, Land.Use.GRAZE))
-	var mouths := world.forage_demand_at(candidate)
-	if candidate != coord:
-		mouths += population
+	var mouths: float
+	if candidate == coord:
+		# The tile underfoot is shared with whoever was standing on it when the
+		# turn began, whether or not they have since moved on. Reading live
+		# demand here lets a herd stepped later grow on forage an earlier herd
+		# already ate — one herd thriving and its neighbour declining purely
+		# because of the order they sit in the agents array. The wear charged in
+		# `_graze()` is settled against the same frozen census, so growth and
+		# wear agree about how many mouths were at the table.
+		mouths = world.forage_demand_at_turn_start(candidate)
+	else:
+		# A destination is hypothetical and live demand is the right read: it
+		# lets a herd see arrivals that have already moved there this turn.
+		mouths = world.forage_demand_at(candidate) + population
 	# The herd's own population is always in `mouths` and is never below the
 	# species minimum, so this cannot divide by zero.
 	return supported / maxf(mouths, species.minimum_population)
@@ -1002,26 +1025,40 @@ func test_a_herd_always_has_somewhere_worth_going() -> void:
 					"herd %d had nowhere to go on turn %d" % [herd.id, world.turn])
 
 
-func test_the_best_ground_within_reach_keeps_changing() -> void:
+func test_the_best_ground_within_reach_keeps_changing_for_every_herd() -> void:
 	# FR-8a, second half. This is the periodicity fix stated locally: if the best
 	# tile at a place never changes, nothing downstream ever has a reason to.
+	#
+	# Tracked per herd, because FR-8a and the done bar say *every* herd — and one
+	# lively region can rack up plenty of changes at an arbitrary watched tile
+	# while some other herd's local choice has settled permanently. Watching one
+	# tile nobody stands on would report a healthy number and prove nothing.
 	var world := _world()
-	var origin := _first_land_coord(world)
-
+	var previous := {}
+	var changes := {}
 	var seen := {}
-	var previous := Vector2i(-999, -999)
-	var changes := 0
+	for herd in world.herds():
+		previous[herd.id] = Vector2i(-999, -999)
+		changes[herd.id] = 0
+		seen[herd.id] = {}
+
 	for year in range(40):
 		for i in range(Seasons.TURNS_PER_YEAR):
 			world.advance_turn()
-		var best := _best_within(world, origin, 4)
-		seen[best] = true
-		if best != previous:
-			changes += 1
-		previous = best
+		for herd in world.herds():
+			var best := _best_within(world, herd.coord, herd.species.sense_range)
+			var places: Dictionary = seen[herd.id]
+			places[best] = true
+			if best != previous[herd.id]:
+				changes[herd.id] = int(changes[herd.id]) + 1
+			previous[herd.id] = best
 
-	assert_gt(changes, 5, "the best ground nearby changed repeatedly over forty years")
-	assert_gt(seen.size(), 2, "and it was not just alternating between two tiles")
+	for herd in world.herds():
+		assert_gt(int(changes[herd.id]), 3,
+				"herd %d's best reachable ground kept changing over forty years" % herd.id)
+		var places: Dictionary = seen[herd.id]
+		assert_gt(places.size(), 2,
+				"herd %d saw more than two distinct best tiles" % herd.id)
 
 
 func _best_within(world: WorldMap, origin: Vector2i, radius: int) -> Vector2i:
@@ -1315,7 +1352,7 @@ Check each against the ticket before opening the PR:
 - [ ] Each herd is charged only for its own share of a shared tile's grazing
 - [ ] Recovery is unconditional — no policy, structure or action required (AC3)
 - [ ] Options never close: no agent ever has zero viable tiles in reach (AC4)
-- [ ] The best reachable tile changes repeatedly rather than settling (AC5)
+- [ ] The best reachable tile changes repeatedly rather than settling, **for every herd** (AC5)
 - [ ] No absorbing states: a flattened region recovers fully (AC6)
 - [ ] The periodicity gate passes over 200 years (AC7)
 - [ ] Determinism holds in-process and across processes (AC8)
