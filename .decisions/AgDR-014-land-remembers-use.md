@@ -42,11 +42,18 @@ farms never deplete, fields never go fallow, and the land never changes. All
 three are `AgDR-009` behaving exactly as specified.
 
 **Measuring it.** A probe fingerprinting the world at each year's turn over 60
-years found it converging to a fixed annual cycle on three of four seeds — one of
-them fully static after year 43. Land with no memory means the forage field
-repeats exactly every year, so a deterministic world falls into a limit cycle.
-The symptom found by watching and the one found by measuring are the same
+years found it converging to a fixed annual cycle **on every seed tested** —
+three of four becoming completely static, doing precisely the same thing every
+year, and the slowest settling by year 17. Land with no memory means the forage
+field repeats exactly every year, so a deterministic world falls into a limit
+cycle. The symptom found by watching and the one found by measuring are the same
 decision.
+
+(The first run of that probe double-populated its herds and reported a milder
+result — settling on three of four seeds between years 9 and 43. Corrected
+2026-08-29 after the codex reviewer on PR #40 caught the duplicated call. The
+error understated the problem; the re-run is the table in the spec's Evidence
+section.)
 
 **Designing on top of it.** The practices design needs the best choice at a place
 to change over time, or adoption converges and the social layer goes inert.

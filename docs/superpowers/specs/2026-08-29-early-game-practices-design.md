@@ -121,23 +121,31 @@ world's variance structure rather than a validated model.
 
 Herd positions and populations fingerprinted at each year's turn, 60 years:
 
+> **Corrected 2026-08-29 after review.** The first run of this probe called
+> `Herd.populate()` on a world `WorldGen.generate()` had already populated, so it
+> measured a 28-herd world with 14 duplicate ids — and duplicate ids collide in
+> the fingerprint, making the result untrustworthy in both directions. Caught by
+> the codex reviewer on PR #40. The numbers below are the re-run against the
+> world the game actually builds. **The error understated the problem.**
+
 | seed | outcome |
 |---|---|
-| 20260815 | settles at year 9, repeats **every 2 years** |
-| 42 | settles at year 36, repeats every 4 years |
-| 7 | settles at year 43, repeats **every 1 year** — fully static |
-| 987654321 | no exact repeat within 60 years |
+| 20260815 | settles at year 7, repeats **every year** — fully static |
+| 987654321 | settles at year 17, repeats every 8 years |
+| 42 | settles at year 11, repeats **every year** — fully static |
+| 7 | settles at year 5, repeats **every year** — fully static |
 
-**Finding, and it invalidated an earlier assumption in this design: the world
-converges to a fixed cycle.** Three of four seeds become periodic, one within a
-decade.
+**Finding: the world converges to a fixed cycle, on every seed tested.** Three of
+four become *completely static* — doing precisely the same thing every year — and
+the slowest to settle takes 17 years. There is no seed on which this does not
+happen.
 
 It is structural rather than unlucky. `AgDR-009` makes forage a pure function of
 `(terrain, season)` and terrain never changes, so the forage field is exactly
 periodic with the year; herds are the only stateful thing, and a deterministic
 gradient-follower over a periodic field falls into a limit cycle.
 
-The fingerprint is exact string match over float populations, so it
+The fingerprint is exact string match over quantised populations, so it
 **under-reports** convergence — a world can be effectively static while failing
 the exact test. Convergence is at least as bad as measured.
 

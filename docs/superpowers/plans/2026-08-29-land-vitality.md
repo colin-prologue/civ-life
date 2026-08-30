@@ -24,6 +24,12 @@ This is **plan 1 of 2** for the spec's slice 1. It implements land vitality only
 - **Agents report quantities; nothing asks them what they are** (`AgDR-013`). `WorldMap` must not branch on agent kind. A herd knowing that it grazes is fine; `WorldMap` knowing it is a herd is not.
 - **`AgDR-009`'s surviving half:** forage is still *derived* from terrain and season, never integrated. `Seasons.FORAGE_BY_TERRAIN` remains the ceiling; vitality scales it. There must be no unbounded accumulator anywhere.
 - **No absorbing states.** Every vitality has a floor above zero and recovers from it unconditionally. No sequence of ordinary play may produce an irreversible loss of any tile's capacity.
+- **`WorldGen.generate()` already populates herds and a city.** It calls
+  `Herd.populate(map)` and `CityGen.populate(map)` at `sim/world_gen.gd:95-101`.
+  **Never call `Herd.populate()` on a generated world** — doing so gives 28 herds
+  with 14 duplicate ids, and duplicate ids collide in every fingerprint in this
+  repo. The first run of Probe B made exactly this mistake and reported a milder
+  convergence than the truth; it was caught in review, not by any test.
 - **Every commit must leave `./test.sh` exiting 0.**
 - Test files live at `test/test_*.gd` and extend `GutTest`. That glob is also the suite's own count check.
 - Run the suite with `./test.sh`. Run one file with `godot --headless -s addons/gut/gut_cmdln.gd -gtest=res://test/<file>.gd -gexit`.
@@ -539,7 +545,6 @@ Append to `test/test_vitality.gd`:
 ```gdscript
 func test_a_grazing_herd_wears_the_ground_it_stands_on() -> void:
 	var world := _world()
-	Herd.populate(world)
 	var herds := world.herds()
 	assert_gt(herds.size(), 0, "the world placed herds — otherwise this asserts nothing")
 	var watched: Herd = herds[0]
@@ -577,7 +582,6 @@ func test_grazing_does_not_wear_the_ground_for_cultivation() -> void:
 	# The per-use split, which is the entire point of AgDR-014. Ground eaten
 	# down by animals is still good ground to farm.
 	var world := _world()
-	Herd.populate(world)
 	var where: Vector2i = world.herds()[0].coord
 
 	for i in range(Seasons.TURNS_PER_YEAR):
@@ -810,7 +814,6 @@ func test_a_herd_always_has_somewhere_worth_going() -> void:
 	# the answer; it may never remove the question. If this fails, the constants
 	# are wrong — do not lower VIABLE to make it pass.
 	var world := _world()
-	Herd.populate(world)
 
 	for turn in range(Seasons.TURNS_PER_YEAR * 40):
 		world.advance_turn()
@@ -832,7 +835,6 @@ func test_the_best_ground_within_reach_keeps_changing() -> void:
 	# tile at a place never changes, nothing downstream ever has a reason to.
 	var world := _world()
 	var origin := _first_land_coord(world)
-	Herd.populate(world)
 
 	var seen := {}
 	var previous := Vector2i(-999, -999)
@@ -893,7 +895,7 @@ git commit -m "FR-8a: depletion moves the answer and never removes the question"
 - Modify: `test.sh`
 
 **Interfaces:**
-- Consumes: `WorldGen.generate`, `Herd.populate`, `WorldMap.advance_turn`, `WorldMap.vitality_data`
+- Consumes: `WorldGen.generate` (which populates herds itself — do not populate again), `WorldMap.advance_turn`, `WorldMap.vitality_data`
 
 This is the spec's primary acceptance test and the reason `AgDR-014` was written. The baseline being beaten was measured before any of this existed: worlds settled into a repeating annual cycle at year 9, 36 and 43 on three of four seeds, one of them fully static.
 
@@ -909,11 +911,11 @@ extends SceneTree
 ## Does the world still settle into a repeating cycle?
 ##
 ## `AgDR-014` exists because it did. Before land had any memory, a probe
-## fingerprinting each year found three of four seeds converging to a fixed
-## annual cycle — year 9, year 36, year 43 — with one world doing precisely the
-## same thing every year forever after. Forage was a pure function of terrain and
-## season, terrain never changed, and a deterministic gradient-follower over a
-## periodic field has nowhere to go but a limit cycle.
+## fingerprinting each year found **every seed** converging to a fixed annual
+## cycle — settling at years 7, 17, 11 and 5 — with three of the four doing
+## precisely the same thing every year forever after. Forage was a pure function
+## of terrain and season, terrain never changed, and a deterministic
+## gradient-follower over a periodic field has nowhere to go but a limit cycle.
 ##
 ## This is the gate that says that stopped being true. It prints one line per
 ## seed and exits non-zero if any world settles.
@@ -923,7 +925,12 @@ extends SceneTree
 ## jittering in the last decimal place will be reported as varying. If this gate
 ## passes, non-convergence is at least as good as it claims.
 
-const SEEDS := [20260815, 7]
+## Every seed Probe B measured, not a sample of them.
+##
+## All four settled in the baseline — years 7, 17, 11 and 5 — so a gate covering
+## a subset could pass while a documented converging seed still settles, and
+## `./test.sh` would report success with the primary acceptance criterion unmet.
+const SEEDS := [20260815, 987654321, 42, 7]
 const YEARS := 200
 
 
@@ -931,8 +938,7 @@ func _init() -> void:
 	var failed := false
 	for world_seed in SEEDS:
 		var world := WorldGen.generate(world_seed)
-		Herd.populate(world)
-
+	
 		var prints: Array[String] = []
 		for year in range(YEARS):
 			for i in range(Seasons.TURNS_PER_YEAR):
@@ -984,7 +990,13 @@ func _fingerprint(world: WorldMap) -> String:
 
 Run: `godot --headless -s tools/periodicity_check.gd`
 
-Expected: two `ok` lines, exit 0.
+Expected: four `ok` lines, exit 0.
+
+**Time it.** Four seeds x 200 years is 19,200 turns and this runs on every
+`./test.sh`. If it makes the suite unacceptably slow, reduce `YEARS` — never
+`SEEDS`. All four baseline seeds settled by year 17, so years are the cheap
+dimension and seed coverage is the one the gate exists for. State the measured
+runtime in the PR.
 
 If a seed still settles, **that is the finding this whole ticket exists to produce and it must be reported, not tuned around.** Report the year and period. `AgDR-014`'s own refutation clause covers this case: if land memory does not break the cycle, the honest next move is exogenous variation via #31, not adjusting these constants until the gate goes green.
 
@@ -1033,8 +1045,6 @@ Append to `test/test_vitality.gd`:
 func test_two_worlds_from_one_seed_wear_identically() -> void:
 	var a := _world()
 	var b := _world()
-	Herd.populate(a)
-	Herd.populate(b)
 
 	for i in range(Seasons.TURNS_PER_YEAR * 20):
 		a.advance_turn()
