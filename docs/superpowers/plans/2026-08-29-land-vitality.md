@@ -451,8 +451,11 @@ Append to `test/test_vitality.gd`:
 func test_worn_land_recovers_without_anyone_doing_anything() -> void:
 	# AgDR-014: recovery is unconditional. No policy, no structure, no player
 	# action. It is the world's behaviour, not a reward.
-	var world := _world()
-	var land := _first_land_coord(world)
+	#
+	# On a bare world for the same reason as the absorbing-states test below: a
+	# generated one has herds walking over the tile being watched.
+	var world := _bare_world()
+	var land := Vector2i.ZERO
 	world.set_vitality(land, Land.Use.GRAZE, Land.MIN_VITALITY)
 
 	for i in range(Seasons.TURNS_PER_YEAR):
@@ -463,7 +466,7 @@ func test_worn_land_recovers_without_anyone_doing_anything() -> void:
 
 
 func test_recovery_stops_at_full_and_does_not_overshoot() -> void:
-	var world := _world()
+	var world := _bare_world()
 	for i in range(200):
 		world.advance_turn()
 	for use in [Land.Use.GRAZE, Land.Use.CULTIVATE]:
@@ -471,10 +474,27 @@ func test_recovery_stops_at_full_and_does_not_overshoot() -> void:
 			assert_lte(value, Land.MAX_VITALITY + 0.0001, "nothing rises above full")
 
 
+## A world with terrain and nothing living in it.
+##
+## `WorldGen.generate()` places fourteen herds, a farm, a granary and citizens,
+## so a "deplete, stop, run forward" test built on it is not resting at all —
+## the farm holds its own tile near the continuous-use equilibrium and never
+## reaches the ceiling. Any test whose claim is about land left alone needs a
+## world where nothing is working it.
+func _bare_world(terrain := WorldGen.Terrain.GRASS) -> WorldMap:
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	for coord in grid.all_coords():
+		world.set_terrain(coord, terrain)
+	return world
+
+
 func test_no_absorbing_states_a_flattened_region_comes_all_the_way_back() -> void:
 	# FR-8b. Deplete as hard as the rules allow, stop, and assert full recovery.
 	# This is the assertion that separates this design from Manor Lords' deer.
-	var world := _world()
+	var world := _bare_world()
+	assert_eq(world.agents.size(), 0, "nothing is working this land")
+	assert_eq(world.nodes.size(), 0, "nothing is farming it either")
 	for coord in world.grid.all_coords():
 		world.set_vitality(coord, Land.Use.GRAZE, Land.MIN_VITALITY)
 		world.set_vitality(coord, Land.Use.CULTIVATE, Land.MIN_VITALITY)
@@ -571,7 +591,9 @@ git commit -m "Vitality recovers every turn, unconditionally, and never past ful
 
 **Interfaces:**
 - Consumes: `Land.depleted`, `Land.Use.GRAZE`, `WorldMap.forage_for_use`, `WorldMap.forage_for_use_by_index`
-- Produces: `WorldMap.draw_vitality(coord: Vector2i, use: int, intensity: float) -> void`
+- Produces:
+  - `WorldMap.draw_vitality(coord: Vector2i, use: int, intensity: float) -> void`
+  - `WorldMap.forage_demand_at_turn_start(coord: Vector2i) -> float`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -627,6 +649,31 @@ func test_standing_on_barren_ground_costs_nothing() -> void:
 			"a herd on ground that fed it nothing barely wore it")
 
 
+func test_two_herds_sharing_a_tile_do_not_overcharge_it() -> void:
+	# The share each herd draws is settled against the census as it stood before
+	# anything moved. Without that, a herd stepped after one that has already
+	# grazed and left divides by a smaller denominator and claims a share the
+	# tile was charged for a moment earlier — so a shared tile wears faster than
+	# a tile carrying the same total number of animals in one herd.
+	var shared := _bare_world()
+	var solo := _bare_world()
+	var where := Vector2i.ZERO
+	shared.add_agent(Herd.new(1, where, Species.grazer(), 20.0))
+	shared.add_agent(Herd.new(2, where, Species.grazer(), 20.0))
+	solo.add_agent(Herd.new(1, where, Species.grazer(), 40.0))
+
+	for i in range(Seasons.TURNS_PER_SEASON):
+		shared.advance_turn()
+		solo.advance_turn()
+
+	assert_almost_eq(
+		shared.vitality_at(where, Land.Use.GRAZE),
+		solo.vitality_at(where, Land.Use.GRAZE),
+		0.02,
+		"forty animals wear a tile the same whether they arrived as one herd or two"
+	)
+
+
 func test_grazing_does_not_wear_the_ground_for_cultivation() -> void:
 	# The per-use split, which is the entire point of AgDR-014. Ground eaten
 	# down by animals is still good ground to farm.
@@ -658,7 +705,54 @@ Expected: `test_a_grazing_herd_wears_the_ground_it_stands_on` fails — vitality
 
 - [ ] **Step 3: Add `draw_vitality` and point grazing at it**
 
-In `sim/world_map.gd`, next to `set_vitality`:
+In `sim/world_map.gd`, first add the demand snapshot. `Herd.step()` grazes and
+*then* migrates, so by the time a second herd on the same tile computes its
+share, the first one may already have left and been removed from the live
+census — letting the latecomer claim a share of forage the tile has already been
+charged for. Sharing has to be settled against the census as it stood before
+anything moved:
+
+```gdscript
+## The per-tile forage census as it stood at the start of this turn, before any
+## agent grazed or moved.
+##
+## `Herd.step()` grazes and then migrates, so the live census changes underneath
+## the agents still to be stepped. A herd dividing a tile's forage by the live
+## demand would see earlier herds vanish and claim their share as well, and the
+## tile would be charged for more than it grew. Sharing is settled against the
+## world as it was when the turn began.
+##
+## A copy per turn rather than a second running total: one `duplicate()` of an
+## array the map already keeps, against a bookkeeping path that would have to
+## stay correct through every future mutator.
+var _forage_demand_at_turn_start: PackedFloat32Array = PackedFloat32Array()
+
+
+## What this tile's total forage demand was before anything moved this turn.
+func forage_demand_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read demand off the map")
+	if i >= _forage_demand_at_turn_start.size():
+		return _forage_demand[i]
+	return _forage_demand_at_turn_start[i]
+```
+
+and take the snapshot at the top of `advance_turn()`, before nodes produce:
+
+```gdscript
+func advance_turn() -> int:
+	turn += 1
+	_recompute_forage()
+	_forage_demand_at_turn_start = _forage_demand.duplicate()
+	for node in nodes:
+		node.produce(self)
+	for agent in agents:
+		agent.step(self)
+	_recover_vitality()
+	return turn
+```
+
+Then, next to `set_vitality`:
 
 ```gdscript
 ## Report that this tile was worked, for this use, at `intensity` in 0..1.
@@ -732,8 +826,14 @@ func _graze(world: WorldMap) -> void:
 	# herds — flooring exactly the popular tiles the periodicity experiment is
 	# measuring. Charge this herd for its own share: what it wanted, or its
 	# proportional cut of what was there when that is less.
+	# Third mistake, and the one that survived two reviews: the denominator has
+	# to be the census as it stood before anything moved. `step()` grazes and
+	# then migrates, so a herd stepped later sees earlier herds already gone from
+	# the live census, divides by a smaller number, and claims a share the tile
+	# was charged for a moment ago. Shares must sum to at most one, so they are
+	# settled against a frozen census.
 	var available := world.forage_for_use(coord, Land.Use.GRAZE)
-	var mouths := maxf(world.forage_demand_at(coord), species.minimum_population)
+	var mouths := maxf(world.forage_demand_at_turn_start(coord), species.minimum_population)
 	var my_share := available * (forage_demand() / mouths)
 	var my_want := population * species.consumption_per_head
 	world.draw_vitality(coord, Land.Use.GRAZE, minf(my_share, my_want) / Seasons.MAX_FORAGE)
@@ -743,7 +843,7 @@ func _graze(world: WorldMap) -> void:
 
 Run: `godot --headless -s addons/gut/gut_cmdln.gd -gtest=res://test/test_vitality.gd -gexit`
 
-Expected: 11 tests passing.
+Expected: 12 tests passing.
 
 - [ ] **Step 5: Run the full suite and expect fallout**
 
@@ -834,7 +934,7 @@ func produce(world: WorldMap) -> void:
 
 Run: `godot --headless -s addons/gut/gut_cmdln.gd -gtest=res://test/test_vitality.gd -gexit`
 
-Expected: 13 tests passing.
+Expected: 14 tests passing.
 
 - [ ] **Step 5: Run the full suite and expect fallout**
 
@@ -1021,7 +1121,7 @@ func _init() -> void:
 		var settled_at := -1
 		for i in range(prints.size()):
 			for j in range(i + 1, prints.size()):
-				if prints[i] == prints[j]:
+				if prints[i] == prints[j] and _confirms(prints, i, j - i):
 					settled_at = i
 					period = j - i
 					break
@@ -1037,6 +1137,27 @@ func _init() -> void:
 					% [world_seed, YEARS, prints.size()])
 
 	quit(1 if failed else 0)
+
+
+## A single pair of equal fingerprints is not a cycle.
+##
+## These digests are lossy — populations and vitality are quantised, and each
+## vitality row is folded modulo a prime — so two sampled years can collide while
+## the world goes on diverging afterwards. Acting on one match would let the
+## primary acceptance gate report a false convergence and fail `./test.sh` on a
+## world that is behaving correctly, which is the worse direction for this gate
+## to be wrong in: a false alarm gets tuned away, and tuning away a real one is
+## how the finding this record exists for gets lost.
+##
+## A candidate period is only accepted if every remaining sample repeats it.
+static func _confirms(prints: Array, start: int, period: int) -> bool:
+	var checked := 0
+	for k in range(start + period, prints.size()):
+		if prints[k] != prints[k - period]:
+			return false
+		checked += 1
+	# Require the claim to rest on more than the pair that suggested it.
+	return checked >= period * 2
 
 
 ## Herds and land together. Herd state alone was what the original probe hashed;
@@ -1063,6 +1184,10 @@ func _fingerprint(world: WorldMap) -> String:
 Run: `godot --headless -s tools/periodicity_check.gd`
 
 Expected: four `ok` lines, exit 0.
+
+Note the gate now requires a candidate period to be confirmed by every remaining
+sample before it is called a cycle, so a lossy-fingerprint collision cannot fail
+the suite on a world that is still moving.
 
 **Time it.** Four seeds x 200 years is 19,200 turns and this runs on every
 `./test.sh`. If it makes the suite unacceptably slow, reduce `YEARS` — never
