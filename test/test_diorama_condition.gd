@@ -132,3 +132,50 @@ func test_a_building_with_levels_to_spare_actually_loses_parts() -> void:
 			assert_lt(got.size(), parts.size(),
 					"%s id %d: %d distinct needs and yet nothing was lost at 0.05"
 					% [style_name, id, distinct.size()])
+
+
+func test_every_style_has_a_ladder_to_decay_down() -> void:
+	# The census that motivated this design, standing as a test. Under the old
+	# height-band tags residential emitted 0% `base` and stepped 0% `upper`,
+	# which meant neither had an ORDER to lose things in — they went from whole
+	# to gone. Asserting "has a part at its minimum need" would be vacuous, so
+	# assert spread instead.
+	for style_name: String in _styles():
+		var levels := {}
+		var lo := INF
+		var hi := -INF
+		for id in range(24):
+			for n in _needs(DioramaCompose.build(_styles()[style_name], SEED, id)):
+				levels[snappedf(n, 0.001)] = true
+				lo = minf(lo, n)
+				hi = maxf(hi, n)
+		assert_gt(levels.size(), 2,
+				"%s has %d distinct need levels over 24 ids — too few to decay"
+				% [style_name, levels.size()])
+		assert_gt(hi - lo, 0.2,
+				"%s spans only %f in need; its parts all fall together"
+				% [style_name, hi - lo])
+
+
+func test_every_style_loses_something_before_it_loses_everything() -> void:
+	# The failure mode stepped had: no ordering, so no rung of the ladder shows
+	# a partial building. At least one of the intent's five rungs must leave a
+	# style strictly between whole and its floor. This is a DIFFERENT property
+	# from test_a_building_with_levels_to_spare_actually_loses_parts above: that
+	# test only asserts something is LOST by rung 0.05 (which a collapse
+	# straight to zero parts would also satisfy), restricted to buildings with
+	# >=3 distinct needs. This one requires a rung where the survivor count is
+	# strictly between 0 and the full count — an actual partial ruin — checked
+	# across every rung and with no distinct-needs floor, so it also covers the
+	# two-distinct-need residential ids that the other test skips.
+	for style_name: String in _styles():
+		var partial := false
+		for id in range(8):
+			var parts := DioramaCompose.build(_styles()[style_name], SEED, id)
+			for rung in RUNGS:
+				var got := DioramaCondition.filter(parts, rung).size()
+				if got > 0 and got < parts.size():
+					partial = true
+		assert_true(partial,
+				"%s is never partially ruined at any rung — it goes from whole to gone"
+				% style_name)
