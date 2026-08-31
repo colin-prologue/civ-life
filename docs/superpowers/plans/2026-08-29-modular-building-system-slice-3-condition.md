@@ -62,6 +62,18 @@ census numbers that motivate every choice live there.
 
 ### Task 1: `need` on a mass, and the floor that threads through ctx
 
+> **Superseded — read this first.** The single inherited `need_floor` this task
+> specifies shipped, then failed twice on the DISTRIBUTION of levels and was
+> replaced by an inherited BAND (`ctx["need_lo"]` / `ctx["need_hi"]`, the
+> sub-range of `[ENDURE_LO, ENDURE_HI]` a node and its descendants may occupy).
+> A stack partitions its band across its children in order; a row hands every
+> child the band whole; a ring draws once inside its band for its whole subtree.
+> See `_draw_need` in `game/diorama/compose.gd` for the rule and both failures.
+> The strict-read rationale below still applies, to the band keys instead.
+>
+> Tasks 1-3 are left as written on purpose: they record what was attempted, and
+> the two failed rules are worth keeping visible.
+
 **Files:**
 - Modify: `game/diorama/compose.gd` — `new_ctx`, `resolve`, `_mass`
 - Test: `test/test_diorama_compose.gd`
@@ -202,6 +214,18 @@ git commit -m "compose: a mass draws its endurance, and inherits a floor"
 
 ### Task 2: A stack's running maximum is the load path
 
+> **Superseded — read this first.** The single inherited `need_floor` this task
+> specifies shipped, then failed twice on the DISTRIBUTION of levels and was
+> replaced by an inherited BAND (`ctx["need_lo"]` / `ctx["need_hi"]`, the
+> sub-range of `[ENDURE_LO, ENDURE_HI]` a node and its descendants may occupy).
+> A stack partitions its band across its children in order; a row hands every
+> child the band whole; a ring draws once inside its band for its whole subtree.
+> See `_draw_need` in `game/diorama/compose.gd` for the rule and both failures.
+> The strict-read rationale below still applies, to the band keys instead.
+>
+> Tasks 1-3 are left as written on purpose: they record what was attempted, and
+> the two failed rules are worth keeping visible.
+
 **Files:**
 - Modify: `game/diorama/compose.gd` — `_stack`
 - Test: `test/test_diorama_compose.gd`
@@ -331,6 +355,18 @@ git commit -m "compose: a stack's running maximum is its load path"
 ---
 
 ### Task 3: Rows stay independent, rings fall whole
+
+> **Superseded — read this first.** The single inherited `need_floor` this task
+> specifies shipped, then failed twice on the DISTRIBUTION of levels and was
+> replaced by an inherited BAND (`ctx["need_lo"]` / `ctx["need_hi"]`, the
+> sub-range of `[ENDURE_LO, ENDURE_HI]` a node and its descendants may occupy).
+> A stack partitions its band across its children in order; a row hands every
+> child the band whole; a ring draws once inside its band for its whole subtree.
+> See `_draw_need` in `game/diorama/compose.gd` for the rule and both failures.
+> The strict-read rationale below still applies, to the band keys instead.
+>
+> Tasks 1-3 are left as written on purpose: they record what was attempted, and
+> the two failed rules are worth keeping visible.
 
 **Files:**
 - Modify: `game/diorama/compose.gd` — `_row`, `_ring`

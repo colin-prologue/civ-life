@@ -155,6 +155,26 @@ func test_every_style_has_a_ladder_to_decay_down() -> void:
 		assert_gt(hi - lo, 0.2,
 				"%s spans only %f in need; its parts all fall together"
 				% [style_name, hi - lo])
+		# Both assertions above aggregate over 24 ids, and that hides the exact
+		# failure this test is named for. Give every part of a building ONE need
+		# drawn from the full band and the `levels` set still fills with 24
+		# distinct values across the ids, and the spread is still wide — while
+		# every individual building goes from whole straight to gone. A ladder
+		# has to exist WITHIN a building, so assert it there too.
+		#
+		# `mini(parts, 3)` rather than a flat 3: residential legitimately
+		# samples down to a single unit, and a two-part building has two levels
+		# and no third to give. Three is where condition.gd's standing-fragment
+		# floor starts leaving something above it, so it is the point at which
+		# demanding a ladder is meaningful rather than lucky.
+		for id in range(8):
+			var parts := DioramaCompose.build(_styles()[style_name], SEED, id)
+			var distinct := {}
+			for n in _needs(parts):
+				distinct[snappedf(n, 0.000001)] = true
+			assert_gte(distinct.size(), mini(parts.size(), 3),
+					"%s id %d: %d parts collapsed onto %d distinct need(s)"
+					% [style_name, id, parts.size(), distinct.size()])
 
 
 func test_every_style_loses_something_before_it_loses_everything() -> void:

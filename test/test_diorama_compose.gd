@@ -811,6 +811,35 @@ func test_a_row_reports_the_need_of_its_weakest_child() -> void:
 			"row under-reported how soon it fails")
 
 
+func test_a_row_child_that_emitted_nothing_does_not_say_when_the_row_fails() -> void:
+	# A row reports the need of its weakest CHILD — but a child that emitted
+	# nothing has no weakness to report. It still DREW a need, and folding that
+	# draw in makes everything resting on the row fail as early as a part that
+	# was never rendered.
+	#
+	# A zero-count ring is the cleanest such child, and the reason this needs
+	# its own test rather than riding on the stack's: a zero-height mass returns
+	# the bottom of its band, which is harmless in a row because every sibling
+	# shares that band. A ring goes through the full composite path and returns
+	# a real drawn need with an empty parts list. Measured at id 4 without the
+	# guard: the row's one real part needs 0.4075, the phantom ring reports
+	# 0.8497, and the row claims to fail more than twice as early as it does.
+	var phantom := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("west", 0.4, 0.6, 1.6),
+		{"ring": {"name": "phantom", "radius": 1.5, "from": 0.0, "to": PI,
+				"count": 0,
+				"of": {"mass": {"name": "vs", "kind": "box", "w": 0.4,
+						"d": 0.6, "role": "plaster"}}}}]}}
+	for id in range(24):
+		var out := DioramaCompose.resolve(phantom,
+				DioramaCompose.new_ctx(SEED, id))
+		assert_eq(out["parts"].size(), 1,
+				"id %d: the zero-count ring should emit nothing" % id)
+		assert_almost_eq(out["need"], out["parts"][0]["need"], 1e-6,
+				"id %d: a child that emitted nothing said when the row fails"
+				% id)
+
+
 func test_parts_no_longer_carry_a_tag() -> void:
 	# The four-way height/kind partition is gone, replaced by `need`. Asserted
 	# so a merge cannot quietly reintroduce a field nothing maintains.

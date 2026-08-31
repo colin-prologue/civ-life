@@ -135,10 +135,21 @@ static func new_ctx(seed: int, building_id: int) -> Dictionary:
 ##
 ## Both failures are about the DISTRIBUTION of levels, not about their ordering.
 ## Partitioning the range structurally fixes both at once: child i's slice lies
-## entirely above child i-1's, so `need` strictly increases up a stack whatever
-## the draws do, AND the levels are evenly spread by construction, so a five-tier
-## building sheds roughly one tier per condition rung instead of everything at
-## once.
+## entirely above child i-1's, so `need` rises up a stack for ANY draws rather
+## than for lucky ones, AND the levels are evenly spread by construction, so a
+## five-tier building sheds roughly one tier per condition rung instead of
+## everything at once.
+##
+## Precisely: non-decreasing always, and strictly increasing given a band of
+## nonzero width. Two things it rests on, neither of them local to this
+## function. `channel()` bottoms out in DioramaHexKit.h01, which is half-open —
+## `float(h & 0xFFFFFF) / float(0x1000000)`, so it reaches 0.0 but never 1.0. If
+## that ever became closed, a child drawing exactly 1.0 would land on the band
+## endpoint it SHARES with the child above, the two would tie, and the ordering
+## guarantee would die without a single test noticing. And a band of zero width
+## — reachable by nesting deeply enough that a slice rounds flat — ties every
+## child in it by construction, which is why the load-path test asserts `>=`
+## and not `>`.
 ##
 ## The price, chosen deliberately: a node's durability now depends partly on HOW
 ## MANY siblings it has. "A part's endurance is its own" is no longer quite true
@@ -288,9 +299,10 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# A part can never outlive what it rests on, so the stack cuts its inherited
 	# band into one slice per child, bottom child lowest: child i's whole
 	# subtree lives in [lo + span*i/n, lo + span*(i+1)/n] for n children. Order
-	# is then a structural guarantee — no draw can violate it — and the levels
-	# come out evenly spread instead of piling against the ceiling. The
-	# vocabulary already says what rests on what, so no style author states it.
+	# is then structural rather than arithmetical — no draw can violate it, and
+	# only a zero-width band can flatten it into a tie — and the levels come out
+	# evenly spread instead of piling against the ceiling. The vocabulary
+	# already says what rests on what, so no style author states it.
 	var band_lo: float = ctx["need_lo"]
 	var band_hi: float = ctx["need_hi"]
 	var band_span := band_hi - band_lo
