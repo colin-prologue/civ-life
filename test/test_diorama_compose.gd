@@ -643,14 +643,28 @@ func test_two_ids_draw_different_needs() -> void:
 	assert_true(differ, "twelve ids all drew the same need")
 
 
-func test_a_mass_never_outlives_the_floor_it_was_handed() -> void:
+func test_a_mass_never_outlives_the_band_it_was_handed() -> void:
+	# The load-path property, stated against the band a node inherits rather
+	# than against a single floor. A support hands its dependants a range whose
+	# bottom sits at or above its own, so a mass that draws anywhere inside the
+	# range it was given cannot outlive what it rests on.
 	var ctx := DioramaCompose.new_ctx(SEED, 7)
-	ctx["need_floor"] = 0.95
+	ctx["need_lo"] = 0.72
+	ctx["need_hi"] = 0.86
 	var out := DioramaCompose.resolve(_box("solo", 2.0, 2.0, 2.0), ctx)
-	assert_almost_eq(out["parts"][0]["need"], 0.95, 1e-6,
-			"a floor above the draw band should win")
-	assert_almost_eq(out["need"], 0.95, 1e-6,
+	var need: float = out["parts"][0]["need"]
+	assert_true(need >= 0.72, "need %f fell below the band it was handed" % need)
+	assert_true(need <= 0.86, "need %f rose above the band it was handed" % need)
+	assert_almost_eq(out["need"], need, 1e-6,
 			"the node should report the need it settled on")
+	# A band with no width at all — the degenerate case a deep stack approaches
+	# — must land ON it, not interpolate off either end of it.
+	var pinned := DioramaCompose.new_ctx(SEED, 7)
+	pinned["need_lo"] = 0.95
+	pinned["need_hi"] = 0.95
+	var out2 := DioramaCompose.resolve(_box("solo", 2.0, 2.0, 2.0), pinned)
+	assert_almost_eq(out2["parts"][0]["need"], 0.95, 1e-6,
+			"an empty band should pin the draw to its one value")
 
 
 func test_every_part_of_a_ring_carries_need() -> void:
@@ -694,20 +708,52 @@ func test_a_stack_reports_the_need_of_its_weakest_link() -> void:
 			"stack under-reported how soon it fails")
 
 
-func test_a_stack_child_that_resolves_away_does_not_raise_the_floor() -> void:
-	# A zero-height mass emits nothing. If it still raised the running floor,
-	# a style could make everything above it fragile by declaring a part it
-	# never renders — an invisible cause for a visible problem.
-	var with_ghost := {"stack": {"name": "t", "children": [
-		_box("a", 2.0, 2.0, 2.0), _box("ghost", 2.0, 2.0, 0.0),
-		_box("c", 2.0, 2.0, 2.0)]}}
-	var without := {"stack": {"name": "t", "children": [
-		_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0)]}}
-	var a := DioramaCompose.build(with_ghost, SEED, 5)
-	var b := DioramaCompose.build(without, SEED, 5)
-	assert_eq(a.size(), 2, "the zero-height child should emit nothing")
-	assert_almost_eq(a[1]["need"], b[1]["need"], 1e-6,
-			"a child that emitted nothing changed what stacks above it")
+func test_a_stack_child_that_resolves_away_stays_out_of_the_load_path() -> void:
+	# A zero-height mass emits nothing, and the property this once asserted —
+	# that the survivors get IDENTICAL needs with and without it — is not
+	# available under banding and is not being quietly dropped. A stack slices
+	# its band by DECLARED child count, so a ghost takes a third of the band
+	# where there would otherwise be a half, which narrows every sibling's slice
+	# and shifts the ones above it upward. `c` at index 2 of 3 draws from
+	# [0.633, 0.900] where index 1 of 2 would draw from [0.500, 0.900]: strictly
+	# more fragile for every draw but u = 1. That is the same sibling-count
+	# dependence banding accepts for real siblings, arriving through a sibling
+	# that renders nothing — visible only in a style that declares a part it
+	# never emits, which is already a thing to fix in the style.
+	#
+	# What survives, and is what actually protects the load path:
+	for id in range(24):
+		var with_ghost := {"stack": {"name": "t", "children": [
+			_box("a", 2.0, 2.0, 2.0), _box("ghost", 2.0, 2.0, 0.0),
+			_box("c", 2.0, 2.0, 2.0)]}}
+		var without := {"stack": {"name": "t", "children": [
+			_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0)]}}
+		var a := DioramaCompose.build(with_ghost, SEED, id)
+		var b := DioramaCompose.build(without, SEED, id)
+		assert_eq(a.size(), 2, "the zero-height child should emit nothing")
+		# 1. It does not break the ordering of the siblings it sits between.
+		assert_true(a[1]["need"] > a[0]["need"],
+				"id %d: a ghost broke the order of its siblings (%f, %f)"
+				% [id, a[0]["need"], a[1]["need"]])
+		# 2. It never makes what is BELOW it more fragile — a slice can only
+		#    narrow toward its own floor, never lift off it.
+		assert_true(a[0]["need"] <= b[0]["need"] + 1e-6,
+				"id %d: a ghost weakened the sibling under it (%f vs %f)"
+				% [id, a[0]["need"], b[0]["need"]])
+	# 3. It never speaks for when the stack itself fails. A ghost on TOP would
+	#    otherwise report its own slice floor — above every real part's need —
+	#    and everything resting on the stack would inherit a failure point that
+	#    corresponds to nothing rendered.
+	var ghost_on_top := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0),
+		_box("ghost", 2.0, 2.0, 0.0)]}}
+	var out := DioramaCompose.resolve(ghost_on_top,
+			DioramaCompose.new_ctx(SEED, 5))
+	var worst := -INF
+	for p: Dictionary in out["parts"]:
+		worst = maxf(worst, p["need"])
+	assert_almost_eq(out["need"], worst, 1e-6,
+			"a ghost on top said when the stack fails")
 
 
 func _arch() -> Dictionary:

@@ -107,35 +107,53 @@ static func zero_frame(xf: Transform3D) -> Dictionary:
 
 
 static func new_ctx(seed: int, building_id: int) -> Dictionary:
-	return {"seed": seed, "id": building_id, "path": "", "need_floor": 0.0,
+	return {"seed": seed, "id": building_id, "path": "",
+			"need_lo": ENDURE_LO, "need_hi": ENDURE_HI,
 			"frame": zero_frame(Transform3D.IDENTITY)}
 
 
-## A node's endurance: its own draw, interpolated into the headroom left above
-## the floor its support imposes. A part never outlives what it rests on, so the
-## floor is the bottom of the band this node draws from — not a clamp applied
-## afterward.
+## A node's endurance, drawn inside the BAND it inherits: the sub-range of
+## [ENDURE_LO, ENDURE_HI] this node and everything under it may occupy. A stack
+## partitions its band across its children in order, a row hands every child the
+## band whole, and a mass or a ring draws once inside whatever it was given.
 ##
-## That distinction is the whole point. The previous rule was
-## `maxf(floor, ENDURE_LO + (ENDURE_HI - ENDURE_LO) * u)`, which COLLAPSES a
-## level whenever the draw lands below the floor: the two come out equal and the
-## part falls at the same instant as its support. Deeper stacks carry higher
-## floors, so they collapsed more levels — tall buildings ruined in FEWER steps
-## than short ones, exactly backwards. It cost half the census: 16 of 32 sampled
-## buildings ended with two or fewer distinct needs, and condition.gd's
-## standing-fragment floor then clamps a two-level building to its own maximum,
-## so it kept every part at every condition and never ruined at all.
+## Inheriting a band replaces inheriting a floor, and it is the third rule tried
+## here. Both predecessors threaded a single running floor up the load path and
+## both distributed the levels badly, in opposite directions:
 ##
-## Interpolating instead means a child's need is strictly above its support's
-## for any nonzero draw, so a deep stack sheds fine-grained from the top.
+##   1. `need = maxf(floor, ENDURE_LO + (ENDURE_HI - ENDURE_LO) * u)` COLLAPSED a
+##      level whenever the draw landed below the floor — the part then fell at
+##      the same instant as its support. Deeper stacks carry higher floors, so
+##      they collapsed MORE levels and a tall building ruined in FEWER steps than
+##      a short one. 16 of 32 census buildings never ruined at all.
+##   2. `lo = maxf(floor, ENDURE_LO); need = lo + (ENDURE_HI - lo) * u` fixed the
+##      collapse but stick-breaks against the ceiling: each level eats a fraction
+##      of the REMAINING headroom, so the sequence converges on ENDURE_HI. Median
+##      need came out at 0.842 with 59% of parts above 0.8, and survivor counts
+##      at the bottom three condition rungs were identical — the ladder collapsed
+##      at the top of the band instead of at the bottom.
 ##
-## `hi` is clamped up to `lo` for the case a caller hands in a floor above
-## ENDURE_HI: the headroom is then empty and the node inherits the floor exactly,
-## rather than interpolating DOWN a negative span and outliving its own support.
+## Both failures are about the DISTRIBUTION of levels, not about their ordering.
+## Partitioning the range structurally fixes both at once: child i's slice lies
+## entirely above child i-1's, so `need` strictly increases up a stack whatever
+## the draws do, AND the levels are evenly spread by construction, so a five-tier
+## building sheds roughly one tier per condition rung instead of everything at
+## once.
+##
+## The price, chosen deliberately: a node's durability now depends partly on HOW
+## MANY siblings it has. "A part's endurance is its own" is no longer quite true
+## — a tier in a four-tier stack is more fragile than the same tier in a
+## two-tier one, and a declared-but-unrendered sibling still consumes a slice.
+## That is what an even ladder costs.
+##
+## A reversed band is a caller bug, not something to swap silently — same
+## argument as the `lo <= hi` assert in sample().
 static func _draw_need(ctx: Dictionary, path: String) -> float:
 	var u := channel(ctx["seed"], ctx["id"], path, "endure")
-	var lo := maxf(ctx["need_floor"], ENDURE_LO)
-	var hi := maxf(lo, ENDURE_HI)
+	var lo: float = ctx["need_lo"]
+	var hi: float = ctx["need_hi"]
+	assert(lo <= hi, "'%s' inherited a reversed need band [%f, %f]"
+			% [path, lo, hi])
 	return lo + (hi - lo) * u
 
 
@@ -150,7 +168,7 @@ static func resolve(node: Dictionary, ctx: Dictionary) -> Dictionary:
 		return _ring(node["ring"], ctx)
 	assert(false, "unknown node type: %s" % str(node.keys()))
 	return {"parts": [], "frame": zero_frame(ctx["frame"]["xf"]),
-			"need": ctx["need_floor"]}
+			"need": ctx["need_lo"]}
 
 
 static func _path_of(ctx: Dictionary, n: Dictionary) -> String:
@@ -171,10 +189,13 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var w := sample(n.get("w"), seed, id, path, "w", inherited.x) * oversize
 	var d := sample(n.get("d"), seed, id, path, "d", inherited.y) * oversize
 	var h := sample(n.get("h"), seed, id, path, "h", 0.0)
-	# A node that emits nothing must not raise the floor for whatever stacks
-	# above it — it reports the floor unchanged rather than a drawn need.
+	# A node that emits nothing reports the bottom of its own band rather than a
+	# drawn need. Nothing reads it: the combinators fold `need` only over
+	# children that actually emitted parts, so a ghost cannot make what stacks
+	# above the WHOLE node fail sooner. It does still consume a band slice —
+	# see _draw_need for why that is the accepted cost.
 	if w <= EPS or d <= EPS or h <= EPS:
-		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_floor"]}
+		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_lo"]}
 	var kind: String = n.get("kind", "box")
 	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
 	# the renderer. Reporting (w, d) would describe geometry that does not
@@ -182,9 +203,9 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if kind == "prism" or kind == "cone":
 		d = w
 	var params := _params_for(kind, n, w, d, h, seed, id, path)
-	# A part never outlives the floor it inherits: whatever it stands on already
-	# needs at least this much condition to still be there. _draw_need folds
-	# that floor in as the bottom of the band, so there is nothing to clamp here.
+	# A part never outlives what it rests on: its band's floor already sits at or
+	# above the top of the band its support drew from, so there is nothing to
+	# clamp here.
 	var need := _draw_need(ctx, path)
 	var part := {"kind": kind, "xf": xf, "params": params,
 			"color": Color.MAGENTA, "need": need, "y": 0.0,
@@ -263,23 +284,38 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# stating a width.
 	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
 			"setback", 0.0)
-	# A part can never outlive what it rests on, so each child inherits the
-	# need of the one below as a floor. Carrying that maximum down the loop IS
-	# the load path — the vocabulary already says what rests on what, so no
-	# style author states it.
-	var running: float = ctx["need_floor"]
+	# The load path, expressed as a partition rather than as a running maximum.
+	# A part can never outlive what it rests on, so the stack cuts its inherited
+	# band into one slice per child, bottom child lowest: child i's whole
+	# subtree lives in [lo + span*i/n, lo + span*(i+1)/n] for n children. Order
+	# is then a structural guarantee — no draw can violate it — and the levels
+	# come out evenly spread instead of piling against the ceiling. The
+	# vocabulary already says what rests on what, so no style author states it.
+	var band_lo: float = ctx["need_lo"]
+	var band_hi: float = ctx["need_hi"]
+	var band_span := band_hi - band_lo
+	var slices := children.size()
+	var i := 0
+	# What rests on this stack fails when ANY part of it fails, so the stack
+	# reports its maximum. With nothing emitted there is nothing to report and
+	# the bottom of its own band is the honest answer; the parent ignores it.
+	var worst: float = band_lo
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
-				"need_floor": running,
+				"need_lo": band_lo + band_span * i / float(slices),
+				"need_hi": band_lo + band_span * (i + 1) / float(slices),
 				"frame": {"xf": base_xf.translated_local(
 						Vector3(centre.x, y, centre.y)),
 						"footprint": carried, "height": 0.0}}
+		i += 1
 		var out := resolve(child, child_ctx)
 		parts.append_array(out["parts"])
-		# A child that resolved to nothing returns the floor it was handed
-		# unchanged, so raising the running maximum here — before the height
-		# check below — never lets a ghost part inflate what stacks above it.
-		running = maxf(running, out["need"])
+		# Only children that actually emitted something say when this node
+		# fails. A style declaring a part it never renders would otherwise make
+		# everything resting on the stack fail sooner — an invisible cause for a
+		# visible problem.
+		if not out["parts"].is_empty():
+			worst = maxf(worst, out["need"])
 		var f: Dictionary = out["frame"]
 		y += f["height"]
 		if f["height"] > EPS:
@@ -294,9 +330,9 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 			bounds.add(centre, f["footprint"])
 			carried = f["footprint"] * (1.0 - setback)
 	if bounds.is_empty():
-		return {"parts": parts, "frame": zero_frame(base_xf), "need": running}
+		return {"parts": parts, "frame": zero_frame(base_xf), "need": worst}
 	var mid := bounds.mid()
-	return {"parts": parts, "need": running,
+	return {"parts": parts, "need": worst,
 			"frame": {"xf": base_xf.translated_local(Vector3(mid.x, 0, mid.y)),
 					"footprint": bounds.span(), "height": y}}
 
@@ -380,20 +416,23 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# Resolve every child at the row's own origin first, then lay them out.
 	var resolved: Array = []
 	for child in children:
-		# Every child inherits the same, unchanged floor — a row does not carry
-		# a running maximum down its children the way a stack does, because
-		# siblings do not rest on one another. Each draws its own need against
-		# only what the ROW itself was handed.
+		# Every child inherits the row's WHOLE band, unsliced — a row does not
+		# partition it the way a stack does, because siblings do not rest on one
+		# another. They are free to land anywhere in it, in any order relative to
+		# each other, which is what lets a colonnade lose columns from the middle
+		# rather than from one end.
 		var child_ctx := {"seed": seed, "id": id, "path": path,
-				"need_floor": ctx["need_floor"],
+				"need_lo": ctx["need_lo"], "need_hi": ctx["need_hi"],
 				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
 		resolved.append(resolve(child, child_ctx))
 	# Siblings stand beside one another, so one falling says nothing about the
-	# next — but whatever rests on the ROW fails when any of them does.
-	var need: float = ctx["need_floor"]
+	# next — but whatever rests on the ROW fails when any of them does. Children
+	# that emitted nothing are not counted, for the same reason as in _stack.
+	var need: float = ctx["need_lo"]
 	for out: Dictionary in resolved:
-		need = maxf(need, out["need"])
+		if not out["parts"].is_empty():
+			need = maxf(need, out["need"])
 	var cursor := 0.0
 	var prev_half := 0.0
 	var prev_centre := 0.0     # previous child's centre, in ROW space
@@ -479,8 +518,10 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var template: Dictionary = n.get("of", {})
 	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
 	# Cohesive, unlike a row: an arch is not N independent stones. Remove one
-	# voussoir and the arc collapses, so the ring draws once and every part it
-	# emits carries that same need.
+	# voussoir and the arc collapses, so the ring draws ONCE inside its own band
+	# and imposes that value on every part in its subtree — the voussoirs do not
+	# draw at all. A row would hand each child the band and let them scatter
+	# through it; that is exactly the difference between a colonnade and an arch.
 	var need := _draw_need(ctx, path)
 	var parts: Array = []
 	var lo := Vector2.INF
