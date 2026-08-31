@@ -65,6 +65,7 @@ This is **plan 1 of 2** for the spec's slice 1. It implements land vitality only
   - `Land.RECOVERY_HALF_LIFE_TURNS: int`
   - `Land.DEPLETION_PER_UNIT: float`
   - `Land.recovery_rate() -> float`
+  - `Land.continuous_use_equilibrium() -> float`
   - `Land.recovered(vitality: float) -> float`
   - `Land.depleted(vitality: float, intensity: float) -> float`
 
@@ -77,9 +78,9 @@ extends GutTest
 ## The arithmetic of land wearing out and coming back, with no world attached.
 ##
 ## Kept pure and separate because the interesting properties here — that nothing
-## reaches zero, that recovery never overshoots, that continuous maximum use
-## settles at the floor rather than below it — are claims about the numbers, and
-## they are far easier to trust asserted directly than inferred from a world.
+## reaches zero, that recovery never overshoots, where continuous maximum use
+## actually settles — are claims about the numbers, and they are far easier to
+## trust asserted directly than inferred from a world.
 
 
 func test_recovery_moves_toward_the_ceiling_and_stops_there() -> void:
@@ -156,8 +157,8 @@ extends RefCounted
 ##
 ## Nothing here touches a world. The arithmetic is separated from the state so
 ## that the properties that matter — nothing reaches zero, recovery never
-## overshoots, continuous maximum use settles at the floor rather than below it
-## — are asserted on the numbers directly.
+## overshoots, and where continuous maximum use actually settles — are asserted
+## on the numbers directly.
 
 ## The ways land can be worked. Two for now, which are the consumers that exist:
 ## herds grazing and farms cultivating. Practices will extend this, and the
@@ -256,6 +257,20 @@ Expected: exit 0. Nothing consumes `Land` yet, so nothing else can have changed.
 git add sim/land.gd test/test_land.gd
 git commit -m "Land: what a tile remembers about being worked, and how it comes back"
 ```
+
+**Measured on execution (2026-08-31), for the tasks that follow:**
+
+| quantity | value |
+|---|---|
+| `recovery_rate()` | 0.056126 |
+| half-life | 12 turns = 2.0 seasons |
+| `continuous_use_equilibrium()` | 0.197707 — and the 400-step simulation agrees to six decimals |
+| floor | 0.150000 |
+| turns of unbroken full use to halve vitality | 17 = 2.8 seasons |
+
+That last row is the AC9 evidence: wear and recovery are within a season of each
+other, which is what "the three clocks in proportion" has to mean if land is to
+read as rotating rather than flickering or standing still.
 
 ---
 
