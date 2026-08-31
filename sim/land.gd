@@ -1,0 +1,92 @@
+class_name Land
+extends RefCounted
+
+## What land remembers about being worked, and how it comes back.
+##
+## `AgDR-014` is the record. The decision in one line: a tile carries a vitality
+## **per use**, not one vitality overall, so ground worn out by cultivation is
+## still good ground for grazing. One number per tile would have collapsed
+## "rotate" and "rest" into the same action.
+##
+## Nothing here touches a world. The arithmetic is separated from the state so
+## that the properties that matter — nothing reaches zero, recovery never
+## overshoots, and where continuous maximum use actually settles — are asserted
+## on the numbers directly.
+
+## The ways land can be worked. Two for now, which are the consumers that exist:
+## herds grazing and farms cultivating. Practices will extend this, and the
+## enum is the only place that has to change when they do.
+enum Use {
+	GRAZE,
+	CULTIVATE,
+}
+
+const USE_COUNT := 2
+
+## Vitality is a fraction of what the terrain-and-season curve would otherwise
+## give, so full land is 1.0 and `Seasons.FORAGE_BY_TERRAIN` stays the ceiling —
+## which is the half of `AgDR-009` that survives.
+const MAX_VITALITY := 1.0
+
+## The floor, and it is above zero on purpose. `AgDR-014` forbids absorbing
+## states: no sequence of ordinary play may cost a tile its capacity
+## permanently. Manor Lords is the counter-example the record cites — its fully
+## depleted deer stop regrowing and its logged-out berry bushes never return,
+## and both would break tone rules 1 and 2 here.
+const MIN_VITALITY := 0.15
+
+## How long worn land takes to close half the distance back to full.
+##
+## Stated as a half-life in turns and derived from the season length rather than
+## written as a bare rate, because the thing that actually matters is the
+## *ratio* between this and the calendar. Half a year means a tile worked hard
+## through one summer is most of the way back by the next — visible inside a
+## session, slow enough to be a decision rather than a flicker.
+const RECOVERY_HALF_LIFE_TURNS := Seasons.TURNS_PER_SEASON * 2
+
+## How much one turn of maximum-intensity use takes off a tile.
+##
+## Sets how fast worn ground approaches its limit, and where land settles under
+## *partial* use — at a steady intensity `I` that does not reach the floor,
+## vitality converges on `1 - DEPLETION_PER_UNIT * I * (1 - r) / r`.
+##
+## It does **not** set where continuous maximum use settles. That is fixed by the
+## floor and the turn order instead — see `continuous_use_equilibrium()`. An
+## earlier version of this comment claimed the constant was calibrated to put
+## full-use equilibrium at `MIN_VITALITY`; that was wrong, and the tripwire test
+## written against it passed with about 0.007 of slack. Caught in review on
+## PR #40.
+const DEPLETION_PER_UNIT := 0.048
+
+
+## The per-turn fraction of the remaining gap that recovery closes, derived from
+## the half-life. Not a `const` because `pow()` is not a constant expression.
+static func recovery_rate() -> float:
+	return 1.0 - pow(0.5, 1.0 / float(RECOVERY_HALF_LIFE_TURNS))
+
+
+## Where a tile settles under unbroken maximum use.
+##
+## **Not `MIN_VITALITY`.** Depletion clamps at the floor and then the same turn's
+## recovery lifts it one step, so the attractor sits exactly one recovery step
+## above the floor — and it does so for *any* depletion large enough to reach the
+## floor at all, which is why retuning `DEPLETION_PER_UNIT` does not move it.
+##
+## Derived rather than written down so the test can assert it tightly: changing
+## either the floor or the half-life moves this value and `test_land.gd` says so.
+static func continuous_use_equilibrium() -> float:
+	return MIN_VITALITY + recovery_rate() * (MAX_VITALITY - MIN_VITALITY)
+
+
+## One turn of nobody working this tile, for this use.
+##
+## Exponential approach to the ceiling, so it cannot overshoot and there is no
+## accumulator to drift — the `AgDR-009` no-drift property holds by construction
+## here exactly as it did for forage.
+static func recovered(vitality: float) -> float:
+	return vitality + recovery_rate() * (MAX_VITALITY - vitality)
+
+
+## One turn of this tile being worked, at `intensity` in 0..1.
+static func depleted(vitality: float, intensity: float) -> float:
+	return maxf(MIN_VITALITY, vitality - DEPLETION_PER_UNIT * clampf(intensity, 0.0, 1.0))
