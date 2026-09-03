@@ -126,6 +126,27 @@ func _graze(world: WorldMap) -> void:
 		scaled = population * (1.0 - species.decline_rate * minf(1.0 - ration, 1.0))
 	world.set_herd_population(self, maxf(scaled, species.minimum_population))
 
+	# Wear is what THIS herd actually ate. Three mistakes are easy here and all
+	# three were made before this line settled.
+	#
+	# It is not how hungry the herd was: `1.0 / ration` saturates on a tile
+	# supporting nothing, so a herd on dead winter grass would wear the ground as
+	# hard as one on a spring meadow and every tile would floor itself in winter.
+	#
+	# It is not the tile's total demand: `forage_demand_at()` counts every agent
+	# standing there, and every co-located herd runs this same line, so charging
+	# the total once per herd bills the tile N times over for N herds.
+	#
+	# And the denominator is the census as it stood before anything moved.
+	# `step()` grazes and then migrates, so a herd stepped later sees earlier
+	# herds already gone, divides by a smaller number, and claims a share the
+	# tile was charged for a moment ago.
+	var available := world.forage_for_use(coord, Land.Use.GRAZE)
+	var mouths := maxf(world.forage_demand_at_turn_start(coord), species.minimum_population)
+	var my_share := available * (forage_demand() / mouths)
+	var my_want := population * species.consumption_per_head
+	world.draw_vitality(coord, Land.Use.GRAZE, minf(my_share, my_want) / Seasons.MAX_FORAGE)
+
 
 ## Walk toward the best ground the herd can sense, one tile per step, up to
 ## `move_range` steps.
@@ -177,7 +198,13 @@ func _best_ground(world: WorldMap) -> Vector2i:
 			var i := world.grid.index_of(candidate)
 			if i < 0 or world.terrain_by_index(i) == WorldGen.Terrain.WATER:
 				continue
-			var supported := species.heads_supported_by(world.forage_by_index(i))
+			# Vitality-aware, and this is the read that matters most. Scoring
+			# destinations from raw forage while the tile underfoot knows about
+			# wear would leave every worn tile still looking fully productive, so
+			# herds would keep walking onto ground they have just exhausted and
+			# `AgDR-014`'s rotation would have no effect on migration at all.
+			var supported := species.heads_supported_by(
+					world.forage_for_use_by_index(i, Land.Use.GRAZE))
 			var mouths := world.forage_demand_by_index(i) + population
 			var steps := (absi(dq) + absi(dq + dr) + absi(dr)) >> 1
 			var score := supported / mouths / (1.0 + DISTANCE_COST * float(steps))
@@ -211,10 +238,22 @@ func _step_toward(world: WorldMap, target: Vector2i) -> Vector2i:
 ## already standing there — and its own, which is what makes an empty tile of
 ## the same forage preferable to a crowded one.
 func ration_at(world: WorldMap, candidate: Vector2i) -> float:
-	var supported := species.heads_supported_by(world.forage_at(candidate))
-	var mouths := world.forage_demand_at(candidate)
-	if candidate != coord:
-		mouths += population
+	var supported := species.heads_supported_by(
+			world.forage_for_use(candidate, Land.Use.GRAZE))
+	var mouths: float
+	if candidate == coord:
+		# The tile underfoot is shared with whoever was standing on it when the
+		# turn began, whether or not they have since moved on. Reading live
+		# demand here lets a herd stepped later grow on forage an earlier herd
+		# already ate — one herd thriving and its neighbour declining purely
+		# because of the order they sit in the agents array. The wear charged in
+		# `_graze()` is settled against the same frozen census, so growth and
+		# wear agree about how many mouths were at the table.
+		mouths = world.forage_demand_at_turn_start(candidate)
+	else:
+		# A destination is hypothetical and live demand is the right read: it
+		# lets a herd see arrivals that have already moved there this turn.
+		mouths = world.forage_demand_at(candidate) + population
 	# The herd's own population is always in `mouths` and is never below the
 	# species minimum, so this cannot divide by zero.
 	return supported / maxf(mouths, species.minimum_population)

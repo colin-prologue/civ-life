@@ -54,6 +54,20 @@ var _forage: PackedFloat32Array
 ## an array rather than restriding every read.
 var _vitality: Array = []
 
+## The per-tile forage census as it stood at the start of this turn, before any
+## agent grazed or moved.
+##
+## `Herd.step()` grazes and then migrates, so the live census changes underneath
+## the agents still to be stepped. A herd dividing a tile's forage by the live
+## demand would see earlier herds vanish and claim their share as well, and the
+## tile would be charged for more than it grew. Sharing is settled against the
+## world as it was when the turn began.
+##
+## A copy per turn rather than a second running total: one `duplicate()` of an
+## array the map already keeps, against a bookkeeping path that would have to
+## stay correct through every future mutator.
+var _forage_demand_at_turn_start: PackedFloat32Array = PackedFloat32Array()
+
 ## Everything the player has placed: farms, granaries, and the roads between
 ## them. Stepped in array order for the same reason agents are.
 var nodes: Array[CityNode] = []
@@ -101,6 +115,7 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 func advance_turn() -> int:
 	turn += 1
 	_recompute_forage()
+	_forage_demand_at_turn_start = _forage_demand.duplicate()
 	for node in nodes:
 		node.produce(self)
 	for agent in agents:
@@ -324,6 +339,29 @@ func set_vitality(coord: Vector2i, use: int, value: float) -> void:
 	var row: PackedFloat32Array = _vitality[use]
 	row[i] = clampf(value, Land.MIN_VITALITY, Land.MAX_VITALITY)
 	_vitality[use] = row
+
+
+## Report that this tile was worked, for this use, at `intensity` in 0..1.
+##
+## The world does not ask who is calling. A herd knows that it grazes and a farm
+## knows that it cultivates; `WorldMap` is told a use and a quantity and applies
+## them, which is `AgDR-013`'s rule — agents report quantities, and nothing here
+## branches on what kind of thing reported.
+func draw_vitality(coord: Vector2i, use: int, intensity: float) -> void:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot wear ground off the map")
+	var row: PackedFloat32Array = _vitality[use]
+	row[i] = Land.depleted(row[i], intensity)
+	_vitality[use] = row
+
+
+## What this tile's total forage demand was before anything moved this turn.
+func forage_demand_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read demand off the map")
+	if i >= _forage_demand_at_turn_start.size():
+		return _forage_demand[i]
+	return _forage_demand_at_turn_start[i]
 
 
 ## Forage summed over the whole map. The map-scale quantity seasons are supposed
