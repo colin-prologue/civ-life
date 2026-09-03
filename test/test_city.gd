@@ -48,6 +48,26 @@ const SEASONAL_WARMUP_YEARS := 1
 const MIN_SPRING_OVER_WINTER := 1.30
 const MIN_PEAK_OVER_TROUGH := 2.00
 
+## The values the stated margins must not fall below, and the ceiling the
+## obstruction share must not rise above.
+##
+## These exist because lowering a margin is the cheapest way to make a real
+## regression look like a passing suite, and a plan that says "re-derive the
+## expectation, never weaken the assertion" is prose — it competes with a
+## delivery incentive and prose loses. This is the same claim at the altitude
+## the implementer actually works at: a second failing test.
+##
+## It is a tripwire, not a lock. Someone determined can edit these too. What it
+## buys is that doing so is deliberate, appears in the diff as its own change,
+## and cannot happen as a quiet one-line adjustment while chasing a red suite.
+## Raising a margin is always fine and these do not object to it.
+##
+## If a change genuinely warrants moving one of these, move it in its own commit
+## and say why in the message.
+const SPRING_OVER_WINTER_FLOOR := 1.30
+const PEAK_OVER_TROUGH_FLOOR := 2.00
+const OBSTRUCTED_SHARE_CEILING := 0.60
+
 ## How much of the control run's throughput a route with a herd parked on it is
 ## allowed to still manage. Interference has to be visible to be worth having;
 ## this is what "visible" means numerically.
@@ -544,3 +564,23 @@ func _strip_comments(source: String) -> String:
 		var hash_at := line.find("#")
 		out.append(line if hash_at < 0 else line.substr(0, hash_at))
 	return "\n".join(out)
+
+
+func test_the_stated_margins_have_not_been_quietly_weakened() -> void:
+	# See the note on the floor constants above. This asserts the claims this
+	# suite makes about the world are still as strong as they were stated to be.
+	assert_gte(
+		MIN_SPRING_OVER_WINTER, SPRING_OVER_WINTER_FLOOR,
+		"the spring-over-winter margin was lowered from %.2f to %.2f"
+			% [SPRING_OVER_WINTER_FLOOR, MIN_SPRING_OVER_WINTER]
+	)
+	assert_gte(
+		MIN_PEAK_OVER_TROUGH, PEAK_OVER_TROUGH_FLOOR,
+		"the peak-over-trough margin was lowered from %.2f to %.2f"
+			% [PEAK_OVER_TROUGH_FLOOR, MIN_PEAK_OVER_TROUGH]
+	)
+	assert_lte(
+		MAX_OBSTRUCTED_SHARE, OBSTRUCTED_SHARE_CEILING,
+		"the obstruction margin was loosened from %.2f to %.2f"
+			% [OBSTRUCTED_SHARE_CEILING, MAX_OBSTRUCTED_SHARE]
+	)

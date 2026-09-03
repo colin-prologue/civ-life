@@ -44,6 +44,16 @@ var agents: Array[Agent] = []
 var _terrain: PackedInt32Array
 var _forage: PackedFloat32Array
 
+## One vitality value per tile per use, in the same grid order as `_terrain` and
+## `_forage` (`AgDR-006`: flat arrays indexed by position, never a dictionary
+## keyed by coordinate).
+##
+## An `Array` of `PackedFloat32Array`, indexed by `Land.Use`. Kept as separate
+## arrays per use rather than one interleaved array so that a whole use can be
+## read, hashed or compared in one call — and so that adding a use is appending
+## an array rather than restriding every read.
+var _vitality: Array = []
+
 ## Everything the player has placed: farms, granaries, and the roads between
 ## them. Stepped in array order for the same reason agents are.
 var nodes: Array[CityNode] = []
@@ -74,6 +84,12 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 	_forage.resize(p_grid.tile_count())
 	_forage_demand = PackedFloat32Array()
 	_forage_demand.resize(p_grid.tile_count())
+	_vitality.resize(Land.USE_COUNT)
+	for use in range(Land.USE_COUNT):
+		var row := PackedFloat32Array()
+		row.resize(p_grid.tile_count())
+		row.fill(Land.MAX_VITALITY)
+		_vitality[use] = row
 
 
 ## Move the world forward one turn. Returns the turn just entered.
@@ -89,6 +105,7 @@ func advance_turn() -> int:
 		node.produce(self)
 	for agent in agents:
 		agent.step(self)
+	_recover_vitality()
 	return turn
 
 
@@ -256,6 +273,59 @@ func forage_data() -> PackedFloat32Array:
 	return _forage.duplicate()
 
 
+## How worn this tile is for this use, in `Land.MIN_VITALITY`..`MAX_VITALITY`.
+func vitality_at(coord: Vector2i, use: int) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read vitality off the map")
+	return vitality_by_index(i, use)
+
+
+func vitality_by_index(i: int, use: int) -> float:
+	var row: PackedFloat32Array = _vitality[use]
+	return row[i]
+
+
+## The whole vitality row for one use, in grid order.
+func vitality_data(use: int) -> PackedFloat32Array:
+	var row: PackedFloat32Array = _vitality[use]
+	return row.duplicate()
+
+
+## What this tile is actually worth to this use right now: the terrain-and-season
+## curve scaled by how worn the ground is for that use.
+##
+## The curve remains the ceiling — vitality is a fraction and never exceeds 1.0 —
+## which is the half of `AgDR-009` that survives `AgDR-014`.
+func forage_for_use(coord: Vector2i, use: int) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read forage off the map")
+	return forage_for_use_by_index(i, use)
+
+
+## The same value by index, for callers scanning many tiles per turn.
+##
+## `Herd._best_ground()` scores every tile in its sense range every time it
+## re-plans and reads by index for exactly that reason. It needs this rather than
+## raw `forage_by_index()`, or destinations stay blind to wear while the tile
+## underfoot is not — and a herd that cannot see worn ground keeps walking onto
+## it, which would leave the rotation `AgDR-014` is about with no effect on where
+## anything goes.
+func forage_for_use_by_index(i: int, use: int) -> float:
+	return _forage[i] * vitality_by_index(i, use)
+
+
+## Set a tile's vitality for a use directly.
+##
+## Exists for generation and for tests that need to start from a worn world.
+## Ordinary wear goes through `draw_vitality()`; this is not the path play takes.
+func set_vitality(coord: Vector2i, use: int, value: float) -> void:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot write vitality off the map")
+	var row: PackedFloat32Array = _vitality[use]
+	row[i] = clampf(value, Land.MIN_VITALITY, Land.MAX_VITALITY)
+	_vitality[use] = row
+
+
 ## Forage summed over the whole map. The map-scale quantity seasons are supposed
 ## to move, so it is worth being able to read it in one call.
 func total_forage() -> float:
@@ -274,6 +344,18 @@ func _recompute_forage() -> void:
 	var row := Seasons.forage_row(season())
 	for i in range(_terrain.size()):
 		_forage[i] = row[_terrain[i]]
+
+
+## Every tile, every use, one turn closer to full.
+##
+## Runs last in the turn so that what recovers is what is left after the turn's
+## work has been taken — and runs over every tile unconditionally, because
+## `AgDR-014` makes recovery the world's default behaviour rather than something
+## anybody has to cause. Same flat-array pass as `_recompute_forage`, for the
+## same reason: this runs `tile_count()` times per use per turn.
+func _recover_vitality() -> void:
+	for use in range(Land.USE_COUNT):
+		_vitality[use] = Land.recovered_row(_vitality[use])
 
 
 ## How many tiles differ from another map of the same size.

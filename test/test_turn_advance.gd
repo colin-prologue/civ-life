@@ -87,3 +87,105 @@ func test_the_whole_map_is_drawn_not_a_visible_corner_of_it() -> void:
 		main.world.grid.tile_count(),
 		"one polygon per tile on the map"
 	)
+
+
+# --- auto-advance ------------------------------------------------------------
+# Watching this world means watching it over years, and a year is 24 turns. The
+# tests below exist because the auto-advance is a second thing that can move the
+# clock, and the whole point of the suite above is that there is only one path a
+# turn travels. These check that the new path is the old path on a timer, and
+# that a stalled frame cannot silently fast-forward the world.
+
+
+func test_drain_holds_a_partial_turn_back() -> void:
+	var got := Main.drain(0.75, Main.MAX_TURNS_PER_FRAME)
+	assert_eq(got["turns"], 0, "three quarters of a turn is not a turn")
+	assert_almost_eq(got["accumulator"], 0.75, 0.0001, "and it is kept for next frame")
+
+
+func test_drain_yields_whole_turns_and_keeps_the_remainder() -> void:
+	var got := Main.drain(2.25, Main.MAX_TURNS_PER_FRAME)
+	assert_eq(got["turns"], 2, "two whole turns are due")
+	assert_almost_eq(got["accumulator"], 0.25, 0.0001, "the quarter turn carries over")
+
+
+func test_a_stalled_frame_drops_its_backlog_instead_of_fast_forwarding() -> void:
+	# The window was dragged, or the process was suspended, and eighty turns of
+	# wall clock went by. Playing those back is a world that lurches; the honest
+	# behaviour is to lose the time rather than to spend it.
+	var got := Main.drain(80.0, Main.MAX_TURNS_PER_FRAME)
+	assert_eq(got["turns"], Main.MAX_TURNS_PER_FRAME, "capped at the per-frame limit")
+	assert_almost_eq(got["accumulator"], 0.0, 0.0001, "and the backlog is discarded, not banked")
+
+
+func test_the_world_does_not_move_on_its_own_until_asked() -> void:
+	var main: Node2D = await _launch()
+	assert_false(main.playing, "a freshly launched world is paused")
+	var before: int = main.world.turn
+	await wait_frames(10)
+	assert_eq(main.world.turn, before, "ten frames passed and nothing advanced")
+
+
+func test_playing_advances_the_world_through_the_same_entry_point() -> void:
+	var main: Node2D = await _launch()
+	main.speed_index = 1  # 1.0 turns per second
+	main.set_playing(true)
+	var before: int = main.world.turn
+
+	var ran: int = main.tick(3.0)
+
+	assert_eq(ran, 3, "three seconds at one turn a second")
+	assert_eq(main.world.turn, before + 3, "and the world's own counter moved by three")
+	# The status line is rebuilt only by advance_turn(); if auto-advance had
+	# grown its own path this would still say turn 0.
+	assert_string_contains(main.get_node("Status").text, "Turn %d" % main.world.turn)
+
+
+func test_a_paused_world_ignores_the_clock_entirely() -> void:
+	var main: Node2D = await _launch()
+	var before: int = main.world.turn
+
+	var ran: int = main.tick(10.0)
+
+	assert_eq(ran, 0, "ten seconds bought nothing while paused")
+	assert_eq(main.world.turn, before, "paused means paused")
+
+
+func test_pausing_discards_the_part_turn_it_was_holding() -> void:
+	# Otherwise stopping and starting repeatedly banks fractions, and a world
+	# that was paused a lot runs faster than one that was not.
+	var main: Node2D = await _launch()
+	main.speed_index = 1
+	main.set_playing(true)
+	main.tick(0.9)          # nine tenths of a turn held back
+	main.set_playing(false)
+	main.set_playing(true)
+	var before: int = main.world.turn
+
+	var ran: int = main.tick(0.9)
+
+	assert_eq(ran, 0, "the held fraction did not survive the pause")
+	assert_eq(main.world.turn, before, "and no turn was run")
+
+
+func test_speed_changes_how_much_a_second_buys() -> void:
+	var main: Node2D = await _launch()
+	main.set_playing(true)
+	main.speed_index = 0
+	var slow: int = main.tick(4.0)
+	main.speed_index = 2
+	var fast: int = main.tick(4.0)
+
+	assert_eq(slow, 2, "four seconds at half a turn a second")
+	assert_eq(fast, Main.MAX_TURNS_PER_FRAME, "four seconds at two a second, capped per frame")
+	assert_gt(fast, slow, "faster is faster")
+
+
+func test_speed_clamps_at_both_ends() -> void:
+	var main: Node2D = await _launch()
+	for i in range(20):
+		main.faster()
+	assert_eq(main.speed_index, Main.TURNS_PER_SECOND.size() - 1, "cannot go past the fastest")
+	for i in range(20):
+		main.slower()
+	assert_eq(main.speed_index, 0, "cannot go below the slowest")
