@@ -56,3 +56,19 @@ func test_intensity_scales_how_fast_land_wears() -> void:
 	var light := Land.depleted(Land.MAX_VITALITY, 0.25)
 	var heavy := Land.depleted(Land.MAX_VITALITY, 1.0)
 	assert_gt(light, heavy, "lighter use wears the ground more slowly")
+
+
+func test_the_row_recovery_agrees_with_the_single_value_one() -> void:
+	# recovered_row() hoists the rate out of the loop for speed, which means the
+	# arithmetic exists twice. This is what stops the two drifting apart.
+	var row := PackedFloat32Array([Land.MIN_VITALITY, 0.3, 0.5, 0.87, Land.MAX_VITALITY])
+	var expected := PackedFloat32Array()
+	for value in row:
+		expected.append(Land.recovered(value))
+
+	var got := Land.recovered_row(row)
+
+	assert_eq(got.size(), expected.size(), "same length back")
+	for i in range(expected.size()):
+		assert_almost_eq(got[i], expected[i], 0.000001,
+				"row recovery matches single-value recovery at %d" % i)

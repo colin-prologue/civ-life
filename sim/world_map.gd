@@ -105,6 +105,7 @@ func advance_turn() -> int:
 		node.produce(self)
 	for agent in agents:
 		agent.step(self)
+	_recover_vitality()
 	return turn
 
 
@@ -313,6 +314,18 @@ func forage_for_use_by_index(i: int, use: int) -> float:
 	return _forage[i] * vitality_by_index(i, use)
 
 
+## Set a tile's vitality for a use directly.
+##
+## Exists for generation and for tests that need to start from a worn world.
+## Ordinary wear goes through `draw_vitality()`; this is not the path play takes.
+func set_vitality(coord: Vector2i, use: int, value: float) -> void:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot write vitality off the map")
+	var row: PackedFloat32Array = _vitality[use]
+	row[i] = clampf(value, Land.MIN_VITALITY, Land.MAX_VITALITY)
+	_vitality[use] = row
+
+
 ## Forage summed over the whole map. The map-scale quantity seasons are supposed
 ## to move, so it is worth being able to read it in one call.
 func total_forage() -> float:
@@ -331,6 +344,18 @@ func _recompute_forage() -> void:
 	var row := Seasons.forage_row(season())
 	for i in range(_terrain.size()):
 		_forage[i] = row[_terrain[i]]
+
+
+## Every tile, every use, one turn closer to full.
+##
+## Runs last in the turn so that what recovers is what is left after the turn's
+## work has been taken — and runs over every tile unconditionally, because
+## `AgDR-014` makes recovery the world's default behaviour rather than something
+## anybody has to cause. Same flat-array pass as `_recompute_forage`, for the
+## same reason: this runs `tile_count()` times per use per turn.
+func _recover_vitality() -> void:
+	for use in range(Land.USE_COUNT):
+		_vitality[use] = Land.recovered_row(_vitality[use])
 
 
 ## How many tiles differ from another map of the same size.

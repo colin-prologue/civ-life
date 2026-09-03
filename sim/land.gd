@@ -87,6 +87,25 @@ static func recovered(vitality: float) -> float:
 	return vitality + recovery_rate() * (MAX_VITALITY - vitality)
 
 
+## One turn of recovery over a whole row, returned rather than mutated in place
+## because `PackedFloat32Array` is copy-on-write.
+##
+## Exists for speed, and the speed is not hypothetical. `recovered()` calls
+## `recovery_rate()`, which calls `pow()`; applied per tile per use per turn that
+## is 2,400 `pow()` calls a turn, which measured 2,522 ms against
+## `test_seasons.gd`'s 2,000 ms budget for 500 turns. Hoisting the rate out of
+## the loop makes it two calls a turn.
+##
+## Same trade `Seasons.forage_row()` already makes for the same reason: fetch the
+## rate once, index per tile. `test_land.gd` asserts this agrees with
+## `recovered()` element by element, so the two cannot drift apart.
+static func recovered_row(row: PackedFloat32Array) -> PackedFloat32Array:
+	var rate := recovery_rate()
+	for i in range(row.size()):
+		row[i] += rate * (MAX_VITALITY - row[i])
+	return row
+
+
 ## One turn of this tile being worked, at `intensity` in 0..1.
 static func depleted(vitality: float, intensity: float) -> float:
 	return maxf(MIN_VITALITY, vitality - DEPLETION_PER_UNIT * clampf(intensity, 0.0, 1.0))
