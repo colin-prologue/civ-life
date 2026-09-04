@@ -7,10 +7,12 @@ extends RefCounted
 ## are gone: a style is now data (see DioramaStyles) resolved by DioramaCompose,
 ## and this is the one thing that was always renderer rather than recipe.
 ##
-## A part is {kind, xf, params, color, tag, y}. `tag` and `y` are derived, not
-## authored, so a condition transform can ruin a building by filtering parts —
-## and, per the motion verdict, assemble one by running the same filter in
-## reverse.
+## A part is {kind, xf, params, color, need, y}. `need` — the condition at or
+## above which the part survives — is settled during resolution, where the
+## tree still knows what rests on what; `y` is derived afterward, from the
+## resolved parts alone. Neither is authored by the style, so a condition
+## transform can ruin a building by filtering parts on `need` — and, per the
+## motion verdict, assemble one by running the same filter in reverse.
 
 
 ## Render a parts list into a builder at a world transform.

@@ -110,3 +110,18 @@ static func stepped() -> Dictionary:
 		{"mass": {"name": "tier2", "kind": "box", "h": 0.61, "role": "plaster"}},
 		{"mass": {"name": "spire", "kind": "cone",
 				"h": 0.79, "oversize": 0.5, "role": "brass"}}]}}
+
+
+## Style trees by name, for scenes that pick one from an export. Centralised
+## here so lineup.gd and condition_sheet.gd do not each carry their own ladder
+## of `if`s that drifts out of sync as styles are added.
+static func for_name(name: String) -> Dictionary:
+	match name:
+		"hero_arch": return hero_arch()
+		"civic": return civic()
+		"stepped": return stepped()
+		_: return residential()
+
+
+## Every style, in sheet order.
+const NAMES := ["residential", "civic", "stepped", "hero_arch"]

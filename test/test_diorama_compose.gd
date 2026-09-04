@@ -54,7 +54,7 @@ func test_mass_emits_one_part_with_the_contract_keys() -> void:
 	var out := DioramaCompose.resolve(_box("body", 1.0, 2.0, 3.0), _ctx())
 	assert_eq(out["parts"].size(), 1, "a mass produced the wrong part count")
 	var p: Dictionary = out["parts"][0]
-	for key in ["kind", "xf", "params", "color", "tag", "y"]:
+	for key in ["kind", "xf", "params", "color", "need", "y"]:
 		assert_true(p.has(key), "part is missing contract key '%s'" % key)
 	assert_eq(p["kind"], "box", "part kind was not carried through")
 	assert_eq(p["params"]["size"], Vector3(1.0, 3.0, 2.0),
@@ -244,49 +244,10 @@ func _tower() -> Dictionary:
 				"h": 3.0, "role": "brass"}}]}}
 
 
-func test_build_tags_every_part() -> void:
-	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
-		assert_ne(p["tag"], "", "a part came back untagged")
-
-
-func test_tag_bands_follow_height() -> void:
-	var parts := DioramaCompose.build(_tower(), SEED, 1)
-	assert_eq(parts[0]["tag"], "base", "the bottom part is not tagged base")
-	assert_eq(parts[1]["tag"], "mid", "the middle part is not tagged mid")
-
-
-func test_a_small_cone_on_top_is_an_accent() -> void:
-	var parts := DioramaCompose.build(_tower(), SEED, 1)
-	assert_eq(parts[2]["tag"], "accent",
-			"a slim cone above the mass should read as an accent")
-
-
 func test_y_is_the_part_centre_height() -> void:
 	var parts := DioramaCompose.build(_tower(), SEED, 1)
 	assert_almost_eq(parts[0]["y"], 0.5, 1e-5, "plinth centre should be h/2")
 	assert_almost_eq(parts[1]["y"], 4.0, 1e-5, "shaft centre should be 1 + 6/2")
-
-
-func test_tags_are_monotonic_in_height() -> void:
-	# The property the ruin filter depends on: nothing tagged base sits above
-	# anything tagged upper. Uses its own four-box fixture rather than _tower()
-	# — the tower tops out in `mid` and `accent`, so running this against it
-	# would pass without ever comparing a base to an upper.
-	var tall := {"stack": {"name": "t", "children": [
-		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
-		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
-	var parts := DioramaCompose.build(tall, SEED, 1)
-	var highest_base := -INF
-	var lowest_upper := INF
-	for p: Dictionary in parts:
-		if p["tag"] == "base":
-			highest_base = maxf(highest_base, p["y"])
-		elif p["tag"] == "upper":
-			lowest_upper = minf(lowest_upper, p["y"])
-	assert_gt(highest_base, -INF, "fixture produced no base part to compare")
-	assert_lt(lowest_upper, INF, "fixture produced no upper part to compare")
-	assert_lt(highest_base, lowest_upper,
-			"a base part sits above an upper part")
 
 
 ## A mass stacked on a row has to land over the row's CENTRE, not over the
@@ -653,3 +614,235 @@ func test_a_ring_of_round_primitives_gets_round_params() -> void:
 		assert_true(p["params"].has("height"), "a prism needs a height")
 		assert_false(p["params"].has("size"),
 				"a prism should not be handed box params")
+
+
+# --------------------------------------------------------------- need (slice 3)
+
+func test_a_mass_draws_its_need_in_band_and_deterministically() -> void:
+	var tree := _box("solo", 2.0, 2.0, 2.0)
+	var a := DioramaCompose.build(tree, SEED, 3)
+	var b := DioramaCompose.build(tree, SEED, 3)
+	assert_eq(a.size(), 1, "fixture should emit exactly one part")
+	assert_eq(a[0]["need"], b[0]["need"], "same seed and id gave two needs")
+	assert_true(a[0]["need"] >= DioramaCompose.ENDURE_LO,
+			"need %f fell below the band floor" % a[0]["need"])
+	assert_true(a[0]["need"] <= DioramaCompose.ENDURE_HI,
+			"need %f rose above the band ceiling" % a[0]["need"])
+
+
+func test_two_ids_draw_different_needs() -> void:
+	# Otherwise every building in a city ruins identically, which is the whole
+	# reason need is drawn rather than computed from geometry.
+	var tree := _box("solo", 2.0, 2.0, 2.0)
+	var differ := false
+	for id in range(12):
+		if not is_equal_approx(
+				DioramaCompose.build(tree, SEED, 0)[0]["need"],
+				DioramaCompose.build(tree, SEED, id)[0]["need"]):
+			differ = true
+	assert_true(differ, "twelve ids all drew the same need")
+
+
+func test_a_mass_never_outlives_the_band_it_was_handed() -> void:
+	# The load-path property, stated against the band a node inherits rather
+	# than against a single floor. A support hands its dependants a range whose
+	# bottom sits at or above its own, so a mass that draws anywhere inside the
+	# range it was given cannot outlive what it rests on.
+	var ctx := DioramaCompose.new_ctx(SEED, 7)
+	ctx["need_lo"] = 0.72
+	ctx["need_hi"] = 0.86
+	var out := DioramaCompose.resolve(_box("solo", 2.0, 2.0, 2.0), ctx)
+	var need: float = out["parts"][0]["need"]
+	assert_true(need >= 0.72, "need %f fell below the band it was handed" % need)
+	assert_true(need <= 0.86, "need %f rose above the band it was handed" % need)
+	assert_almost_eq(out["need"], need, 1e-6,
+			"the node should report the need it settled on")
+	# A band with no width at all — the degenerate case a deep stack approaches
+	# — must land ON it, not interpolate off either end of it.
+	var pinned := DioramaCompose.new_ctx(SEED, 7)
+	pinned["need_lo"] = 0.95
+	pinned["need_hi"] = 0.95
+	var out2 := DioramaCompose.resolve(_box("solo", 2.0, 2.0, 2.0), pinned)
+	assert_almost_eq(out2["parts"][0]["need"], 0.95, 1e-6,
+			"an empty band should pin the draw to its one value")
+
+
+func test_every_part_of_a_ring_carries_need() -> void:
+	# _ring builds its parts directly rather than through _mass, so it has its
+	# own literal to forget the key on — this caught it missing entirely.
+	var out := DioramaCompose.resolve({"ring": {"name": "colonnade",
+			"radius": 3.0, "from": 0.0, "to": PI, "count": 4,
+			"of": {"mass": {"name": "column", "kind": "prism",
+					"w": 0.5, "d": 0.5, "role": "plaster"}}}}, _ctx())
+	assert_gt(out["parts"].size(), 0, "ring emitted nothing")
+	for p: Dictionary in out["parts"]:
+		assert_true(p.has("need"), "a ring part is missing the 'need' key")
+
+
+func test_need_is_non_decreasing_up_a_stack() -> void:
+	# The load-path property: nothing survives its own support. Swept over many
+	# ids because a single draw could satisfy this by luck.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0), _box("d", 2.0, 2.0, 2.0)]}}
+	for id in range(24):
+		var parts := DioramaCompose.build(tall, SEED, id)
+		assert_eq(parts.size(), 4, "fixture should emit four parts")
+		for i in range(1, parts.size()):
+			assert_true(parts[i]["need"] >= parts[i - 1]["need"],
+					"id %d: part %d (need %f) outlives its support (need %f)"
+					% [id, i, parts[i]["need"], parts[i - 1]["need"]])
+
+
+func test_a_stack_reports_the_need_of_its_weakest_link() -> void:
+	# What rests on a stack fails when any part of that stack fails, so the
+	# stack must report its MAXIMUM need, not its minimum or its last child's.
+	var tall := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("b", 2.0, 2.0, 2.0),
+		_box("c", 2.0, 2.0, 2.0)]}}
+	var out := DioramaCompose.resolve(tall, DioramaCompose.new_ctx(SEED, 5))
+	var worst := -INF
+	for p: Dictionary in out["parts"]:
+		worst = maxf(worst, p["need"])
+	assert_almost_eq(out["need"], worst, 1e-6,
+			"stack under-reported how soon it fails")
+
+
+func test_a_stack_child_that_resolves_away_stays_out_of_the_load_path() -> void:
+	# A zero-height mass emits nothing, and the property this once asserted —
+	# that the survivors get IDENTICAL needs with and without it — is not
+	# available under banding and is not being quietly dropped. A stack slices
+	# its band by DECLARED child count, so a ghost takes a third of the band
+	# where there would otherwise be a half, which narrows every sibling's slice
+	# and shifts the ones above it upward. `c` at index 2 of 3 draws from
+	# [0.633, 0.900] where index 1 of 2 would draw from [0.500, 0.900]: strictly
+	# more fragile for every draw but u = 1. That is the same sibling-count
+	# dependence banding accepts for real siblings, arriving through a sibling
+	# that renders nothing — visible only in a style that declares a part it
+	# never emits, which is already a thing to fix in the style.
+	#
+	# What survives, and is what actually protects the load path:
+	for id in range(24):
+		var with_ghost := {"stack": {"name": "t", "children": [
+			_box("a", 2.0, 2.0, 2.0), _box("ghost", 2.0, 2.0, 0.0),
+			_box("c", 2.0, 2.0, 2.0)]}}
+		var without := {"stack": {"name": "t", "children": [
+			_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0)]}}
+		var a := DioramaCompose.build(with_ghost, SEED, id)
+		var b := DioramaCompose.build(without, SEED, id)
+		assert_eq(a.size(), 2, "the zero-height child should emit nothing")
+		# 1. It does not break the ordering of the siblings it sits between.
+		assert_true(a[1]["need"] > a[0]["need"],
+				"id %d: a ghost broke the order of its siblings (%f, %f)"
+				% [id, a[0]["need"], a[1]["need"]])
+		# 2. It never makes what is BELOW it more fragile — a slice can only
+		#    narrow toward its own floor, never lift off it.
+		assert_true(a[0]["need"] <= b[0]["need"] + 1e-6,
+				"id %d: a ghost weakened the sibling under it (%f vs %f)"
+				% [id, a[0]["need"], b[0]["need"]])
+	# 3. It never speaks for when the stack itself fails. A ghost on TOP would
+	#    otherwise report its own slice floor — above every real part's need —
+	#    and everything resting on the stack would inherit a failure point that
+	#    corresponds to nothing rendered.
+	var ghost_on_top := {"stack": {"name": "t", "children": [
+		_box("a", 2.0, 2.0, 2.0), _box("c", 2.0, 2.0, 2.0),
+		_box("ghost", 2.0, 2.0, 0.0)]}}
+	var out := DioramaCompose.resolve(ghost_on_top,
+			DioramaCompose.new_ctx(SEED, 5))
+	var worst := -INF
+	for p: Dictionary in out["parts"]:
+		worst = maxf(worst, p["need"])
+	assert_almost_eq(out["need"], worst, 1e-6,
+			"a ghost on top said when the stack fails")
+
+
+func _arch() -> Dictionary:
+	return {"stack": {"name": "a", "children": [
+		_box("plinth", 5.0, 2.0, 0.4),
+		{"ring": {"name": "span", "radius": 1.5, "from": 0.0, "to": PI,
+				"count": 7,
+				"of": {"mass": {"name": "vs", "kind": "box", "w": 0.4,
+						"d": 0.6, "role": "plaster"}}}}]}}
+
+
+func test_every_voussoir_in_a_ring_shares_one_need() -> void:
+	# An arch is not nine independent stones. Remove one and the arc is gone,
+	# so the ring draws once and imposes it on the whole subtree.
+	for id in range(12):
+		var parts := DioramaCompose.build(_arch(), SEED, id)
+		var ring_parts := parts.slice(1)
+		assert_eq(ring_parts.size(), 7, "id %d: expected seven voussoirs" % id)
+		for p: Dictionary in ring_parts:
+			assert_almost_eq(p["need"], ring_parts[0]["need"], 1e-9,
+					"id %d: a voussoir drew its own need" % id)
+
+
+func test_a_ring_never_outlives_what_it_springs_from() -> void:
+	for id in range(12):
+		var parts := DioramaCompose.build(_arch(), SEED, id)
+		assert_true(parts[1]["need"] >= parts[0]["need"],
+				"id %d: the arc (need %f) outlived its plinth (need %f)"
+				% [id, parts[1]["need"], parts[0]["need"]])
+
+
+func test_row_siblings_draw_independently() -> void:
+	# The property that makes a colonnade lose columns rather than vanish.
+	# Asserted by FINDING a seed where two siblings differ — a test that never
+	# observes the difference would pass against a cohesive row too.
+	var terrace := {"row": {"name": "block", "advance": 1.0, "children": [
+		_box("west", 2.0, 2.0, 2.0), _box("east", 2.0, 2.0, 2.0)]}}
+	var found := false
+	for id in range(24):
+		var parts := DioramaCompose.build(terrace, SEED, id)
+		assert_eq(parts.size(), 2, "fixture should emit two parts")
+		if not is_equal_approx(parts[0]["need"], parts[1]["need"]):
+			found = true
+	assert_true(found, "24 ids and no row ever had siblings of differing need")
+
+
+func test_a_row_reports_the_need_of_its_weakest_child() -> void:
+	# What rests on a row fails when any of its supports does — an arch falls
+	# when either pier goes, so the row reports the MAXIMUM.
+	var piers := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("west", 0.4, 0.6, 1.6), _box("east", 0.4, 0.6, 1.6)]}}
+	var out := DioramaCompose.resolve(piers, DioramaCompose.new_ctx(SEED, 5))
+	assert_almost_eq(out["need"],
+			maxf(out["parts"][0]["need"], out["parts"][1]["need"]), 1e-6,
+			"row under-reported how soon it fails")
+
+
+func test_a_row_child_that_emitted_nothing_does_not_say_when_the_row_fails() -> void:
+	# A row reports the need of its weakest CHILD — but a child that emitted
+	# nothing has no weakness to report. It still DREW a need, and folding that
+	# draw in makes everything resting on the row fail as early as a part that
+	# was never rendered.
+	#
+	# A zero-count ring is the cleanest such child, and the reason this needs
+	# its own test rather than riding on the stack's: a zero-height mass returns
+	# the bottom of its band, which is harmless in a row because every sibling
+	# shares that band. A ring goes through the full composite path and returns
+	# a real drawn need with an empty parts list. Measured at id 4 without the
+	# guard: the row's one real part needs 0.4075, the phantom ring reports
+	# 0.8497, and the row claims to fail more than twice as early as it does.
+	var phantom := {"row": {"name": "piers", "gap": 2.0, "children": [
+		_box("west", 0.4, 0.6, 1.6),
+		{"ring": {"name": "phantom", "radius": 1.5, "from": 0.0, "to": PI,
+				"count": 0,
+				"of": {"mass": {"name": "vs", "kind": "box", "w": 0.4,
+						"d": 0.6, "role": "plaster"}}}}]}}
+	for id in range(24):
+		var out := DioramaCompose.resolve(phantom,
+				DioramaCompose.new_ctx(SEED, id))
+		assert_eq(out["parts"].size(), 1,
+				"id %d: the zero-count ring should emit nothing" % id)
+		assert_almost_eq(out["need"], out["parts"][0]["need"], 1e-6,
+				"id %d: a child that emitted nothing said when the row fails"
+				% id)
+
+
+func test_parts_no_longer_carry_a_tag() -> void:
+	# The four-way height/kind partition is gone, replaced by `need`. Asserted
+	# so a merge cannot quietly reintroduce a field nothing maintains.
+	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
+		assert_false(p.has("tag"), "a part still carries a tag")
+		assert_true(p.has("need"), "a part is missing its need")
