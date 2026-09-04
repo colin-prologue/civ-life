@@ -66,12 +66,34 @@ const MIN_PEAK_OVER_TROUGH := 2.00
 ## and say why in the message.
 const SPRING_OVER_WINTER_FLOOR := 1.30
 const PEAK_OVER_TROUGH_FLOOR := 2.00
-const OBSTRUCTED_SHARE_CEILING := 0.60
+## Raised from 0.60 to 0.75 on 2026-09-03, deliberately, alongside
+## `MAX_OBSTRUCTED_SHARE`. See that constant for why.
+const OBSTRUCTED_SHARE_CEILING := 0.75
 
 ## How much of the control run's throughput a route with a herd parked on it is
 ## allowed to still manage. Interference has to be visible to be worth having;
 ## this is what "visible" means numerically.
-const MAX_OBSTRUCTED_SHARE := 0.60
+##
+## **Re-derived from 0.60 to 0.75 on 2026-09-03**, when land vitality
+## (`AgDR-014`) gave fields a memory. Measured either side of that change:
+##
+## |                    | clear | blocked | grain lost | share |
+## |--------------------|-------|---------|-----------|-------|
+## | before field wear  | 72.3  | 39.2    | 33.1      | 54%   |
+## | after field wear   | 50.6  | 36.1    | 14.5      | 71%   |
+##
+## The interference mechanism did not change; the traffic through it got
+## smaller. A worked field settles at 78% of its fresh yield, so the farm no
+## longer over-produces relative to what the road can carry, and blocking the
+## road costs less by both measures. The old bar was partly measuring that
+## surplus rather than the disturbance.
+##
+## This is a loosening and it is recorded as one. A 29% loss is still a
+## disturbance the player can see, which is what `world-growth-tone` rule 1 asks
+## of the world — but if a later change shrinks the economy again, this number
+## will drift again, and the thing to check is whether grain lost is still
+## material rather than whether the ratio still passes.
+const MAX_OBSTRUCTED_SHARE := 0.75
 
 ## Turns the obstruction test runs for. Long enough that the difference between
 ## the two runs is a trend rather than a phase of the walking cycle.
