@@ -105,7 +105,11 @@ func kind_name() -> String:
 func produce(world: WorldMap) -> void:
 	if kind != Kind.FARM:
 		return
-	deposit(FARM_YIELD_PER_TURN * world.forage_at(coord))
+	# The field is worth the seasonal curve scaled by how worn it is for growing
+	# things — and working it wears it further. `AgDR-014`.
+	var available := world.forage_for_use(coord, Land.Use.CULTIVATE)
+	deposit(FARM_YIELD_PER_TURN * available)
+	world.draw_vitality(coord, Land.Use.CULTIVATE, available)
 
 
 ## Put grain in. Returns how much was actually accepted, which is less than was

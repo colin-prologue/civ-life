@@ -258,3 +258,34 @@ func test_a_herd_on_worn_ground_gets_less_from_it() -> void:
 	world.set_vitality(land, Land.Use.GRAZE, 0.5)
 	assert_almost_eq(world.forage_for_use(land, Land.Use.GRAZE), full * 0.5, 0.0001,
 			"half-worn ground is worth half as much to a grazer")
+
+
+func test_a_farm_wears_the_ground_it_works() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var farm := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(farm)
+
+	for i in range(Seasons.TURNS_PER_YEAR):
+		world.advance_turn()
+
+	assert_lt(world.vitality_at(land, Land.Use.CULTIVATE), 0.95,
+			"a year of farming shows on the field")
+	assert_almost_eq(world.vitality_at(land, Land.Use.GRAZE), Land.MAX_VITALITY, 0.0001,
+			"and leaves the grazing untouched")
+
+
+func test_a_worn_field_yields_less() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var fresh := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(fresh)
+	world.advance_turn()
+	var first_year := fresh.store
+
+	world.set_vitality(land, Land.Use.CULTIVATE, Land.MIN_VITALITY)
+	fresh.store = 0.0
+	world.advance_turn()
+
+	assert_lt(fresh.store, first_year, "exhausted ground gives less than fresh ground")
+	assert_gt(fresh.store, 0.0, "but never nothing — the floor is above zero")
