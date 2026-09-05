@@ -81,6 +81,12 @@ Options
   --seed N            world seed to generate (default 20260815)
   --turns a,b,c       turn numbers to photograph, stills mode (default 0,4,12)
   --movie             record a span of turns as a GIF instead of stills
+  --placement         photograph the player's verb instead of the clock: a tile
+                      selected, a farm on it, a route drawn, and the route
+                      running. Three of those happen at the same turn, so the
+                      distinguishing axis is player actions and --turns cannot
+                      state it. Drives main.gd's own click/place/route entry
+                      points. --seed and --turns do not apply.
   --from N --to N     turn span for --movie (default 0..8)
   --hold N            rendered frames held per turn in --movie (default 6)
   --fps N             capture and playback rate for --movie (default 10)
@@ -116,6 +122,7 @@ while [ $# -gt 0 ]; do
     --seed) SEED="$2"; shift 2 ;;
     --turns) TURNS="$2"; shift 2 ;;
     --movie) MODE="movie"; shift ;;
+    --placement) MODE="placement"; shift ;;
     --from) FROM_TURN="$2"; shift 2 ;;
     --to) TO_TURN="$2"; shift 2 ;;
     --hold) HOLD="$2"; shift 2 ;;
@@ -212,8 +219,8 @@ explain_failure() {
     echo "A rendering context that never comes up can hang rather than error."
     return
   fi
-  if grep -q "CAPTURE-FAIL" "$log"; then
-    grep "CAPTURE-FAIL" "$log" | sed 's/^/  /'
+  if grep -qE "CAPTURE-FAIL|SHOT-FAIL" "$log"; then
+    grep -E "CAPTURE-FAIL|SHOT-FAIL" "$log" | sed 's/^/  /'
     return
   fi
   if grep -qiE "Unable to (create|initialize)|No such (display|rendering) driver|Could not create an instance of GPU|failed to create" "$log"; then
@@ -249,14 +256,30 @@ capture_stills() {
   return "$rc"
 }
 
+# The placement frames. Same watchdog, same byte cap, same links as everything
+# else here — only the script on the other end differs, because what varies
+# across these frames is what the player did rather than what the clock did.
+capture_placement() {
+  local out="$1" log="$2"
+  local -a argv
+  argv=("$GODOT" --resolution "${WIDTH}x${HEIGHT}"
+    -s tools/placement_shot.gd -- "$out")
+  local rc=0
+  run_bounded "$log" "${argv[@]}" || rc=$?
+  return "$rc"
+}
+
 # --- self test ---------------------------------------------------------------
-# The three claims this harness makes that cannot be taken on trust: that the
+# The four claims this harness makes that cannot be taken on trust: that the
 # blank-frame guard actually rejects a blank frame, that the same seed and
-# turn produce the same bytes twice, and that --scene can photograph something
-# that is not the hex game. A guard nobody has watched fail is
-# indistinguishable from a guard that is broken, and a scene option nobody has
-# pointed at a foreign scene is indistinguishable from one that only ever
-# worked on main.tscn.
+# turn produce the same bytes twice, that --scene can photograph something
+# that is not the hex game, and that --placement — which runs a different
+# script with its own copy of the guard — rejects a blank frame too. A guard
+# nobody has watched fail is indistinguishable from a guard that is broken, and
+# a scene option nobody has pointed at a foreign scene is indistinguishable from
+# one that only ever worked on main.tscn. The fourth leg exists because the
+# first three say nothing about a capture path added later: a second guard is a
+# second thing that can be wrong.
 SELF_TEST_TMP=""
 
 self_test() {
@@ -272,7 +295,7 @@ self_test() {
   # non-zero exit, which reads from outside as the capture being broken.
   trap 'rm -rf "$SELF_TEST_TMP"' EXIT
 
-  echo "[self-test] 1/3 — blank-frame guard, running the capture under --headless on purpose"
+  echo "[self-test] 1/4 — blank-frame guard, running the capture under --headless on purpose"
   # Created up front, not left to the capture: if the run dies before it makes
   # its own output directory, `find` on a missing path fails, and under
   # `pipefail` that aborts the self-test with no verdict printed at all — the
@@ -297,7 +320,7 @@ self_test() {
     grep "CAPTURE-FAIL" "$tmp/headless.log" | sed 's/^/    /'
   fi
 
-  echo "[self-test] 2/3 — determinism, capturing seed $SEED turn 0 twice"
+  echo "[self-test] 2/4 — determinism, capturing seed $SEED turn 0 twice"
   local rc_a=0 rc_b=0
   capture_stills "$tmp/a" "$SEED" "0" "$tmp/a.log" || rc_a=$?
   capture_stills "$tmp/b" "$SEED" "0" "$tmp/b.log" || rc_b=$?
@@ -327,7 +350,7 @@ self_test() {
   # harness. The assertion is not "a file appeared" — a blank frame is a file —
   # but that the frame cleared the same blank-frame guard leg 1 just watched
   # fire, which is the only thing that makes a captured spike reviewable.
-  echo "[self-test] 3/3 — --scene captures a scene that is not the hex game"
+  echo "[self-test] 3/4 — --scene captures a scene that is not the hex game"
   local rc_s=0
   mkdir -p "$tmp/scene"
   local -a scene_argv
@@ -350,6 +373,36 @@ self_test() {
   else
     echo "  PASS: one verified frame from a scene with no HexMapView:"
     grep -E "^\[capture\] static\.png" "$tmp/scene.log" | sed 's/^/    /'
+  fi
+
+  # --placement runs a different script with its own copy of the blank-frame
+  # guard, and a guard nobody has watched fail is indistinguishable from a
+  # broken one — the argument leg 1 exists for, applied to the second capture
+  # path rather than assumed to carry over to it. Under --headless the run must
+  # die on the first frame with nothing on disk, which also proves the check
+  # runs *before* the write rather than after it.
+  echo "[self-test] 4/4 — the placement path's blank-frame guard fires too"
+  local rc_p=0
+  mkdir -p "$tmp/placement"
+  local -a placement_argv
+  placement_argv=("$GODOT" --headless --resolution "${WIDTH}x${HEIGHT}"
+    -s tools/placement_shot.gd -- "$tmp/placement")
+  run_bounded "$tmp/placement.log" "${placement_argv[@]}" || rc_p=$?
+  local wrote_p
+  wrote_p="$(find "$tmp/placement" -name '*.png' | wc -l | tr -d ' ')"
+  if [ "$rc_p" -eq 0 ]; then
+    echo "  FAIL: the headless placement run exited 0. The guard did not fire."
+    failures=$((failures + 1))
+  elif [ "$wrote_p" != "0" ]; then
+    echo "  FAIL: it wrote $wrote_p file(s) before failing; the check runs too late."
+    failures=$((failures + 1))
+  elif ! grep -q "SHOT-FAIL" "$tmp/placement.log"; then
+    echo "  FAIL: it failed, but not with a blank-frame verdict:"
+    tail -10 "$tmp/placement.log" | sed 's/^/    /'
+    failures=$((failures + 1))
+  else
+    echo "  PASS: exit $rc_p, no files written, guard said:"
+    grep "SHOT-FAIL" "$tmp/placement.log" | sed 's/^/    /'
   fi
 
   [ "$failures" -eq 0 ] || die "$failures self-test check(s) failed."
@@ -408,6 +461,27 @@ if [ "$MODE" = "stills" ]; then
   GOT="$(find "$ABS_OUT" -name '*.png' | wc -l | tr -d ' ')"
   [ "$GOT" -eq "$EXPECTED" ] \
     || { rm -rf "$ABS_OUT"; die "asked for $EXPECTED frame(s), got $GOT"; }
+elif [ "$MODE" = "placement" ]; then
+  echo "[capture] placement, ${WIDTH}x${HEIGHT} -> $REL_OUT/"
+  RC=0
+  capture_placement "$ABS_OUT" "$LOG" || RC=$?
+  if [ "$RC" -ne 0 ] || ! grep -q "^SHOT-OK" "$LOG"; then
+    rm -rf "$ABS_OUT"
+    echo "ERROR: capture failed and nothing was written." >&2
+    explain_failure "$RC" "$LOG" >&2
+    exit 1
+  fi
+  grep -E "^\[shot\]" "$LOG" || true
+
+  # The script decides how many frames the sequence is, so unlike stills there
+  # is no request to check its count against. What is still worth checking is
+  # that every frame it says it wrote is on disk — the failure this catches is
+  # a reported frame that never landed, which is the one that would put a
+  # missing picture in a pull request that claims four.
+  REPORTED="$(sed -n 's/^SHOT-OK \([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)"
+  GOT="$(find "$ABS_OUT" -name '*.png' | wc -l | tr -d ' ')"
+  [ "$GOT" -eq "${REPORTED:-0}" ] \
+    || { rm -rf "$ABS_OUT"; die "harness reported ${REPORTED:-none} frame(s), got $GOT"; }
 else
   command -v ffmpeg >/dev/null \
     || die "--movie needs ffmpeg to assemble a GIF (brew install ffmpeg). Godot's own movie output is AVI, which GitHub will not play inline."
