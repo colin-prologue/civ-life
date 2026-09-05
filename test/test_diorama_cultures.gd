@@ -195,3 +195,56 @@ func test_an_unknown_culture_falls_back_rather_than_emptying() -> void:
 	assert_eq(DioramaCultures.palette("nonesuch"),
 			DioramaCultures.palette(DioramaCultures.NAMES[0]),
 			"an unknown culture did not fall back to the first")
+
+
+# ----------------------------------------------------------------- the sheet
+
+func _sheet() -> Node3D:
+	var sheet: Node3D = load("res://game/diorama/culture_sheet.tscn").instantiate()
+	add_child_autofree(sheet)
+	return sheet
+
+
+func test_the_sheet_has_a_cell_per_style_and_culture() -> void:
+	var sheet := _sheet()
+	await wait_frames(2)
+	var cells := 0
+	for child in sheet.get_children():
+		if child is MeshInstance3D and child.name.begins_with("Cell_"):
+			cells += 1
+	assert_eq(cells,
+			DioramaStyles.NAMES.size() * DioramaCultures.NAMES.size(),
+			"the sheet is not the full style x culture cross-product")
+	assert_not_null(sheet.get_node_or_null("Camera"), "no camera")
+	assert_not_null(sheet.get_node_or_null("Sun"), "no light")
+	assert_not_null(sheet.get_node_or_null("Stage"), "no stage")
+
+
+## The sheet's entire argument, asserted rather than eyeballed: across a row the
+## VERTICES are identical and the COLOURS are not. If the geometry differed the
+## frame would be two buildings in two palettes, which says nothing about
+## culture; if the colours matched, the culture axis would be doing nothing.
+func test_a_row_is_one_building_rendered_in_two_palettes() -> void:
+	var sheet := _sheet()
+	await wait_frames(2)
+	for style: String in DioramaStyles.NAMES:
+		var verts: Array = []
+		var colors: Array = []
+		for culture: String in DioramaCultures.NAMES:
+			var cell: MeshInstance3D = sheet.get_node_or_null(
+					"Cell_%s_%s" % [style, culture])
+			assert_not_null(cell, "no cell for %s/%s" % [style, culture])
+			if cell == null:
+				continue
+			var arrays: Array = cell.mesh.surface_get_arrays(0)
+			verts.append(arrays[Mesh.ARRAY_VERTEX])
+			colors.append(arrays[Mesh.ARRAY_COLOR])
+			assert_eq(cell.scale, sheet.get_node(
+					"Cell_%s_%s" % [style, DioramaCultures.NAMES[0]]).scale,
+					"row '%s' scales its cultures differently" % style)
+		if verts.size() == 2:
+			assert_eq(verts[0], verts[1],
+					"row '%s' is two different buildings, not one in two palettes"
+					% style)
+			assert_ne(colors[0], colors[1],
+					"row '%s' comes out the same colour in both cultures" % style)
