@@ -106,6 +106,29 @@ const _CITIZEN_SCALE := 0.20
 const _ROAD_WIDTH_SCALE := 0.18
 const _ROAD_MIN_WIDTH := 2.0
 
+## The attention marks: a ring around every tile this turn's report named, with
+## the entry's number beside it.
+##
+## Cool and unnaturally bright, on purpose. Every colour in this scene so far
+## belongs to something that is *in* the world — ground that grew, or something
+## somebody built. This one belongs to the instrument rather than to the place,
+## and it should look like it: a reading laid over the map, not a new kind of
+## terrain. It is also the only pure cyan on screen, which is what lets it be
+## found at a glance on a map that is otherwise green, blue, brown and grey.
+##
+## The marks carry no state. They are read out of `world.report` on every
+## rebuild and vanish the moment the next turn produces a report without them —
+## the whole point being that a mark answers "what changed *this* turn", and a
+## mark that outlived its turn would be answering a question nobody asked.
+const _CHANGE_COLOR := Color(0.55, 0.92, 1.00)
+const _CHANGE_SHADOW := Color(0.04, 0.10, 0.14, 0.80)
+
+## Ring radius as a fraction of the hex radius, and its thickness. Just inside
+## the hex, so the ring reads as "this tile" rather than as a blob covering
+## whatever is standing on it.
+const _CHANGE_RING_SCALE := 0.84
+const _CHANGE_RING_WIDTH := 0.13
+
 ## Colour a tile fades toward as its forage falls — a pale, bleached version of
 ## itself rather than a darker one, because a winter map should read as drained
 ## rather than as a map at night.
@@ -269,6 +292,9 @@ func _draw() -> void:
 	_draw_herds()
 	_draw_nodes()
 	_draw_citizens()
+	# Last, and over everything: the marks are a reading of the map, so nothing
+	# on the map is allowed to sit on top of one.
+	_draw_changes()
 	_draw_season()
 	_draw_legend()
 
@@ -323,6 +349,43 @@ func _draw_citizens() -> void:
 		var fill := _CITIZEN_LOADED if citizen.carrying > 0.0 else _CITIZEN_FILL
 		draw_circle(centre, radius, fill)
 		draw_arc(centre, radius, 0.0, TAU, 14, _CITIZEN_EDGE, maxf(1.0, radius * 0.30))
+
+
+## A ring and a number on every tile this turn's report named.
+##
+## This is the half of the instrument that points. The status area says what
+## happened; the number here says where, and the two carry the same number
+## because `TurnReport` assigned it — the view is not counting anything of its
+## own, so the list and the map cannot get out of step.
+##
+## Changes with no place on the map — the season turning, the count of what did
+## not fit — are skipped rather than drawn somewhere arbitrary. They have no
+## `mark` for the same reason.
+func _draw_changes() -> void:
+	if _world.report == null:
+		return
+	var font := ThemeDB.fallback_font
+	var radius := _radius * _CHANGE_RING_SCALE
+	var width := maxf(1.5, _radius * _CHANGE_RING_WIDTH)
+	for change in _world.report.entries:
+		if not change.has_place():
+			continue
+		var centre := center_of(change.coord)
+		# A dark ring under the bright one, so the mark survives landing on pale
+		# mountains as well as on dark water.
+		draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_SHADOW, width * 1.9)
+		draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_COLOR, width)
+		if font == null:
+			continue
+		var label := str(change.mark)
+		var size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ThemeDB.fallback_font_size)
+		# Above the tile centre rather than on it: the thing that changed is
+		# usually standing in the middle of the hex.
+		var at := centre + Vector2(-size.x * 0.5, -radius - 3.0)
+		draw_string(font, at + Vector2(1, 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			ThemeDB.fallback_font_size, _CHANGE_SHADOW)
+		draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			ThemeDB.fallback_font_size, _CHANGE_COLOR)
 
 
 ## Marker radius as a fraction of the hex radius, for a herd of this size.
@@ -397,6 +460,12 @@ func _draw_legend() -> void:
 	pos.y += swatch.y + 6.0
 	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_LOADED)
 	_legend_caption(font, font_size, pos, "citizens (lit=laden)")
+	pos.y += swatch.y + 6.0
+
+	# And the marks, which are not a thing in the world at all — they are this
+	# turn's report, drawn where it happened.
+	draw_arc(pos + swatch * 0.5, swatch.x * 0.42, 0.0, TAU, 18, _CHANGE_COLOR, 2.0)
+	_legend_caption(font, font_size, pos, "changed this turn")
 
 
 func _legend_caption(font: Font, font_size: int, pos: Vector2, text: String) -> void:
