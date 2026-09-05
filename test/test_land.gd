@@ -58,6 +58,37 @@ func test_intensity_scales_how_fast_land_wears() -> void:
 	assert_gt(light, heavy, "lighter use wears the ground more slowly")
 
 
+func test_recovery_is_stated_in_seasons_rather_than_bare_turns() -> void:
+	# AC9, first half. The half-life is meant to be reasoned about against the
+	# calendar, so it is expressed as a multiple of the season rather than picked
+	# as a number of turns that happens to feel right.
+	assert_eq(Land.RECOVERY_HALF_LIFE_TURNS % Seasons.TURNS_PER_SEASON, 0,
+			"the recovery half-life is a whole number of seasons")
+	assert_gt(Land.RECOVERY_HALF_LIFE_TURNS, 0, "and a positive one")
+
+
+func test_the_wear_and_recovery_clocks_stay_within_a_season_of_each_other() -> void:
+	# AC9, second half, and the assertion that stops `DEPLETION_PER_UNIT` being
+	# tuned on its own. It is the one constant here that nothing else was checking:
+	# the floor, the ceiling and the half-life are all pinned by the tests above,
+	# but depletion could be moved by any factor without turning this file red.
+	#
+	# The claim is proportion, not a value. Land that wears much faster than it
+	# recovers reads as decline; land that recovers much faster than it wears reads
+	# as static. Rotation is the regime where the two clocks are comparable, so
+	# that is what gets asserted — and asserted against `Seasons.TURNS_PER_SEASON`
+	# rather than a literal, so the calendar stays the unit.
+	var wear := Land.wear_half_life_turns()
+	gut.p("wear half-life %d turns, recovery half-life %d turns, season %d turns"
+			% [wear, Land.RECOVERY_HALF_LIFE_TURNS, Seasons.TURNS_PER_SEASON])
+	assert_gt(wear, 0,
+			"unbroken maximum use must actually be able to halve a tile")
+	assert_almost_eq(float(wear), float(Land.RECOVERY_HALF_LIFE_TURNS),
+			float(Seasons.TURNS_PER_SEASON),
+			"wear (%d turns) and recovery (%d turns) are within a season of each other"
+					% [wear, Land.RECOVERY_HALF_LIFE_TURNS])
+
+
 func test_the_row_recovery_agrees_with_the_single_value_one() -> void:
 	# recovered_row() hoists the rate out of the loop for speed, which means the
 	# arithmetic exists twice. This is what stops the two drifting apart.
