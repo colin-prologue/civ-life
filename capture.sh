@@ -71,6 +71,7 @@ HOLD=6
 FPS=10
 GIF_WIDTH=480
 SELF_TEST=0
+REDUCE=""
 LINKS_DIRS=()
 
 usage() {
@@ -95,6 +96,11 @@ Options
                       own basename). Ignored for the game scene, whose stills
                       are named by seed and turn.
   --resolution WxH    render size (default 1280x720)
+  --reduce MODE       also write a <stem>-reduced.png beside every still, run
+                      through tools/spike_reduce.gd. MODE is 'value' (greyscale)
+                      or 'six' (six value bands) — the intent's reduction test.
+                      A style whose identity survives this reads at gameplay
+                      distance; one that collapses into mud does not.
   --links DIR         print the paste-ready markdown for an existing shots
                       directory and exit — no Godot, no capture. Run this
                       again after committing the frames: the URLs are pinned
@@ -126,6 +132,7 @@ while [ $# -gt 0 ]; do
     --label) LABEL="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
+    --reduce) REDUCE="$2"; shift 2 ;;
     --links) LINKS_DIRS+=("$2"); shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -491,6 +498,44 @@ else
     -vf "scale=${GIF_WIDTH}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=bayer:bayer_scale=5" \
     -loop 0 "$ABS_OUT/motion.gif" \
     || { rm -rf "$ABS_OUT"; die "ffmpeg could not assemble the GIF"; }
+fi
+
+# --- reduction test ----------------------------------------------------------
+# The intent's rule: "any candidate style must survive as an unlit flat-shaded
+# silhouette in six colours at gameplay distance."
+#
+# Run here rather than by hand so the reduced frame is captured from the SAME
+# still that ships beside it. A separately-invoked reduction is a reduction of
+# whatever was on disk at the time, which after one re-capture is a different
+# picture — and the whole value of the pair is that the reader can trust the
+# right-hand image is the left-hand one with its hue taken away.
+#
+# Before the byte cap on purpose: the reduced frames are frames, they land in
+# the repository forever like every other one, and a run that goes over the cap
+# must be discarded whole rather than keeping half its output.
+if [ -n "$REDUCE" ]; then
+  case "$REDUCE" in
+    value|six) ;;
+    *) rm -rf "$ABS_OUT"; die "--reduce takes 'value' or 'six', not '$REDUCE'" ;;
+  esac
+  REDUCED=0
+  while IFS= read -r png; do
+    case "$png" in *-reduced.png) continue ;; esac
+    OUT_PNG="${png%.png}-reduced.png"
+    RC=0
+    run_bounded "$LOG" "$GODOT" --headless -s tools/spike_reduce.gd -- \
+      "$png" "$OUT_PNG" "$REDUCE" || RC=$?
+    if [ "$RC" -ne 0 ] || ! grep -q "^REDUCE-OK" "$LOG"; then
+      rm -rf "$ABS_OUT"
+      echo "ERROR: reduction failed; the whole run was discarded." >&2
+      explain_failure "$RC" "$LOG" >&2
+      exit 1
+    fi
+    REDUCED=$((REDUCED + 1))
+  done < <(find "$ABS_OUT" -name '*.png' | sort)
+  [ "$REDUCED" -gt 0 ] \
+    || { rm -rf "$ABS_OUT"; die "--reduce found no stills to reduce"; }
+  echo "[capture] $REDUCED frame(s) reduced to '$REDUCE'"
 fi
 
 # --- byte cap ----------------------------------------------------------------
