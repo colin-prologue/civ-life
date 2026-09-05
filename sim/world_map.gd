@@ -28,6 +28,12 @@ extends RefCounted
 ## the same seed advanced the same number of turns still produces the same
 ## herds, in the same places, with the same numbers — but a save is now a state
 ## rather than two integers.
+##
+## The `chronicle` is the second thing here that is not a rule. It records a
+## season's worth of per-turn readings so that something drawing this world can
+## say whether a number is rising or falling; nothing in the turn loop reads it
+## back, and removing it would change no outcome. It is here because a trend
+## needs history and the renderer is forbidden to keep any.
 
 var grid: HexGrid
 var world_seed: int
@@ -58,6 +64,16 @@ var _vitality: Array = []
 ## them. Stepped in array order for the same reason agents are.
 var nodes: Array[CityNode] = []
 var routes: Array[Route] = []
+
+## The last season's worth of per-turn readings, written at the end of every
+## turn and read by nobody inside the turn loop.
+##
+## It is here rather than in the renderer because a trend needs history, the
+## renderer is not allowed to keep any, and — agents being what they are — most
+## of these numbers cannot be recomputed from `(seed, turn)`. See
+## `sim/chronicle.gd`, which argues the whole case; the short version is that
+## this is a ledger of what happened, not a rule about what happens.
+var chronicle := Chronicle.new()
 
 ## How much of each tile's forage is spoken for, by grid index — the sum of
 ## every agent's `forage_demand()` on that tile. A cache, maintained by the
@@ -98,14 +114,21 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 ## turn against the season it is actually standing in, never against last
 ## turn's, and a carrier standing at a farm leaves with this turn's harvest
 ## rather than last turn's.
+## Every node's flow counters are zeroed before anything moves grain, so what
+## they hold afterwards is this turn's arrivals and departures and not a running
+## total. The reading at the end is the last thing the turn does and the only
+## thing in here nothing else depends on.
 func advance_turn() -> int:
 	turn += 1
 	_recompute_forage()
+	for node in nodes:
+		node.begin_turn()
 	for node in nodes:
 		node.produce(self)
 	for agent in agents:
 		agent.step(self)
 	_recover_vitality()
+	_record_turn()
 	return turn
 
 
@@ -216,6 +239,52 @@ func total_granary_store() -> float:
 		if node.kind == CityNode.Kind.GRANARY:
 			total += node.store
 	return total
+
+
+## Grain that arrived in granaries this turn, and grain that left them.
+##
+## Two flows, reported separately and never as one signed number. While nothing
+## consumes (that is #29) the outflow is zero, and a display that showed only the
+## net would say "nothing is leaving" and "the two cancelled out" in exactly the
+## same way — which is the confusion this ticket exists to remove.
+func granary_intake() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			total += node.took_in
+	return total
+
+
+func granary_outflow() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			total += node.gave_out
+	return total
+
+
+## What every farm in the world grows this turn, at the tiles they stand on.
+##
+## Live rather than remembered: a farm's yield is a pure function of its tile and
+## the season, so this is the one flow on the map that needs no history at all.
+func farm_yield_rate() -> float:
+	var total := 0.0
+	for node in nodes:
+		total += node.yield_rate(self)
+	return total
+
+
+## How many people there are, and how many of them are stuck rather than moving.
+func citizen_count() -> int:
+	return citizens().size()
+
+
+func held_up_count() -> int:
+	var stuck := 0
+	for citizen in citizens():
+		if citizen.is_held_up():
+			stuck += 1
+	return stuck
 
 
 ## Total heads alive in the world. Summed from the herds rather than from the
@@ -356,6 +425,20 @@ func _recompute_forage() -> void:
 func _recover_vitality() -> void:
 	for use in range(Land.USE_COUNT):
 		_vitality[use] = Land.recovered_row(_vitality[use])
+
+
+## Write this turn's readings into the ledger.
+##
+## Last in the turn and read by nothing before the next one starts, which is what
+## keeps this a record rather than a rule. If anything in `sim/` ever branches on
+## a chronicle value, that is the moment this stopped being a query and the
+## boundary in `AgDR-001` has been crossed.
+func _record_turn() -> void:
+	chronicle.record(Chronicle.GRANARY_STORE, total_granary_store())
+	chronicle.record(Chronicle.GRANARY_IN, granary_intake())
+	chronicle.record(Chronicle.GRANARY_OUT, granary_outflow())
+	chronicle.record(Chronicle.FARM_YIELD, farm_yield_rate())
+	chronicle.record(Chronicle.HERD_POPULATION, total_herd_population())
 
 
 ## How many tiles differ from another map of the same size.

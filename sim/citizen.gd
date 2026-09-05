@@ -91,6 +91,26 @@ func step(world: WorldMap) -> void:
 	_walk(world)
 
 
+## Whether this citizen finished its last turn standing still because something
+## was in the way.
+##
+## A query, not a flag: it reads the counter `_held_up_by_traffic()` already
+## keeps, which is zero on any turn the citizen walked or waited by choice and
+## non-zero only while it is blocked. There is nothing here for the two to
+## disagree about, which is the same property `carrying` has for direction.
+##
+## This exists because the hold-up is the only place the wild world touches the
+## built one (`MAX_HELD_UP` above) and it was, until now, impossible to see
+## happen: a stalled dot and a walking dot rendered identically.
+func is_held_up() -> bool:
+	return _held_up > 0
+
+
+## How many consecutive turns this citizen has been stuck, out of `MAX_HELD_UP`.
+func held_up_turns() -> int:
+	return _held_up
+
+
 ## Fill up from the source node, up to what will fit in the sack.
 func _collect() -> void:
 	carrying += route.source.withdraw(capacity - carrying)
