@@ -59,8 +59,15 @@ var capacity: float
 ## enough to answer "how far along am I".
 var _index: int
 
-## Consecutive turns spent unable to leave the current tile.
-var _held_up: int
+## Consecutive turns spent unable to leave the current tile. Zero when the road
+## is clear, 1 on the first turn of a hold-up.
+##
+## Readable rather than private because the turn report needs to know when a
+## route's throughput dropped, and this citizen already counts it. The
+## alternative was for the report to keep its own memory of who moved last turn,
+## which would be a second copy of a fact the world already holds — and a report
+## with state of its own is a cache that can disagree with the world.
+var held_up: int
 
 
 func _init(p_id: int, p_route: Route, p_index := 0, p_capacity := CARRY_CAPACITY) -> void:
@@ -70,7 +77,7 @@ func _init(p_id: int, p_route: Route, p_index := 0, p_capacity := CARRY_CAPACITY
 	_index = p_index
 	carrying = 0.0
 	capacity = p_capacity
-	_held_up = 0
+	held_up = 0
 
 
 ## One turn: do the business of wherever you are standing, then walk.
@@ -120,11 +127,11 @@ func _deliver() -> void:
 ## not a branch.
 func _held_up_by_traffic(world: WorldMap) -> bool:
 	if world.forage_demand_at(coord) <= 0.0:
-		_held_up = 0
+		held_up = 0
 		return false
-	_held_up += 1
-	if _held_up > MAX_HELD_UP:
-		_held_up = 0
+	held_up += 1
+	if held_up > MAX_HELD_UP:
+		held_up = 0
 		return false
 	return true
 
