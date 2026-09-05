@@ -141,6 +141,22 @@ func add_route(route: Route) -> void:
 	routes.append(route)
 
 
+## The structure standing on this tile, or null if the tile is free.
+##
+## Linear over `nodes`, for the reason `Route.index_of()` is linear: a city is a
+## handful of chunky structures (`AgDR-002`), and an index keyed by coordinate
+## would be a cache that can disagree with the array it summarises.
+##
+## This is a *query*, and the one placement asks before it is allowed to build.
+## Keeping it here rather than in whatever is doing the placing is what lets the
+## rule "a tile holds one structure" be asserted without a scene tree.
+func node_at(coord: Vector2i) -> CityNode:
+	for node in nodes:
+		if node.coord == coord:
+			return node
+	return null
+
+
 ## Set a herd's population. The only way it changes, for the same reason.
 func set_herd_population(herd: Herd, value: float) -> void:
 	_forage_demand[grid.index_of(herd.coord)] += value - herd.population

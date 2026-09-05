@@ -131,7 +131,7 @@ static func line(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	var nudge := 1.0e-4
 	for i in range(1, steps + 1):
 		var t := float(i) / float(steps)
-		out[i] = _round_axial(
+		out[i] = round_axial(
 			lerpf(float(a.x) + nudge, float(b.x) + nudge, t),
 			lerpf(float(a.y) + nudge, float(b.y) + nudge, t)
 		)
@@ -142,7 +142,13 @@ static func line(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## Nearest hex to a fractional axial coordinate. Rounds in cube space and
 ## repairs whichever of the three cube axes drifted furthest, which is what
 ## keeps the result a real hex rather than a coordinate that fails q + r + s = 0.
-static func _round_axial(qf: float, rf: float) -> Vector2i:
+##
+## Public because the renderer's hit test needs exactly this and nothing more.
+## Turning a click into a tile is fractional axial coordinates rounded to a real
+## one — the same arithmetic `line()` does, and coordinate arithmetic is this
+## file's job. What stays in `game/` is the pixel-to-fraction part, which is the
+## only half that knows about a viewport.
+static func round_axial(qf: float, rf: float) -> Vector2i:
 	var sf := -qf - rf
 	var q := roundi(qf)
 	var r := roundi(rf)

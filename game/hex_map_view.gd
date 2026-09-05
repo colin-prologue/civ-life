@@ -10,6 +10,17 @@ extends Node2D
 ## and rebuilt from the world. If a rule ever needs to live here, it belongs in
 ## `sim/` instead — see `.decisions/AgDR-001-headless-sim-core.md`.
 ##
+## It now answers one question in the other direction — `coord_at_point()`, which
+## tile a click landed on. That is still pixels: the layout below is the only
+## place screen geometry exists, so its inverse has to be here too. What it is
+## emphatically not is placement. This says *which tile*; whether anything may be
+## built there is `CityGen`'s to answer.
+##
+## The selection outline is the one thing drawn that is not read out of the
+## world, and it is not owned here either — `main.gd` holds what is selected and
+## tells this node what to outline. Throw this node away and rebuild it and the
+## selection comes back with the next `set_selection()` call.
+##
 ## Layout is flat-top, odd-q offset, matching `sim/hex_grid.gd`'s extent. Centre
 ## spacing is `1.5 * radius` horizontally and `sqrt(3) * radius` vertically, with
 ## odd columns pushed down half a step — the standard flat-top packing, written
