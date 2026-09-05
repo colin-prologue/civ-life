@@ -45,6 +45,18 @@ const ROW_HEIGHT := 0.44
 ## How far captions float above the stage, in world units.
 const CAPTION_Y := 0.9
 
+## The left gutter that holds the style names, in cells, and the margin of pad
+## left around everything, also in cells.
+##
+## These are stated as a LAYOUT rather than inherited from condition_sheet.gd's
+## "(cols + 2.3) * cell_size" because that expression is only right at five
+## columns. At two it reserves more than a full sheet's width of empty pad and
+## then centres the camera on the middle of the emptiness, so the buildings sit
+## crowded against one edge of the frame — which is how the first capture of
+## this sheet came back. Width now follows from where things actually are.
+const LABEL_GUTTER := 1.15
+const PAD_MARGIN := 0.62
+
 @export var rebuild: bool = false:
 	set(v):
 		rebuild = false
@@ -78,20 +90,37 @@ func _build() -> void:
 		# of normalising it away.
 		var scale := _row_scale(r)
 		for c in range(cols):
-			var at := Vector3((c - (cols - 1) * 0.5) * cell_size, 0.0,
+			var at := Vector3(_col_x(c, cols), 0.0,
 					(r - (rows - 1) * 0.5) * cell_size)
 			tallest = maxf(tallest, _add_cell(r, c, at, scale, mat))
 	_add_stage(rows, cols, mat)
 	for c in range(cols):
 		_add_caption(DioramaCultures.NAMES[c], Vector3(
-				(c - (cols - 1) * 0.5) * cell_size, CAPTION_Y,
+				_col_x(c, cols), CAPTION_Y,
 				(rows * 0.5 + 0.1) * cell_size))
 	for r in range(rows):
 		_add_caption(DioramaStyles.NAMES[r], Vector3(
-				-(cols * 0.5 + 0.66) * cell_size, CAPTION_Y,
+				_col_x(0, cols) - LABEL_GUTTER * cell_size, CAPTION_Y,
 				(r - (rows - 1) * 0.5) * cell_size))
 	_add_camera(rows, cols, tallest)
 	_add_light()
+
+
+## Where a culture's column stands. Columns straddle x = 0; the row labels hang
+## off to the left of them, which is what pulls the sheet's centre of gravity
+## away from the origin and why _span() exists.
+func _col_x(c: int, cols: int) -> float:
+	return (c - (cols - 1) * 0.5) * cell_size
+
+
+## The horizontal band the sheet actually occupies: from the far side of the
+## style labels to the far side of the last column, plus a margin. Returned as
+## [centre, width] because both the stage and the camera need exactly that, and
+## deriving it twice is how the two drift apart.
+func _span(cols: int) -> Array:
+	var left := _col_x(0, cols) - (LABEL_GUTTER + PAD_MARGIN) * cell_size
+	var right := _col_x(cols - 1, cols) + PAD_MARGIN * cell_size
+	return [(left + right) * 0.5, right - left]
 
 
 ## Falls back to the row index when row_ids is short, so adding a style to
@@ -151,10 +180,10 @@ func _add_cell(r: int, c: int, at: Vector3, scale: float,
 ## the buildings'.
 func _add_stage(rows: int, cols: int, mat: StandardMaterial3D) -> void:
 	var b := DioramaMeshKit.new()
-	var w := (cols + 2.3) * cell_size
+	var span := _span(cols)
 	var d := (rows + 1.0) * cell_size
-	b.add_box(Transform3D(Basis.IDENTITY, Vector3(-0.45 * cell_size, -0.24, 0)),
-			Vector3(w, 0.24, d), Color(0.26, 0.25, 0.23))
+	b.add_box(Transform3D(Basis.IDENTITY, Vector3(span[0], -0.24, 0)),
+			Vector3(span[1], 0.24, d), Color(0.26, 0.25, 0.23))
 	var inst := MeshInstance3D.new()
 	inst.name = "Stage"
 	inst.mesh = b.commit()
@@ -187,20 +216,23 @@ func _add_camera(rows: int, cols: int, tallest: float) -> void:
 	cam.fov = fov_horizontal_deg
 	var half_fov := deg_to_rad(fov_horizontal_deg) * 0.5
 	var aspect := 16.0 / 9.0
-	var wide := (cols + 2.3) * cell_size
+	var span := _span(cols)
 	var deep := (rows + 1.0) * cell_size
 	var pitch := deg_to_rad(camera_pitch_deg)
 	# What the depth and the tallest building occupy vertically once tilted.
 	var high := deep * sin(pitch) + tallest * cos(pitch)
 	var dist := maxf(
-			(wide * 0.5) / tan(half_fov),
+			(span[1] * 0.5) / tan(half_fov),
 			(high * 0.5) / (tan(half_fov) / aspect)) * frame_margin
-	cam.position = Vector3(0, sin(pitch) * dist + tallest * 0.5,
+	# Offset onto the sheet's own centre, not the origin. The columns straddle
+	# zero but the row labels do not, so a camera on the origin frames the pad
+	# and leaves the buildings off to one side.
+	cam.position = Vector3(span[0], sin(pitch) * dist + tallest * 0.5,
 			cos(pitch) * dist)
 	# look_at() resolves via the node's global transform, so it must already be
 	# inside the tree — add_child comes first or this throws.
 	add_child(cam)
-	cam.look_at(Vector3(0, tallest * 0.3, 0), Vector3.UP)
+	cam.look_at(Vector3(span[0], tallest * 0.3, 0), Vector3.UP)
 	cam.current = true
 
 
