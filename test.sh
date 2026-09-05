@@ -257,6 +257,34 @@ for gen in tools/world_fingerprint.gd tools/diorama_fingerprint.gd tools/diorama
   echo "[test] $gen: $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
 done
 
+# --- 4b. the world must not settle into a repeating cycle -------------------
+# The primary acceptance criterion of AgDR-014. Before land had any memory every
+# seed converged to a fixed annual cycle within 5 to 17 years, three of the four
+# doing precisely the same thing every year thereafter. This is the check that
+# says that stopped being true, and it is the reason the record exists.
+#
+# A failure here is a finding, not a flake. AgDR-014 carries its own refutation
+# clause: if land memory stops breaking the cycle, the honest next move is
+# exogenous variation via terrain change, not adjusting Land's constants until
+# this goes green.
+echo "[test] checking the world still varies year to year"
+periodicity="$(mktemp)"
+trap 'rm -f "$out" "$fp1" "$fp2" "$periodicity"' EXIT
+"$GODOT" --headless -s tools/periodicity_check.gd >"$periodicity" 2>/dev/null
+grep -E "^(ok|FAIL)" "$periodicity" || true
+
+if ! grep -q "^ok" "$periodicity"; then
+  echo "ERROR: tools/periodicity_check.gd produced no results. A silent no-op" >&2
+  echo "       here would make the primary acceptance gate vacuously green." >&2
+  exit 1
+fi
+if grep -q "^FAIL" "$periodicity"; then
+  echo "ERROR: a world settled into a repeating annual cycle. AgDR-014 exists to" >&2
+  echo "       prevent exactly this; read its refutation clause before tuning" >&2
+  echo "       anything in sim/land.gd." >&2
+  exit 1
+fi
+
 # --- 5. the main scene actually launches ------------------------------------
 # The suite instantiates the scene itself, which proves the nodes wire up — but
 # it runs under GUT, not under the project's own startup path. A broken

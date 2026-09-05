@@ -289,3 +289,91 @@ func test_a_worn_field_yields_less() -> void:
 
 	assert_lt(fresh.store, first_year, "exhausted ground gives less than fresh ground")
 	assert_gt(fresh.store, 0.0, "but never nothing — the floor is above zero")
+
+
+## Ground worth standing on. Deliberately a low bar: the claim being tested is
+## that options never vanish, not that they stay good.
+const VIABLE := 0.10
+
+
+func test_a_herd_always_has_somewhere_worth_going() -> void:
+	# FR-8a, first half, and the one that is not negotiable. Depletion may move
+	# the answer; it may never remove the question. If this fails, the constants
+	# are wrong — do not lower VIABLE to make it pass.
+	var world := _world()
+
+	for turn in range(Seasons.TURNS_PER_YEAR * 40):
+		world.advance_turn()
+		if turn % Seasons.TURNS_PER_SEASON != 0:
+			continue
+		for herd in world.herds():
+			var options := 0
+			for coord in world.grid.all_coords():
+				if HexGrid.distance(herd.coord, coord) > herd.species.sense_range:
+					continue
+				if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE:
+					options += 1
+			assert_gt(options, 0,
+					"herd %d had nowhere to go on turn %d" % [herd.id, world.turn])
+
+
+func test_the_best_ground_within_reach_keeps_changing_for_every_herd() -> void:
+	# FR-8a, second half. This is the periodicity fix stated locally: if the best
+	# tile at a place never changes, nothing downstream ever has a reason to.
+	#
+	# Tracked per herd, because FR-8a and the done bar say *every* herd — and one
+	# lively region can rack up plenty of changes at an arbitrary watched tile
+	# while some other herd's local choice has settled permanently. Watching one
+	# tile nobody stands on would report a healthy number and prove nothing.
+	var world := _world()
+	var previous := {}
+	var changes := {}
+	var seen := {}
+	for herd in world.herds():
+		previous[herd.id] = Vector2i(-999, -999)
+		changes[herd.id] = 0
+		seen[herd.id] = {}
+
+	for year in range(40):
+		for i in range(Seasons.TURNS_PER_YEAR):
+			world.advance_turn()
+		for herd in world.herds():
+			var best := _best_within(world, herd.coord, herd.species.sense_range)
+			var places: Dictionary = seen[herd.id]
+			places[best] = true
+			if best != previous[herd.id]:
+				changes[herd.id] = int(changes[herd.id]) + 1
+			previous[herd.id] = best
+
+	for herd in world.herds():
+		assert_gt(int(changes[herd.id]), 3,
+				"herd %d's best reachable ground kept changing over forty years" % herd.id)
+		var places: Dictionary = seen[herd.id]
+		assert_gt(places.size(), 2,
+				"herd %d saw more than two distinct best tiles" % herd.id)
+
+
+func _best_within(world: WorldMap, origin: Vector2i, radius: int) -> Vector2i:
+	var best := origin
+	var best_value := -1.0
+	for coord in world.grid.all_coords():
+		if HexGrid.distance(origin, coord) > radius:
+			continue
+		var value := world.forage_for_use(coord, Land.Use.GRAZE)
+		if value > best_value:
+			best_value = value
+			best = coord
+	return best
+
+
+func test_two_worlds_from_one_seed_wear_identically() -> void:
+	var a := _world()
+	var b := _world()
+
+	for i in range(Seasons.TURNS_PER_YEAR * 20):
+		a.advance_turn()
+		b.advance_turn()
+
+	for use in [Land.Use.GRAZE, Land.Use.CULTIVATE]:
+		assert_eq(a.vitality_data(use), b.vitality_data(use),
+				"twenty years of wear reproduced exactly for use %d" % use)

@@ -53,7 +53,22 @@ static func _fingerprint(map: WorldMap) -> int:
 	for i in range(TURNS):
 		map.advance_turn()
 	acc = _fold(_fold(acc, [map.turn, map.season()]), _quantised_forage(map))
-	return _fold(acc, _quantised_state(map))
+	acc = _fold(acc, _quantised_state(map))
+	return _fold(acc, _quantised_vitality(map))
+
+
+## Every tile's wear, for every use, quantised to integers in grid order.
+##
+## Folded in for the same reason the record gives for forage and live state: the
+## cross-process check is only as wide as what it hashes, and a digest blind to
+## vitality would keep agreeing across processes while every worn tile in the
+## world diverged.
+static func _quantised_vitality(map: WorldMap) -> Array:
+	var out := []
+	for use in range(Land.USE_COUNT):
+		for value in map.vitality_data(use):
+			out.append(roundi(value * 1000.0))
+	return out
 
 
 ## Everything that survives a turn, as integers, in step order: where each agent
