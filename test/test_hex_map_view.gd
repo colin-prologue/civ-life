@@ -58,6 +58,7 @@ func test_the_city_is_drawn_in_colours_no_terrain_uses() -> void:
 	var city := {
 		"farm": HexMapView._FARM_FILL,
 		"granary": HexMapView._GRANARY_FILL,
+		"camp": HexMapView._GATHERING_FILL,
 		"road": HexMapView._ROAD_COLOR,
 		"citizen": HexMapView._CITIZEN_LOADED,
 	}
@@ -73,6 +74,39 @@ func test_the_city_is_drawn_in_colours_no_terrain_uses() -> void:
 					name, HexMapView.TERRAIN_NAMES[terrain], distance,
 				]
 			)
+
+
+func test_a_camp_looks_different_working_and_quiet() -> void:
+	# The mechanical half of AC8. Whether a herd arriving is a moment anybody
+	# notices needs a person and a moving picture; what can be checked here is
+	# that the two states are not the same swatch, and that the difference is
+	# wider than the gap the palette test calls "distinguishable".
+	var quiet := HexMapView.node_fill(CityNode.Kind.GATHERING, 0.0)
+	var working := HexMapView.node_fill(
+		CityNode.Kind.GATHERING, CityNode.gathering_share(CityNode.GATHERING_HALF_AT)
+	)
+	var distance := Vector3(
+		quiet.r - working.r, quiet.g - working.g, quiet.b - working.b
+	).length()
+	assert_gt(
+		distance,
+		MIN_COLOR_DISTANCE,
+		"one herd in range changes the camp visibly (distance %.3f)" % distance
+	)
+
+	# And the other two kinds do not flicker with their own output: a farm's year
+	# is already legible from the tile it stands on, and a camp's is legible
+	# nowhere else, which is the whole reason only one of them is drawn this way.
+	assert_eq(
+		HexMapView.node_fill(CityNode.Kind.FARM, 0.0),
+		HexMapView.node_fill(CityNode.Kind.FARM, 1.0),
+		"a farm is drawn the same whatever kind of year it is having"
+	)
+	assert_eq(
+		HexMapView.node_fill(CityNode.Kind.GRANARY, 0.0),
+		HexMapView._GRANARY_FILL,
+		"and a granary is drawn as a granary"
+	)
 
 
 func test_the_view_draws_the_city_the_world_actually_has() -> void:

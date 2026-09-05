@@ -89,6 +89,30 @@ const _FARM_FILL := Color(0.93, 0.79, 0.32)
 const _GRANARY_FILL := Color(0.62, 0.20, 0.16)
 const _NODE_EDGE := Color(0.20, 0.12, 0.04, 0.95)
 
+## The gathering camp, working and quiet. A violet, because the two warm slots
+## the city had were already spent on the farm and the granary and every
+## remaining warm mid-tone collides with the hills — the same corner the road and
+## the granary were painted into, resolved the same way.
+##
+## Unlike the other two structures this one is drawn at a brightness rather than
+## at a colour, and that asymmetry is the point of the kind. A farm's year is
+## legible from the tile it stands on, which the map already washes with the
+## season; a camp's year is legible from nowhere on the map except the camp
+## itself, because what feeds it is a herd that may be four tiles away and out of
+## the frame the eye happens to be looking at.
+const _GATHERING_FILL := Color(0.80, 0.35, 0.85)
+const _GATHERING_QUIET := Color(0.26, 0.16, 0.31)
+
+## The halo a working camp throws, as a fraction of the hex radius. It reaches
+## past the node's own square on purpose: what a camp is doing is *reaching into
+## the tiles around it*, and a mark confined to its own hex would say only that
+## something there changed colour.
+##
+## Nothing about the halo's size claims to be `CityNode.GATHERING_RADIUS` drawn
+## to scale. It is an indicator, and a nineteen-hex disc outlined accurately
+## would cover the herds that are the reason it is lit.
+const _GATHERING_HALO_SCALE := 0.92
+
 ## Citizens: a small pale figure, with the grain they are carrying shown as a
 ## warm core. Loaded and empty look different on purpose — the road then reads as
 ## traffic with a direction rather than as dots sliding back and forth.
@@ -304,13 +328,61 @@ func _draw_routes() -> void:
 
 
 ## The structures, as squares on the tiles they were placed on.
+##
+## A gathering camp additionally gets a halo, drawn under the square, so that the
+## turn a herd arrives is a change in the *size* of a mark rather than only in
+## its colour. Colour alone would ask the eye to compare a small square against
+## its own memory of that square a few turns ago, which is exactly the comparison
+## a person watching a map does not make.
 func _draw_nodes() -> void:
 	var half := _radius * _NODE_SCALE * 0.5
 	for node in _world.nodes:
 		var centre := center_of(node.coord)
+		if node.kind == CityNode.Kind.GATHERING:
+			_draw_gathering_halo(centre, node.yield_share())
 		var box := Rect2(centre - Vector2(half, half), Vector2(half, half) * 2.0)
-		draw_rect(box, _FARM_FILL if node.kind == CityNode.Kind.FARM else _GRANARY_FILL)
+		draw_rect(box, node_fill(node.kind, node.yield_share()))
 		draw_rect(box, _NODE_EDGE, false, maxf(1.0, half * 0.22))
+
+
+## The glow around a working camp: nothing at all when the ground around it is
+## empty, opening out as animals come into range.
+func _draw_gathering_halo(centre: Vector2, share: float) -> void:
+	var lit := _lit_fraction(share)
+	if lit <= 0.0:
+		return
+	var radius := _radius * _GATHERING_HALO_SCALE * lit
+	draw_circle(centre, radius, Color(_GATHERING_FILL, 0.22 * lit))
+	draw_arc(centre, radius, 0.0, TAU, 24, Color(_GATHERING_FILL, 0.55 * lit), maxf(1.0, _radius * 0.05))
+
+
+## The fill for one structure. Static and public so a test can check the palette
+## without a viewport, and so the lit/quiet reading is one function rather than
+## something reconstructed at each draw call.
+##
+## `share` is the node's own report of how good its last turn was
+## (`CityNode.yield_share()`), read rather than derived: how a yield was arrived
+## at is simulation's business, and a view that recomputed it would be the second
+## copy of a rule `AgDR-001` exists to prevent.
+static func node_fill(kind: int, share: float) -> Color:
+	match kind:
+		CityNode.Kind.FARM:
+			return _FARM_FILL
+		CityNode.Kind.GATHERING:
+			return _GATHERING_QUIET.lerp(_GATHERING_FILL, _lit_fraction(share))
+	return _GRANARY_FILL
+
+
+## How lit a camp looks for a given share of its best turn.
+##
+## Square root, for the same reason the herd marker uses one: the eye reads the
+## bottom of a brightness range far more finely than the top, and a single herd
+## in range is worth about half a camp's ceiling by construction
+## (`CityNode.GATHERING_HALF_AT`). Linear would render the ordinary good case —
+## one herd, right there, visible on the map — as a permanent half-light, and the
+## thing the player has to notice is *arrival*, not magnitude.
+static func _lit_fraction(share: float) -> float:
+	return sqrt(clampf(share, 0.0, 1.0))
 
 
 ## The people on the road. Small — a person is not a herd — and filled according
@@ -394,6 +466,16 @@ func _draw_legend() -> void:
 	pos.y += swatch.y + 6.0
 	draw_rect(Rect2(pos + swatch * 0.24, swatch * 0.52), _GRANARY_FILL)
 	_legend_caption(font, font_size, pos, "granary")
+	pos.y += swatch.y + 6.0
+	# The camp's swatch is drawn twice, dark then lit, because its entry in the
+	# legend is not a colour but a *difference* — the whole thing worth knowing
+	# about this structure is that it has two states and the world decides which.
+	draw_rect(Rect2(pos + Vector2(0.0, swatch.y * 0.24), swatch * 0.52), _GATHERING_QUIET)
+	draw_rect(Rect2(pos + swatch * Vector2(0.48, 0.24), swatch * 0.52), _GATHERING_FILL)
+	# Caption kept to roughly the width of the longest terrain name: the panel is
+	# not clipped to, and "camp (lit=animals near)" ran off the right edge of a
+	# 1280-wide frame — visible in any capture taken at that size.
+	_legend_caption(font, font_size, pos, "camp (lit=animals)")
 	pos.y += swatch.y + 6.0
 	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_LOADED)
 	_legend_caption(font, font_size, pos, "citizens (lit=laden)")
