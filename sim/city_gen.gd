@@ -1,8 +1,15 @@
 class_name CityGen
 extends RefCounted
 
-## Puts the smallest possible city on a freshly generated world: a farm, a
-## granary a short walk away, a road between them, and people on it.
+## Puts the smallest possible city on a freshly generated world: a granary, a
+## farm a short walk out one side of it, a gathering camp the same walk out
+## another, roads between them, and people on both.
+##
+## Two spokes rather than one because the two kinds of production say different
+## things. The farm's year is the tile's — the same every year, moving with the
+## season. The camp's year is whatever the animals happen to do, and the pair of
+## them side by side on the same map is the only way that difference is legible
+## as a difference rather than as noise.
 ##
 ## The counterpart to `Herd.populate()`, and built the same way for the same
 ## reason — its own generator, seeded from the world seed with its own salt, so
@@ -84,9 +91,14 @@ static func populate(world: WorldMap) -> void:
 ## Directions are tried in `HexGrid.DIRECTIONS` order rather than drawn, so the
 ## road a given farm site produces never depends on how many draws happened
 ## before it.
-static func _road_from(world: WorldMap, from: Vector2i) -> Array[Vector2i]:
+##
+## `avoid` names one direction to skip, which is how the second spoke is stopped
+## from being laid back down the first one.
+static func _road_from(world: WorldMap, from: Vector2i, avoid := Vector2i.ZERO) -> Array[Vector2i]:
 	for candidate_direction in HexGrid.DIRECTIONS:
 		var direction: Vector2i = candidate_direction
+		if direction == avoid:
+			continue
 		var to := from + direction * ROUTE_LENGTH
 		if not world.grid.has_coord(to):
 			continue
@@ -116,14 +128,54 @@ static func _build(world: WorldMap, path: Array[Vector2i]) -> void:
 	world.add_node(farm)
 	var granary := CityNode.new(world.nodes.size(), path[-1], CityNode.Kind.GRANARY)
 	world.add_node(granary)
+	_connect(world, farm, granary, path)
 
-	var route := Route.new(world.routes.size(), farm, granary, path)
+	_add_gathering_spoke(world, granary, path[-2] - path[-1])
+
+
+## A gathering camp on a second spoke out of the granary, joined to it by a road
+## of its own.
+##
+## The granary is the hub because that is what a granary is, and because it keeps
+## `ROUTE_LENGTH` honest: both roads are the same short walk, so the delivery lag
+## that fixes that constant applies equally to both and neither road is a special
+## case (see `AgDR-013`'s closing note).
+##
+## The direction back toward the farm is excluded and nothing else is: this
+## placement is as unclever as the farm's, and deliberately so. Where the camp
+## ends up is not chosen against where animals are, because the animals move and
+## nothing here knows where they are going. Whether the camp turns out to be
+## worth having is the world's answer, not generation's.
+##
+## Silently does nothing if there is no second road out of the granary. A city
+## with a farm and no camp is the honest outcome on a cramped site.
+static func _add_gathering_spoke(world: WorldMap, granary: CityNode, toward_farm: Vector2i) -> void:
+	var outward := _road_from(world, granary.coord, toward_farm)
+	if outward.is_empty():
+		return
+
+	var camp := CityNode.new(world.nodes.size(), outward[-1], CityNode.Kind.GATHERING)
+	world.add_node(camp)
+
+	# Reversed, because a route runs from the node it collects from to the node
+	# it delivers to and this one was laid outward from the granary.
+	var inward: Array[Vector2i] = []
+	for i in range(outward.size() - 1, -1, -1):
+		inward.append(outward[i])
+	_connect(world, camp, granary, inward)
+
+
+## A road between two placed nodes, and the people who walk it.
+##
+## Citizens start spread along the road rather than stacked at the source, so the
+## first thing anyone sees is a road in use rather than a queue. They
+## desynchronise on their own after that — whoever reaches the source first
+## leaves with what is there and the next has to wait for the following turn.
+static func _connect(
+	world: WorldMap, source: CityNode, sink: CityNode, path: Array[Vector2i]
+) -> void:
+	var route := Route.new(world.routes.size(), source, sink, path)
 	world.add_route(route)
-
-	# Citizens start spread along the road rather than stacked at the farm, so
-	# the first thing anyone sees is a road in use rather than a queue. They
-	# desynchronise on their own after that — whoever reaches the farm first
-	# leaves with the harvest and the next has to wait for the following turn.
 	for i in range(CITIZENS_PER_ROUTE):
 		var start := (i * (path.size() - 1)) / maxi(1, CITIZENS_PER_ROUTE - 1)
 		world.add_agent(Citizen.new(world.agents.size(), route, start))
