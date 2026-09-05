@@ -379,6 +379,28 @@ func test_every_overlay_names_a_query_the_world_actually_answers() -> void:
 		)
 
 
+func test_every_overlay_caption_fits_the_panel_it_is_drawn_in() -> void:
+	# The panel is a fixed width in from the right edge and the caption is drawn
+	# at its left with no wrapping, so a caption longer than the panel runs off
+	# the side of the window. That is how "forage — what the land feeds" shipped
+	# as "forage — what the land fee". Caught here rather than in a frame,
+	# because the next overlay's caption is written by whoever adds the entry.
+	var font := ThemeDB.fallback_font
+	var font_size := ThemeDB.fallback_font_size
+	for entry in HexMapView.OVERLAYS:
+		var caption := String(entry["caption"])
+		var width: float = font.get_string_size(
+			caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size
+		).x
+		assert_lt(
+			width,
+			HexMapView.PANEL_INSET,
+			"overlay '%s' caption %s fits in %d px, needs %d" % [
+				entry["name"], caption, HexMapView.PANEL_INSET, width,
+			]
+		)
+
+
 func test_a_second_scalar_is_an_entry_rather_than_a_new_system() -> void:
 	# AC5's real requirement. This builds the vitality overlay #38 will add — not
 	# as a preview of that ticket, but as proof that adding it is an array element

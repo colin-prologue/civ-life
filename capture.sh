@@ -63,6 +63,8 @@ TURNS="0,4,12"
 NAME=""
 SCENE=""
 LABEL=""
+OVERLAY=""
+STAGE=""
 OUT_ROOT="docs/shots"
 MODE="stills"
 FROM_TURN=0
@@ -91,9 +93,13 @@ Options
                       captured as a single verified still; --turns and --movie
                       do not apply to it and --movie is refused rather than
                       recording one frame N times.
-  --label NAME        filename stem for a --scene still (default: the scene's
-                      own basename). Ignored for the game scene, whose stills
-                      are named by seed and turn.
+  --label NAME        filename stem for the stills (default: the scene's own
+                      basename for --scene, the seed for the game scene). For
+                      the game scene the turn number is still appended.
+  --overlay NAME      turn a map overlay on before capturing (e.g. forage)
+  --stage held-up     put a herd on top of a citizen so the frame shows
+                      somebody held up. Say so wherever the frame is used:
+                      the shipped seed does not produce this on its own.
   --resolution WxH    render size (default 1280x720)
   --links DIR         print the paste-ready markdown for an existing shots
                       directory and exit — no Godot, no capture. Run this
@@ -124,6 +130,8 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --scene) SCENE="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
+    --overlay) OVERLAY="$2"; shift 2 ;;
+    --stage) STAGE="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
     --links) LINKS_DIRS+=("$2"); shift 2 ;;
@@ -244,6 +252,8 @@ capture_stills() {
   # reproducible by the command that made it.
   [ -n "$SCENE" ] && argv+=("--scene=$SCENE")
   [ -n "$LABEL" ] && argv+=("--label=$LABEL")
+  [ -n "$OVERLAY" ] && argv+=("--overlay=$OVERLAY")
+  [ -n "$STAGE" ] && argv+=("--stage=$STAGE")
   local rc=0
   run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"

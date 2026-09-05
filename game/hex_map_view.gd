@@ -171,7 +171,7 @@ const OVERLAY_FORAGE := 0
 const OVERLAYS: Array[Dictionary] = [
 	{
 		"name": "forage",
-		"caption": "forage — what the land feeds",
+		"caption": "forage — feed for herds",
 		"row": "forage_data",
 		"args": [],
 		"min": Seasons.MIN_FORAGE,
@@ -184,7 +184,12 @@ const OVERLAYS: Array[Dictionary] = [
 ## Left edge of the season indicator and the legend below it, measured in from
 ## the right of the viewport. Shared so the two line up, and wide enough that
 ## the longest season caption is not clipped by the edge of the window.
-const _PANEL_INSET := 206.0
+##
+## Public because it is also the width every overlay caption has to fit inside,
+## and `test_hex_map_view.gd` measures them against it. Nothing wraps the text:
+## a caption wider than this runs off the side of the window, which is how the
+## forage overlay first shipped reading "what the land fee".
+const PANEL_INSET := 206.0
 
 const _EDGE_COLOR := Color(0.0, 0.0, 0.0, 0.18)
 const _BACKGROUND := Color(0.07, 0.08, 0.10)
@@ -553,7 +558,7 @@ func _draw_season() -> void:
 	if font == null:
 		return
 	var current := _world.season()
-	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var left := get_viewport_rect().size.x - PANEL_INSET
 	var pos := Vector2(left, 16.0)
 	var bar := Vector2(38, 10)
 	for season in Seasons.SEASON_ORDER:
@@ -580,7 +585,7 @@ func _draw_legend() -> float:
 		return 62.0
 	var font_size := ThemeDB.fallback_font_size
 	var swatch := Vector2(16, 16)
-	var pos := Vector2(get_viewport_rect().size.x - _PANEL_INSET, 62.0)
+	var pos := Vector2(get_viewport_rect().size.x - PANEL_INSET, 62.0)
 	for terrain in TERRAIN_NAMES:
 		draw_rect(Rect2(pos, swatch), TERRAIN_COLORS[terrain])
 		draw_rect(Rect2(pos, swatch), _EDGE_COLOR, false, 1.0)
@@ -645,7 +650,7 @@ func _draw_overlay_key(top: float) -> float:
 	if font == null:
 		return top
 	var font_size := ThemeDB.fallback_font_size
-	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var left := get_viewport_rect().size.x - PANEL_INSET
 	var entry := active_overlay()
 	if entry.is_empty():
 		draw_string(font, Vector2(left, top + 11.0), "[O] overlay: off",
@@ -706,7 +711,7 @@ func _draw_flows(top: float) -> void:
 	var data := readout()
 	if data.is_empty():
 		return
-	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var left := get_viewport_rect().size.x - PANEL_INSET
 	var pos := Vector2(left, top)
 
 	draw_string(font, pos + Vector2(0.0, 11.0),
@@ -740,7 +745,7 @@ func _flow_line(font: Font, font_size: int, pos: Vector2, label: String, value: 
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.70, 0.72, 0.76))
 	draw_string(font, pos + Vector2(74.0, 11.0), value,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.94, 0.94, 0.94))
-	_draw_trend(pos + Vector2(_PANEL_INSET - 26.0, 3.0), trend)
+	_draw_trend(pos + Vector2(PANEL_INSET - 26.0, 3.0), trend)
 
 
 ## Rising, falling or steady, as a shape rather than as a glyph.

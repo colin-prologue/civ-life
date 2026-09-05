@@ -44,8 +44,23 @@ extends SceneTree
 ##
 ## Scene selection:
 ##   --scene=res://path.tscn  what to photograph (default: the game scene)
-##   --label=name             stem for stills from a non-turn-driven scene,
-##                            which has no turn number to name them by
+##   --label=name             stem for the stills, in place of the seed. For a
+##                            non-turn-driven scene it is the whole filename;
+##                            for the game scene the turn number is still
+##                            appended, so two runs of the same turn under
+##                            different labels do not overwrite each other.
+##
+## What the frame shows:
+##   --overlay=name           turn a map overlay on before capturing
+##   --stage=held-up          put a herd on top of somebody so the frame shows
+##                            a citizen held up. Staged on purpose and named so
+##                            in the filename: on the shipped seed no herd
+##                            wanders onto the city's road inside six hundred
+##                            turns, so the one place the wild world touches the
+##                            built one cannot be photographed by waiting for it.
+##                            This is the only thing this harness adds to a
+##                            world, and it adds it through `add_agent()` —
+##                            the same call generation uses.
 
 const MAIN_SCENE := "res://game/main.tscn"
 
@@ -79,6 +94,8 @@ var _width := 1280
 var _height := 720
 var _scene := MAIN_SCENE
 var _label := ""
+var _overlay := ""
+var _stage := ""
 
 var _main: Node = null
 var _view: Node = null
@@ -100,6 +117,8 @@ func _initialize() -> void:
 	_to_turn = int(args.get("to", _to_turn))
 	_scene = str(args.get("scene", _scene))
 	_label = str(args.get("label", ""))
+	_overlay = str(args.get("overlay", ""))
+	_stage = str(args.get("stage", ""))
 	if args.has("turns"):
 		_turns = _parse_turns(str(args["turns"]))
 
@@ -155,6 +174,14 @@ func _initialize() -> void:
 	if _is_turn_driven():
 		_apply_seed()
 
+	if _overlay != "":
+		if not _view.has_method("set_overlay_named"):
+			_fail("the view has no overlays; --overlay= cannot be honoured")
+			return
+		if not _view.set_overlay_named(_overlay):
+			_fail("no overlay named '%s'" % _overlay)
+			return
+
 	for i in range(SETTLE_FRAMES):
 		await process_frame
 
@@ -188,16 +215,45 @@ func _apply_seed() -> void:
 		_main.call("_update_status")
 
 
+## Put the world into the state a frame is meant to show, for a state that
+## waiting will not produce.
+##
+## Only one of these exists and it should stay that way. A capture harness that
+## can arrange anything is a harness whose frames are not evidence about the
+## game — so this adds an ordinary agent through the world's own public call,
+## changes no rule, and is named in the filename of every frame it touches.
+func _apply_stage() -> bool:
+	if _stage != "held-up":
+		_fail("unknown --stage=%s" % _stage)
+		return false
+	var people: Array = _main.world.citizens()
+	if people.is_empty():
+		_fail("--stage=held-up needs somebody to hold up; this world has nobody")
+		return false
+	_main.world.add_agent(Herd.new(9001, people[0].coord, Species.grazer(), 40.0))
+	print("[capture] staged: a herd is standing on citizen %d at %s" % [
+		people[0].id, people[0].coord,
+	])
+	return true
+
+
 func _run_stills() -> void:
 	if not _is_turn_driven():
 		await _run_static_still()
 		return
 	for target in _turns:
 		while _main.world.turn < target:
+			# Staged one turn short of the frame, because being held up is a
+			# thing that happens during a turn: the obstruction has to be
+			# standing there while the citizen takes its step.
+			if _stage != "" and _main.world.turn == target - 1:
+				if not _apply_stage():
+					return
 			_main.advance_turn()
 		for i in range(2):
 			await process_frame
-		var path := "%s/seed-%d-turn-%03d.png" % [_out_dir, _seed, target]
+		var stem := _label if _label != "" else "seed-%d" % _seed
+		var path := "%s/%s-turn-%03d.png" % [_out_dir, stem, target]
 		var wrote := await _capture_to(path)
 		if not wrote:
 			return
