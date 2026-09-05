@@ -220,7 +220,7 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var need := _draw_need(ctx, path)
 	var part := {"kind": kind, "xf": xf, "params": params,
 			"color": Color.MAGENTA, "need": need, "y": 0.0,
-			"role": n.get("role", "plaster")}
+			"role": _role_of(n, path)}
 	return {"parts": [part], "need": need,
 			"frame": {"xf": xf, "footprint": Vector2(w, d), "height": h}}
 
@@ -568,7 +568,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		parts.append({"kind": kind, "xf": xf,
 				"params": params, "color": Color.MAGENTA,
 				"need": need, "y": 0.0,
-				"role": body.get("role", "plaster")})
+				"role": _role_of(body, child_path)})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their
 		# thickness, so 2*radius under-reports the real width by ~14% on a
@@ -633,11 +633,64 @@ static func _height_of(p: Dictionary) -> float:
 	return params["size"].y if params.has("size") else params.get("height", 0.0)
 
 
-## Resolve each part's role into a concrete colour. Kept separate from build()
-## so one tree can be rendered in several palettes — which is what makes
-## culture a mapping rather than a fork of the geometry.
-static func apply_roles(parts: Array, roles: Dictionary) -> void:
+## A mass's role, which is REQUIRED rather than defaulted. The old default —
+## fall back to the wall colour — meant a style that forgot a role rendered
+## perfectly and looked deliberate, which is the failure mode the closed role
+## set exists to remove. An empty string here reaches apply_roles(), resolves
+## against nothing, and comes out magenta.
+static func _role_of(n: Dictionary, path: String) -> String:
+	assert(n.has("role"), "mass '%s' names no role — every part has a purpose"
+			% path)
+	return String(n.get("role", ""))
+
+
+## Every role a style tree references, in first-seen order. Walks the tree
+## rather than the built parts on purpose: a mass whose sampled height comes
+## out at zero emits nothing for that id, so building specimens and reading
+## their roles back would let a role be "unreferenced" for some seeds and
+## referenced for others. The vocabulary is a property of the tree.
+static func roles_in(node: Dictionary) -> Array:
+	var found: Array = []
+	_collect_roles(node, found)
+	return found
+
+
+static func _collect_roles(node: Dictionary, into: Array) -> void:
+	for type_key: String in node:
+		var body: Variant = node[type_key]
+		if not (body is Dictionary):
+			continue
+		if type_key == "mass":
+			var role: String = String(body.get("role", ""))
+			if role != "" and not into.has(role):
+				into.append(role)
+			continue
+		if body.has("of"):
+			_collect_roles(body["of"], into)
+		for child in body.get("children", []):
+			_collect_roles(child, into)
+
+
+## Resolve each part's role into a concrete colour through one culture's
+## mapping. Kept separate from build() so one tree can be rendered in several
+## palettes — which is what makes culture a mapping rather than a fork of the
+## geometry, and what keeps it out of the seeded channels entirely: nothing
+## here touches `need`, `xf` or `params`, so the same style, seed and id under
+## two cultures differ in exactly one field per part.
+##
+## An unresolvable role is loud twice over. The assert stops a debug build
+## where the bad style is, and the magenta fallback covers release builds,
+## where `assert` is compiled out — without it the missing key would yield
+## null, and a part painted null is a part painted BLACK, which is
+## indistinguishable from a deliberately dark culture.
+static func apply_roles(parts: Array, palette: Dictionary) -> void:
 	for p: Dictionary in parts:
 		var role: String = p.get("role", "")
-		assert(roles.has(role), "no colour for role '%s'" % role)
-		p["color"] = roles[role]
+		assert(palette.has(role),
+				"no colour for role '%s' in this culture" % role)
+		if not palette.has(role):
+			push_error("DioramaCompose: role '%s' resolves in no culture palette"
+					% role)
+			p["color"] = Color.MAGENTA
+			continue
+		p["color"] = palette[role]

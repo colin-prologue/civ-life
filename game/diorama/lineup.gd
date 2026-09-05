@@ -19,6 +19,15 @@ extends Node3D
 ## a time — the axis it varies is the seed, so mixing styles would confound the
 ## thing it exists to isolate.
 @export_enum("residential", "hero_arch", "civic", "stepped") var style: String = "residential"
+
+## Which culture's palette resolves the roles. A second axis, but not a second
+## axis of the GRID: the sheet still varies building id across its cells, and
+## the culture applies to all of them, so two captures of this scene are two
+## sheets of the same twelve buildings in two palettes. The cross-product —
+## styles down, cultures across — is culture_sheet.tscn, which is the frame
+## that answers "is culture legible", because it puts the same building id
+## under two palettes side by side.
+@export_enum("sunlit", "basalt") var culture: String = "sunlit"
 @export var world_seed: int = 20260826
 @export var specimen_count: int = 12
 @export var columns: int = 4
@@ -78,7 +87,7 @@ func _build() -> void:
 func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	var tree: Dictionary = DioramaStyles.for_name(style)
 	var parts := DioramaCompose.build(tree, world_seed, i)
-	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+	DioramaCompose.apply_roles(parts, DioramaCultures.palette(culture))
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()

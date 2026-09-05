@@ -13,6 +13,11 @@ extends Node3D
 
 @export var world_seed: int = 20260829
 
+## Which culture's palette resolves the roles. The ladder itself is unaffected —
+## `need` is drawn during resolution and colour is applied after — so switching
+## this re-paints the sheet and changes nothing about which parts survive.
+@export_enum("sunlit", "basalt") var culture: String = "sunlit"
+
 ## Which building id each style's row shows, in DioramaStyles.NAMES order.
 ##
 ## The sheet shows ONE building per style, so this choice decides what the
@@ -141,7 +146,7 @@ func _add_cell(r: int, c: int, at: Vector3, scale: float,
 	var parts := DioramaCompose.build(DioramaStyles.for_name(style),
 			world_seed, _id_for(r))
 	var survivors := DioramaCondition.filter(parts, RUNGS[c])
-	DioramaCompose.apply_roles(survivors, DioramaStyles.ROLES)
+	DioramaCompose.apply_roles(survivors, DioramaCultures.palette(culture))
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, survivors, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()
