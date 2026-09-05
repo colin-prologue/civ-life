@@ -237,6 +237,22 @@ func tile_polygon_count() -> int:
 	return _polygons.size()
 
 
+## The colour the last rebuild painted on one tile, or transparent for a tile
+## off the map.
+##
+## Exists so a test can ask what the map is actually showing rather than
+## recompute what it ought to show. An overlay test that calls `overlay_fill()`
+## itself passes whether or not the tiles ever receive the result; this one goes
+## through the same array `_draw()` replays.
+func tile_fill(coord: Vector2i) -> Color:
+	if _world == null:
+		return Color(0, 0, 0, 0)
+	var i := _world.grid.index_of(coord)
+	if i < 0 or i >= _fills.size():
+		return Color(0, 0, 0, 0)
+	return _fills[i]
+
+
 ## The radius in pixels the map was last fitted to.
 func hex_radius() -> float:
 	return _radius
@@ -465,8 +481,7 @@ func _draw_nodes() -> void:
 		var box := Rect2(centre - Vector2(half, half), Vector2(half, half) * 2.0)
 		if node.kind == CityNode.Kind.FARM:
 			draw_rect(box, _FARM_FALLOW)
-			var share := clampf(
-				node.yield_rate(_world) / CityNode.FARM_YIELD_PER_TURN, 0.0, 1.0)
+			var share := farm_fill_share(node, _world)
 			if share > 0.0:
 				draw_rect(Rect2(
 					box.position + Vector2(0.0, box.size.y * (1.0 - share)),
@@ -476,6 +491,16 @@ func _draw_nodes() -> void:
 			draw_rect(box, _GRANARY_FILL)
 			_draw_flow_stubs(box, node.took_in, node.gave_out)
 		draw_rect(box, _NODE_EDGE, false, maxf(1.0, half * 0.22))
+
+
+## How much of a farm's square is lit: this turn's yield against what the same
+## field would grow if the season were as good as it gets.
+##
+## Measured against the crop's own ceiling rather than against the best yield on
+## this map, for the reason `tile_color()` gives: a normalisation that follows
+## what is present makes a lean year look like an ordinary one.
+static func farm_fill_share(node: CityNode, world: WorldMap) -> float:
+	return clampf(node.yield_rate(world) / CityNode.FARM_YIELD_PER_TURN, 0.0, 1.0)
 
 
 ## The two stubs beside a store: what came in this turn, and what went out.
