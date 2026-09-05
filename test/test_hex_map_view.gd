@@ -523,3 +523,68 @@ func test_rising_falling_and_steady_are_three_different_marks() -> void:
 ## palette tests above use, pulled out so the newer ones can share it.
 func _separation(a: Color, b: Color) -> float:
 	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length()
+
+
+# --- the marks this turn's report puts on the map ----------------------------
+
+
+func test_two_changes_on_one_tile_share_a_mark_that_names_them_both() -> void:
+	# One herd can have a big turn: walk into different country *and* pass a
+	# head-count mark, two entries in the report at one coordinate. Drawn a ring
+	# and a number per entry, the second number lands exactly on the first and a
+	# line of the report ends up pointing at a mark that is not on screen. The
+	# tile gets one ring and reads out both numbers instead.
+	var world := _herd_world()
+	var herd := world.herds()[0]
+	var before := TurnReport.snapshot(world)
+	world.move_agent(herd, _FOREST)
+	world.set_herd_population(herd, 51.0)
+	var report := TurnReport.since(world, before)
+
+	assert_eq(report.entries.size(), 2, "the herd crossed and grew, in one place")
+	assert_eq(report.entries[0].coord, report.entries[1].coord, "both in the same place")
+
+	var marks := HexMapView.change_marks(report)
+	assert_eq(marks.size(), 1, "one ring on the tile, not two rings on top of each other")
+	assert_eq(marks[0][0], _FOREST, "ringed where it happened")
+	assert_eq(marks[0][1], "1,2", "the ring reads out both of the report's numbers")
+
+
+func test_a_tile_with_one_change_is_labelled_with_just_its_number() -> void:
+	var world := _herd_world()
+	var before := TurnReport.snapshot(world)
+	world.move_agent(world.herds()[0], _FOREST)
+	var report := TurnReport.since(world, before)
+
+	var marks := HexMapView.change_marks(report)
+	assert_eq(marks.size(), 1, "one change, one mark")
+	assert_eq(marks[0][1], "1", "no comma where there is nothing to join")
+
+
+func test_changes_with_no_place_on_the_map_are_not_marked() -> void:
+	# The season turning and the dropped-entry count happen everywhere and
+	# nowhere. Drawing them somewhere would be inventing a location.
+	var world := _herd_world()
+	var report := TurnReport.new(1)
+	report.entries = [
+		TurnChange.new(TurnChange.NOWHERE, TurnChange.Kind.SEASON_TURNED, 4.0),
+		TurnChange.new(TurnChange.NOWHERE, TurnChange.Kind.DROPPED, 3.0),
+	]
+	assert_eq(HexMapView.change_marks(report).size(), 0, "nothing placeless is drawn")
+	assert_eq(HexMapView.change_marks(null).size(), 0, "and a world with no report draws nothing")
+	assert_gt(world.grid.tile_count(), 0, "the world this ran against exists")
+
+
+## A flat grass world with a forest tile beside a herd of 49 head, so one move
+## crosses both the country and the fifty-head mark.
+const _ORIGIN := Vector2i(3, 3)
+const _FOREST := Vector2i(4, 3)
+
+
+func _herd_world() -> WorldMap:
+	var world := WorldMap.new(HexGrid.new(12, 10), 20260815)
+	for coord in world.grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.GRASS)
+	world.set_terrain(_FOREST, WorldGen.Terrain.FOREST)
+	world.add_agent(Herd.new(1, _ORIGIN, Species.grazer(), 49.0))
+	return world

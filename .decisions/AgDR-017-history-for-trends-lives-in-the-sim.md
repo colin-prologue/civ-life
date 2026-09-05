@@ -1,4 +1,4 @@
-# AgDR-015 — History for trends lives in the sim, as a ledger no rule reads
+# AgDR-017 — History for trends lives in the sim, as a ledger no rule reads
 
 **Status:** proposed
 **Date:** 2026-09-05

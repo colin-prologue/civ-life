@@ -11,7 +11,7 @@ const SEED := 20260826
 
 func _built(id: int) -> Array:
 	var parts := DioramaCompose.build(DioramaStyles.residential(), SEED, id)
-	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+	DioramaCompose.apply_roles(parts, DioramaCultures.palette("sunlit"))
 	return parts
 
 
@@ -67,7 +67,7 @@ func test_same_seed_and_id_rebuild_identically() -> void:
 ## hold is that every FEATURE is expressible and lands in a sane relationship.
 func test_hero_arch_has_every_feature_the_hand_written_one_has() -> void:
 	var parts := DioramaCompose.build(DioramaStyles.hero_arch(), 42, 0)
-	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+	DioramaCompose.apply_roles(parts, DioramaCultures.palette("sunlit"))
 	assert_gt(parts.size(), 12, "hero arch is too simple to be an arch")
 
 	var voussoirs := 0
