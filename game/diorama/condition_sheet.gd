@@ -66,6 +66,10 @@ func _ready() -> void:
 
 func _build() -> void:
 	for child in get_children():
+		# Detach before queuing: queue_free() defers deletion to end of frame,
+		# so a rebuild's same-named replacements would be auto-renamed while the
+		# old nodes linger, breaking name lookups afterwards.
+		remove_child(child)
 		child.queue_free()
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
