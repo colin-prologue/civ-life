@@ -89,12 +89,45 @@ const _FARM_FILL := Color(0.93, 0.79, 0.32)
 const _GRANARY_FILL := Color(0.62, 0.20, 0.16)
 const _NODE_EDGE := Color(0.20, 0.12, 0.04, 0.95)
 
+## The unworked part of a farm's square: bare earth, dark enough that the lit
+## part reads as a level in a container rather than as two colours side by side.
+## A farm in midwinter is nearly all this; a farm in spring is nearly none of it.
+const _FARM_FALLOW := Color(0.26, 0.17, 0.14)
+
 ## Citizens: a small pale figure, with the grain they are carrying shown as a
 ## warm core. Loaded and empty look different on purpose — the road then reads as
 ## traffic with a direction rather than as dots sliding back and forth.
 const _CITIZEN_FILL := Color(0.96, 0.94, 0.88)
 const _CITIZEN_LOADED := Color(1.00, 0.97, 0.62)
 const _CITIZEN_EDGE := Color(0.16, 0.12, 0.08, 0.95)
+
+## The ring drawn around somebody who cannot get past whatever is standing on
+## their tile.
+##
+## A ring rather than a different fill, because the fill is already saying
+## something — whether the sack is full — and a person can be laden *and* stuck.
+## Two channels for two facts. Drawn outside the figure so it survives the map
+## being squeezed small, where the figure itself is only a few pixels across.
+const _CITIZEN_HELD := Color(0.99, 0.42, 0.16)
+const _HELD_RING_SCALE := 2.0
+
+## Grain arriving at a structure, and grain leaving it. Green in, red out, drawn
+## as two stubs growing out of the top and bottom of the node so that a granary
+## with something happening to it looks busy at a glance.
+const _FLOW_IN := Color(0.44, 0.86, 0.44)
+const _FLOW_OUT := Color(0.94, 0.40, 0.34)
+
+## The flow a full-height stub represents. One carrier's sack, so the bar is
+## legible against the thing that actually moves grain rather than against an
+## abstract maximum.
+const _FLOW_FULL_AT := Citizen.CARRY_CAPACITY
+
+## Rising, falling, steady. Warm for growth and cool-red for decline, with a
+## neutral grey bar for a quantity that is not moving — a steady number needs a
+## mark of its own or "no arrow" and "no data" look the same.
+const _TREND_RISING := Color(0.55, 0.88, 0.50)
+const _TREND_FALLING := Color(0.95, 0.55, 0.38)
+const _TREND_STEADY := Color(0.62, 0.64, 0.68)
 
 ## Structure size and citizen size, as fractions of the hex radius. The node is
 ## a chunky thing standing on a tile; the citizen is a person beside it.
@@ -117,10 +150,41 @@ const _DORMANT := Color(0.82, 0.84, 0.87)
 ## see for another.
 const _DORMANCY_MAX := 0.70
 
+## The map overlays, in the order `O` cycles through them.
+##
+## An overlay is *data*, not code: the name of a `WorldMap` method returning one
+## float per tile in grid order, the arguments to call it with, the range to
+## normalise against, and the two ends of a colour ramp. Drawing one is a single
+## function that knows none of those things specifically.
+##
+## That shape is the point of the entry rather than an accident of it. Vitality
+## (#38) is `{"row": "vitality_data", "args": [Land.Use.GRAZE], ...}` — an
+## element in this array and nothing else. `test_hex_map_view.gd` proves the
+## claim by building exactly that entry and drawing it, so this cannot quietly
+## become a system with one hard-coded scalar in it.
+##
+## Reading a whole row in one call, rather than a value per tile, is why this
+## stays inside the redraw budget: `forage_data()` is one array copy for the
+## entire map.
+const OVERLAY_FORAGE := 0
+
+const OVERLAYS: Array[Dictionary] = [
+	{
+		"name": "forage",
+		"caption": "forage — what the land feeds",
+		"row": "forage_data",
+		"args": [],
+		"min": Seasons.MIN_FORAGE,
+		"max": Seasons.MAX_FORAGE,
+		"low": Color(0.62, 0.16, 0.18),
+		"high": Color(0.30, 0.80, 0.36),
+	},
+]
+
 ## Left edge of the season indicator and the legend below it, measured in from
 ## the right of the viewport. Shared so the two line up, and wide enough that
 ## the longest season caption is not clipped by the edge of the window.
-const _PANEL_INSET := 176.0
+const _PANEL_INSET := 206.0
 
 const _EDGE_COLOR := Color(0.0, 0.0, 0.0, 0.18)
 const _BACKGROUND := Color(0.07, 0.08, 0.10)
@@ -130,6 +194,13 @@ const _MARGIN := 12.0
 ## alternative is timing a whole frame, which measures the frame rate rather
 ## than the cost of drawing the map.
 var last_draw_usec := 0
+
+## Which entry of `OVERLAYS` is painted onto the tiles, or -1 for none.
+##
+## A view *setting*, not world history: throwing this view away and building
+## another gives an unoverlaid map, which is the correct behaviour for something
+## the player toggled and not a fact about the world that got lost.
+var overlay_index := -1
 
 var _world: WorldMap
 var _radius := 0.0
@@ -208,6 +279,9 @@ func _rebuild() -> void:
 	_outlines.resize(count)
 	_fills.resize(count)
 
+	var entry := active_overlay()
+	var scalars := PackedFloat32Array() if entry.is_empty() else overlay_row(_world, entry)
+
 	var i := 0
 	for row in range(_world.grid.height):
 		for col in range(_world.grid.width):
@@ -219,8 +293,73 @@ func _rebuild() -> void:
 			_outlines[i] = loop
 			var coord := HexGrid.from_offset(col, row)
 			var terrain := _world.terrain_at(coord)
-			_fills[i] = tile_color(terrain, _world.forage_at(coord))
+			# The sea keeps its own colour under every overlay. One rule, shared
+			# by all of them rather than written per entry: an overlay is a
+			# statement about land, and a red ocean would cost the map its
+			# outline — which is the shape the player navigates by — to say
+			# something true only of grazing.
+			if scalars.is_empty() or terrain == WorldGen.Terrain.WATER:
+				_fills[i] = tile_color(terrain, _world.forage_at(coord))
+			else:
+				_fills[i] = overlay_fill(entry, scalars[_world.grid.index_of(coord)])
 			i += 1
+
+
+## The overlay currently painted, or an empty dictionary when none is.
+func active_overlay() -> Dictionary:
+	if overlay_index < 0 or overlay_index >= OVERLAYS.size():
+		return {}
+	return OVERLAYS[overlay_index]
+
+
+## Move to the next overlay, wrapping through "none". Bound to a key by `Main`.
+func cycle_overlay() -> void:
+	overlay_index += 1
+	if overlay_index >= OVERLAYS.size():
+		overlay_index = -1
+	refresh()
+
+
+## Turn on the overlay with this name, or turn overlays off for `""`. Returns
+## false for a name that is not in the registry, so a caller passing a typo
+## finds out rather than silently getting an unoverlaid map.
+func set_overlay_named(overlay_name: String) -> bool:
+	if overlay_name == "":
+		overlay_index = -1
+		refresh()
+		return true
+	for i in range(OVERLAYS.size()):
+		if String(OVERLAYS[i]["name"]) == overlay_name:
+			overlay_index = i
+			refresh()
+			return true
+	return false
+
+
+## The per-tile scalars one overlay entry reads, in grid order.
+##
+## The world is asked by method name rather than through a match on the entry,
+## which is what makes a new overlay an array element instead of a code change.
+## Every source is already a public `WorldMap` query returning a row in
+## `grid.index_of()` order — the storage layout `AgDR-006` fixed — so there is no
+## per-overlay unpacking to write either.
+static func overlay_row(world: WorldMap, entry: Dictionary) -> PackedFloat32Array:
+	return world.callv(String(entry["row"]), entry["args"])
+
+
+## Where one scalar lands on one overlay's ramp.
+##
+## Normalised against the entry's own declared range rather than against the
+## values actually present, so a map that happens to be uniformly poor reads as
+## poor instead of being stretched to look varied. That is the same argument
+## `tile_color()` makes for measuring forage against the global maximum.
+static func overlay_fill(entry: Dictionary, value: float) -> Color:
+	var low := float(entry["min"])
+	var high := float(entry["max"])
+	var share := clampf((value - low) / maxf(0.0001, high - low), 0.0, 1.0)
+	var cold: Color = entry["low"]
+	var warm: Color = entry["high"]
+	return cold.lerp(warm, share)
 
 
 ## The fill for one tile: its terrain colour, bleached toward `_DORMANT` in
@@ -270,7 +409,9 @@ func _draw() -> void:
 	_draw_nodes()
 	_draw_citizens()
 	_draw_season()
-	_draw_legend()
+	var below := _draw_legend()
+	below = _draw_overlay_key(below)
+	_draw_flows(below)
 
 	last_draw_usec = Time.get_ticks_usec() - started
 
@@ -303,24 +444,70 @@ func _draw_routes() -> void:
 		draw_polyline(points, _ROAD_COLOR, width)
 
 
-## The structures, as squares on the tiles they were placed on.
+## The structures, as squares on the tiles they were placed on — each one showing
+## what is happening to it as well as where it is.
+##
+## A farm's square is filled from the bottom by what its field grows *this turn*,
+## against what the same field would grow at full forage. The square on a spring
+## tile is nearly solid and the square on a winter tile is nearly bare earth,
+## which is the difference the ticket asks for and the reason it is drawn as a
+## level rather than as a tint: a level has a visible empty part, and the empty
+## part is the point.
+##
+## A granary's square grows a green stub upward for grain arriving and a red one
+## downward for grain leaving. Both are drawn whenever there is a granary, so an
+## outflow of zero is a stub of no height next to a visible inflow rather than a
+## thing the display forgot to mention.
 func _draw_nodes() -> void:
 	var half := _radius * _NODE_SCALE * 0.5
 	for node in _world.nodes:
 		var centre := center_of(node.coord)
 		var box := Rect2(centre - Vector2(half, half), Vector2(half, half) * 2.0)
-		draw_rect(box, _FARM_FILL if node.kind == CityNode.Kind.FARM else _GRANARY_FILL)
+		if node.kind == CityNode.Kind.FARM:
+			draw_rect(box, _FARM_FALLOW)
+			var share := clampf(
+				node.yield_rate(_world) / CityNode.FARM_YIELD_PER_TURN, 0.0, 1.0)
+			if share > 0.0:
+				draw_rect(Rect2(
+					box.position + Vector2(0.0, box.size.y * (1.0 - share)),
+					Vector2(box.size.x, box.size.y * share)
+				), _FARM_FILL)
+		else:
+			draw_rect(box, _GRANARY_FILL)
+			_draw_flow_stubs(box, node.took_in, node.gave_out)
 		draw_rect(box, _NODE_EDGE, false, maxf(1.0, half * 0.22))
+
+
+## The two stubs beside a store: what came in this turn, and what went out.
+func _draw_flow_stubs(box: Rect2, took_in: float, gave_out: float) -> void:
+	var width := maxf(2.0, box.size.x * 0.30)
+	var full := box.size.y * 1.1
+	var x := box.get_center().x - width * 0.5
+	var up := full * clampf(took_in / _FLOW_FULL_AT, 0.0, 1.0)
+	var down := full * clampf(gave_out / _FLOW_FULL_AT, 0.0, 1.0)
+	# A floor of one pixel on each, so "nothing moved" is a mark rather than an
+	# absence — an omitted bar reads as a display that has no opinion.
+	draw_rect(Rect2(Vector2(x, box.position.y - maxf(1.0, up)), Vector2(width, maxf(1.0, up))),
+		_FLOW_IN)
+	draw_rect(Rect2(Vector2(x, box.end.y), Vector2(width, maxf(1.0, down))), _FLOW_OUT)
 
 
 ## The people on the road. Small — a person is not a herd — and filled according
 ## to whether they are carrying anything, so a glance at the road says which way
 ## the grain is going.
+##
+## Anyone who could not move gets a ring around them. That hold-up is the only
+## place in the whole simulation where the wild world touches the built one
+## (`Citizen.MAX_HELD_UP`), and until now a stalled dot and a walking dot were
+## the same picture.
 func _draw_citizens() -> void:
 	var radius := maxf(2.0, _radius * _CITIZEN_SCALE)
 	for citizen in _world.citizens():
 		var centre := center_of(citizen.coord)
 		var fill := _CITIZEN_LOADED if citizen.carrying > 0.0 else _CITIZEN_FILL
+		if citizen.is_held_up():
+			draw_arc(centre, radius * _HELD_RING_SCALE, 0.0, TAU, 20, _CITIZEN_HELD,
+				maxf(1.5, radius * 0.45))
 		draw_circle(centre, radius, fill)
 		draw_arc(centre, radius, 0.0, TAU, 14, _CITIZEN_EDGE, maxf(1.0, radius * 0.30))
 
@@ -360,11 +547,12 @@ func _draw_season() -> void:
 
 
 ## A swatch and a name per terrain, because a colour key is the difference
-## between "readable at a glance" and "guessable after a minute".
-func _draw_legend() -> void:
+## between "readable at a glance" and "guessable after a minute". Returns the y
+## the next panel block may start at.
+func _draw_legend() -> float:
 	var font := ThemeDB.fallback_font
 	if font == null:
-		return
+		return 62.0
 	var font_size := ThemeDB.fallback_font_size
 	var swatch := Vector2(16, 16)
 	var pos := Vector2(get_viewport_rect().size.x - _PANEL_INSET, 62.0)
@@ -388,15 +576,29 @@ func _draw_legend() -> void:
 	_legend_caption(font, font_size, pos, "herds (size=count)")
 	pos.y += swatch.y + 6.0
 
-	# And the city, in the same order it is drawn on the map.
-	draw_rect(Rect2(pos + swatch * 0.24, swatch * 0.52), _FARM_FILL)
-	_legend_caption(font, font_size, pos, "farm")
+	# And the city, in the same order it is drawn on the map. The farm's swatch
+	# is drawn half-lit, because half-lit is what it looks like on the map for
+	# most of the year and a solid swatch would teach the wrong thing.
+	var chip := swatch * 0.52
+	draw_rect(Rect2(pos + swatch * 0.24, chip), _FARM_FALLOW)
+	draw_rect(Rect2(pos + swatch * 0.24 + Vector2(0.0, chip.y * 0.45),
+		Vector2(chip.x, chip.y * 0.55)), _FARM_FILL)
+	_legend_caption(font, font_size, pos, "farm (fill=yield)")
 	pos.y += swatch.y + 6.0
-	draw_rect(Rect2(pos + swatch * 0.24, swatch * 0.52), _GRANARY_FILL)
-	_legend_caption(font, font_size, pos, "granary")
+	draw_rect(Rect2(pos + swatch * 0.24, chip), _GRANARY_FILL)
+	draw_rect(Rect2(pos + swatch * 0.24 + Vector2(chip.x * 0.35, -4.0),
+		Vector2(chip.x * 0.3, 4.0)), _FLOW_IN)
+	draw_rect(Rect2(pos + swatch * 0.24 + Vector2(chip.x * 0.35, chip.y),
+		Vector2(chip.x * 0.3, 2.0)), _FLOW_OUT)
+	_legend_caption(font, font_size, pos, "granary (in/out)")
 	pos.y += swatch.y + 6.0
 	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_LOADED)
 	_legend_caption(font, font_size, pos, "citizens (lit=laden)")
+	pos.y += swatch.y + 6.0
+	draw_arc(pos + swatch * 0.5, swatch.x * 0.40, 0.0, TAU, 20, _CITIZEN_HELD, 2.0)
+	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_FILL)
+	_legend_caption(font, font_size, pos, "held up by traffic")
+	return pos.y + swatch.y + 10.0
 
 
 func _legend_caption(font: Font, font_size: int, pos: Vector2, text: String) -> void:
@@ -409,3 +611,133 @@ func _legend_caption(font: Font, font_size: int, pos: Vector2, text: String) -> 
 		font_size,
 		Color(0.92, 0.92, 0.92)
 	)
+
+
+## The ramp the active overlay is painting with, and what it means. Nothing at
+## all when no overlay is on, plus a one-line reminder that the key exists.
+func _draw_overlay_key(top: float) -> float:
+	var font := ThemeDB.fallback_font
+	if font == null:
+		return top
+	var font_size := ThemeDB.fallback_font_size
+	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var entry := active_overlay()
+	if entry.is_empty():
+		draw_string(font, Vector2(left, top + 11.0), "[O] overlay: off",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.62, 0.64, 0.68))
+		return top + 24.0
+
+	# The ramp itself, in the same colours the tiles are getting, so the key
+	# cannot describe a gradient the map is not using.
+	var bar := Vector2(160.0, 9.0)
+	var steps := 16
+	for i in range(steps):
+		var share := float(i) / float(steps - 1)
+		draw_rect(
+			Rect2(Vector2(left + bar.x * float(i) / float(steps), top),
+				Vector2(ceilf(bar.x / float(steps)), bar.y)),
+			overlay_fill(entry, lerpf(float(entry["min"]), float(entry["max"]), share))
+		)
+	draw_string(font, Vector2(left, top + bar.y + 14.0), String(entry["caption"]),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.92, 0.92, 0.92))
+	return top + bar.y + 28.0
+
+
+## Everything on this panel that is a rate or a direction rather than a level.
+##
+## Kept as one dictionary, built entirely from the world, because it is also what
+## `test_hex_map_view.gd` compares between two views of the same world. If this
+## ever reads a field of this node, that test fails — which is the point of it.
+func readout() -> Dictionary:
+	if _world == null:
+		return {}
+	var ledger := _world.chronicle
+	return {
+		"people": _world.citizen_count(),
+		"held_up": _world.held_up_count(),
+		"granary_store": _world.total_granary_store(),
+		"granary_store_trend": ledger.trend(Chronicle.GRANARY_STORE),
+		"granary_in": ledger.rate(Chronicle.GRANARY_IN),
+		"granary_out": ledger.rate(Chronicle.GRANARY_OUT),
+		"farm_yield": _world.farm_yield_rate(),
+		"farm_yield_trend": ledger.trend(Chronicle.FARM_YIELD),
+		"animals": _world.total_herd_population(),
+		"animals_trend": ledger.trend(Chronicle.HERD_POPULATION),
+		"turns_recorded": ledger.span(Chronicle.GRANARY_IN),
+	}
+
+
+## The flow band: how many people, how the granary is doing, what the land is
+## giving, and which way each of those is going.
+##
+## Four lines and no more. `world-growth-tone` rule 6 applies to readouts as
+## much as to systems — two or three well-chosen signals beat a complete
+## instrument, and a panel long enough to scan is a panel nobody scans.
+func _draw_flows(top: float) -> void:
+	var font := ThemeDB.fallback_font
+	if font == null:
+		return
+	var font_size := ThemeDB.fallback_font_size
+	var data := readout()
+	if data.is_empty():
+		return
+	var left := get_viewport_rect().size.x - _PANEL_INSET
+	var pos := Vector2(left, top)
+
+	draw_string(font, pos + Vector2(0.0, 11.0),
+		"flows — last %d turns" % int(data["turns_recorded"]),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.72, 0.74, 0.78))
+	pos.y += 20.0
+
+	# The people count first, because "how many are working" is the question that
+	# has no other answer anywhere on screen.
+	_flow_line(font, font_size, pos, "people", "%d  (%d held)" % [
+		int(data["people"]), int(data["held_up"])], 0)
+	pos.y += 18.0
+	_flow_line(font, font_size, pos, "granary", "%d" % roundi(data["granary_store"]),
+		int(data["granary_store_trend"]))
+	pos.y += 18.0
+	# In and out on one line and always both, so a zero outflow is stated rather
+	# than left to be inferred from a missing number.
+	_flow_line(font, font_size, pos, "  in / out", "%.1f / %.1f" % [
+		data["granary_in"], data["granary_out"]], 0)
+	pos.y += 18.0
+	_flow_line(font, font_size, pos, "fields", "%.2f /turn" % data["farm_yield"],
+		int(data["farm_yield_trend"]))
+	pos.y += 18.0
+	_flow_line(font, font_size, pos, "animals", "%d" % roundi(data["animals"]),
+		int(data["animals_trend"]))
+
+
+func _flow_line(font: Font, font_size: int, pos: Vector2, label: String, value: String,
+		trend: int) -> void:
+	draw_string(font, pos + Vector2(0.0, 11.0), label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.70, 0.72, 0.76))
+	draw_string(font, pos + Vector2(74.0, 11.0), value,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.94, 0.94, 0.94))
+	_draw_trend(pos + Vector2(_PANEL_INSET - 26.0, 3.0), trend)
+
+
+## Rising, falling or steady, as a shape rather than as a glyph.
+##
+## A triangle drawn from points rather than an arrow character: the fallback font
+## is whatever the engine ships and a missing glyph renders as a box, which would
+## put the one mark the player is meant to read at a glance at the mercy of a
+## font table. Colour carries the same information a second time, for the same
+## reason the terrain palette separates in lightness as well as hue.
+func _draw_trend(pos: Vector2, trend: int) -> void:
+	var w := 10.0
+	var h := 9.0
+	if trend == 0:
+		draw_rect(Rect2(pos + Vector2(0.0, h * 0.5 - 1.5), Vector2(w, 3.0)), _TREND_STEADY)
+		return
+	var points := PackedVector2Array()
+	if trend > 0:
+		points.append(pos + Vector2(w * 0.5, 0.0))
+		points.append(pos + Vector2(w, h))
+		points.append(pos + Vector2(0.0, h))
+	else:
+		points.append(pos)
+		points.append(pos + Vector2(w, 0.0))
+		points.append(pos + Vector2(w * 0.5, h))
+	draw_colored_polygon(points, _TREND_RISING if trend > 0 else _TREND_FALLING)

@@ -141,6 +141,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			faster()
 		KEY_BRACKETLEFT:
 			slower()
+		KEY_O:
+			# The overlay is a property of the view, not of the world, so this
+			# forwards and decides nothing — the same shape as every other key
+			# here, and it still moves no part of the simulation.
+			_view.cycle_overlay()
 		_:
 			return
 	get_viewport().set_input_as_handled()
@@ -151,16 +156,16 @@ func _on_viewport_resized() -> void:
 
 
 func _update_status() -> void:
-	# The herd total is here because the thing this world is trying to show is
-	# change over time, and a number that moves every turn is the cheapest way to
-	# tell whether what is on screen is going anywhere.
-	_status.text = "Turn %d — %s, year %d — %d animals in %d herds — %d grain in store — seed %d — %s  [space] step  [P] play/pause  [ ] speed %0.1f/s" % [
+	# The clock, the seed and the controls. The quantities that used to be here —
+	# animals, grain in store — moved into the view's panel when they acquired
+	# rates and directions to sit next to. Two places quoting the same number is
+	# two places that can disagree, and the one with the trend beside it is the
+	# one worth reading.
+	_status.text = "Turn %d — %s, year %d — %d herds — seed %d — %s  [space] step  [P] play/pause  [ ] speed %0.1f/s  [O] overlay" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
-		roundi(world.total_herd_population()),
 		world.herds().size(),
-		roundi(world.total_granary_store()),
 		world.world_seed,
 		"playing" if playing else "paused",
 		float(TURNS_PER_SECOND[speed_index]),
