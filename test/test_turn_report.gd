@@ -249,6 +249,59 @@ func test_a_carrier_reports_the_turn_it_is_first_held_up_and_not_after() -> void
 	assert_gt(route.length(), 0, "the road this ran on exists")
 
 
+func test_a_blocked_road_counts_the_mouths_actually_standing_in_it() -> void:
+	var world := _flat_world()
+	_lay_road(world)
+	var citizen := world.citizens()[0]
+	world.add_agent(Herd.new(200, citizen.coord, Species.grazer(), 12.0))
+	world.add_agent(Herd.new(201, citizen.coord, Species.grazer(), 7.0))
+
+	var expected := 0.0
+	for agent in world.agents:
+		if agent.coord == citizen.coord:
+			expected += agent.forage_demand()
+
+	var before := TurnReport.snapshot(world)
+	citizen.held_up = 1
+	var change := _first_of(TurnReport.since(world, before), TurnChange.Kind.ROUTE_BLOCKED)
+	assert_not_null(change, "the carrier is held up")
+	assert_almost_eq(
+		change.magnitude,
+		expected,
+		0.0001,
+		"the mouths in the road are the ones standing there"
+	)
+
+
+func test_the_mouths_in_the_road_are_counted_rather_than_read_off_the_cache() -> void:
+	# The per-tile demand cache is maintained by adding and subtracting floats as
+	# agents move, and `WorldMap` documents it as something to decide by and never
+	# to quote — after enough turns it drifts off the truth. This number is quoted
+	# ("3 mouths in the road") and it ranks entries when the report has to drop
+	# some, so it has to come from the agents.
+	#
+	# Corrupting the cache outright is the cheapest way to tell the two sources
+	# apart: drift is this, only smaller and slower.
+	var world := _flat_world()
+	_lay_road(world)
+	var citizen := world.citizens()[0]
+	world.add_agent(Herd.new(200, citizen.coord, Species.grazer(), 9.0))
+
+	var honest := world.forage_demand_summed_at(citizen.coord)
+	world._forage_demand[world.grid.index_of(citizen.coord)] = 999.0
+
+	var before := TurnReport.snapshot(world)
+	citizen.held_up = 1
+	var change := _first_of(TurnReport.since(world, before), TurnChange.Kind.ROUTE_BLOCKED)
+	assert_not_null(change, "the carrier is held up")
+	assert_almost_eq(
+		change.magnitude,
+		honest,
+		0.0001,
+		"the report counted the agents rather than believing the cache"
+	)
+
+
 # --- 3. the bound, and what it says when it truncates -------------------------
 
 

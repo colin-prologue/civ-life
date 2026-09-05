@@ -171,6 +171,26 @@ func forage_demand_at(coord: Vector2i) -> float:
 	return _forage_demand[i]
 
 
+## The same figure, summed from the agents actually standing there rather than
+## read off the cache — the version anything *quoting* the number has to use.
+##
+## `_forage_demand` above is maintained by adding and subtracting floats as
+## agents move, which is exact enough to decide by and not exact enough to say
+## out loud after a thousand turns of it. Same split as `total_herd_population()`
+## against the per-tile forage cache, and for the same reason.
+##
+## Walks `agents` in array order, so the sum is bit-for-bit the same on two runs
+## of one seed (`AgDR-001`). Linear in the world's agents, which is why the
+## movement code does not call it: this runs once per held-up carrier per turn,
+## not seven times per herd.
+func forage_demand_summed_at(coord: Vector2i) -> float:
+	var total := 0.0
+	for agent in agents:
+		if agent.coord == coord:
+			total += agent.forage_demand()
+	return total
+
+
 ## The same three fields by grid index rather than by coordinate.
 ##
 ## Not a convenience. A herd looking around asks for the terrain, the forage and

@@ -361,31 +361,67 @@ func _draw_citizens() -> void:
 ## Changes with no place on the map — the season turning, the count of what did
 ## not fit — are skipped rather than drawn somewhere arbitrary. They have no
 ## `mark` for the same reason.
+##
+## **One ring per tile, however many changes landed on it.** Two things can
+## happen in one place in one turn — a herd walks into the wood *and* passes a
+## hundred head, which is one herd having a big turn — and drawing a ring and a
+## number per change put the second number exactly on top of the first, leaving a
+## line of the report pointing at a mark that was not on screen. So the marks on
+## a tile are gathered and read out together, "3,4", against a single ring. The
+## entries arrive in grid order, so everything sharing a tile arrives together
+## and one pass is enough.
 func _draw_changes() -> void:
-	if _world.report == null:
-		return
 	var font := ThemeDB.fallback_font
 	var radius := _radius * _CHANGE_RING_SCALE
 	var width := maxf(1.5, _radius * _CHANGE_RING_WIDTH)
-	for change in _world.report.entries:
+	for mark in change_marks(_world.report):
+		_draw_change_mark(font, mark[0], mark[1], radius, width)
+
+
+## The marks to draw: one `[coord, label]` per tile, in report order, with every
+## change that landed on a tile read out together — `"4"` for a tile with one,
+## `"3,4"` for a tile with two.
+##
+## Static and public so a test can check the grouping without a viewport.
+##
+## Merges neighbours in the list rather than gathering by coordinate, which is
+## sound because `TurnReport` hands its entries over in grid order and so
+## everything sharing a tile arrives together. It is also the reason there is no
+## dictionary here: `AgDR-001` does not allow an order that came out of an
+## unordered collection, and this way the order on the map is the report's.
+static func change_marks(report: TurnReport) -> Array:
+	var out: Array = []
+	if report == null:
+		return out
+	for change in report.entries:
 		if not change.has_place():
 			continue
-		var centre := center_of(change.coord)
-		# A dark ring under the bright one, so the mark survives landing on pale
-		# mountains as well as on dark water.
-		draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_SHADOW, width * 1.9)
-		draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_COLOR, width)
-		if font == null:
+		if not out.is_empty() and out[-1][0] == change.coord:
+			out[-1][1] += "," + str(change.mark)
 			continue
-		var label := str(change.mark)
-		var size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ThemeDB.fallback_font_size)
-		# Above the tile centre rather than on it: the thing that changed is
-		# usually standing in the middle of the hex.
-		var at := centre + Vector2(-size.x * 0.5, -radius - 3.0)
-		draw_string(font, at + Vector2(1, 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			ThemeDB.fallback_font_size, _CHANGE_SHADOW)
-		draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			ThemeDB.fallback_font_size, _CHANGE_COLOR)
+		out.append([change.coord, str(change.mark)])
+	return out
+
+
+## One tile's ring, labelled with every mark that landed on it.
+func _draw_change_mark(
+	font: Font, coord: Vector2i, label: String, radius: float, width: float
+) -> void:
+	var centre := center_of(coord)
+	# A dark ring under the bright one, so the mark survives landing on pale
+	# mountains as well as on dark water.
+	draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_SHADOW, width * 1.9)
+	draw_arc(centre, radius, 0.0, TAU, 24, _CHANGE_COLOR, width)
+	if font == null:
+		return
+	var size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ThemeDB.fallback_font_size)
+	# Above the tile centre rather than on it: the thing that changed is
+	# usually standing in the middle of the hex.
+	var at := centre + Vector2(-size.x * 0.5, -radius - 3.0)
+	draw_string(font, at + Vector2(1, 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		ThemeDB.fallback_font_size, _CHANGE_SHADOW)
+	draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		ThemeDB.fallback_font_size, _CHANGE_COLOR)
 
 
 ## Marker radius as a fraction of the hex radius, for a herd of this size.
