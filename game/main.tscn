@@ -13,5 +13,5 @@ script = ExtResource("2_view")
 offset_left = 12.0
 offset_top = 8.0
 offset_right = 900.0
-offset_bottom = 32.0
+offset_bottom = 180.0
 text = "Turn 0"

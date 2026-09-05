@@ -41,6 +41,13 @@ var turn: int
 ## is what decides it.
 var agents: Array[Agent] = []
 
+## What the turn just run actually changed, as an ordered list of notable
+## changes. Rebuilt from scratch by every `advance_turn()`, empty on a world that
+## has not been advanced, and read by nobody the simulation knows about — the
+## world produces it whether or not there is a renderer to consume it. See
+## `sim/turn_report.gd`.
+var report: TurnReport
+
 var _terrain: PackedInt32Array
 var _forage: PackedFloat32Array
 
@@ -90,6 +97,7 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 		row.resize(p_grid.tile_count())
 		row.fill(Land.MAX_VITALITY)
 		_vitality[use] = row
+	report = TurnReport.new(turn)
 
 
 ## Move the world forward one turn. Returns the turn just entered.
@@ -98,7 +106,14 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 ## turn against the season it is actually standing in, never against last
 ## turn's, and a carrier standing at a farm leaves with this turn's harvest
 ## rather than last turn's.
+##
+## The report is taken around the outside of all of it: a snapshot before
+## anything runs, a comparison after everything has. Nothing between those two
+## lines knows the report exists, and nothing in it asks whether anybody is going
+## to read the answer — a world with no renderer attached does exactly the same
+## work as one being watched.
 func advance_turn() -> int:
+	var before := TurnReport.snapshot(self)
 	turn += 1
 	_recompute_forage()
 	for node in nodes:
@@ -106,6 +121,7 @@ func advance_turn() -> int:
 	for agent in agents:
 		agent.step(self)
 	_recover_vitality()
+	report = TurnReport.since(self, before)
 	return turn
 
 
@@ -153,6 +169,26 @@ func forage_demand_at(coord: Vector2i) -> float:
 	var i := grid.index_of(coord)
 	assert(i >= 0, "cannot read forage demand off the map")
 	return _forage_demand[i]
+
+
+## The same figure, summed from the agents actually standing there rather than
+## read off the cache — the version anything *quoting* the number has to use.
+##
+## `_forage_demand` above is maintained by adding and subtracting floats as
+## agents move, which is exact enough to decide by and not exact enough to say
+## out loud after a thousand turns of it. Same split as `total_herd_population()`
+## against the per-tile forage cache, and for the same reason.
+##
+## Walks `agents` in array order, so the sum is bit-for-bit the same on two runs
+## of one seed (`AgDR-001`). Linear in the world's agents, which is why the
+## movement code does not call it: this runs once per held-up carrier per turn,
+## not seven times per herd.
+func forage_demand_summed_at(coord: Vector2i) -> float:
+	var total := 0.0
+	for agent in agents:
+		if agent.coord == coord:
+			total += agent.forage_demand()
+	return total
 
 
 ## The same three fields by grid index rather than by coordinate.
