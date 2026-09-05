@@ -166,10 +166,15 @@ static func since(world: WorldMap, before: Dictionary) -> TurnReport:
 	# the moment the road's throughput actually dropped.
 	for citizen in world.citizens():
 		if citizen.held_up == 1:
+			# Summed from the agents rather than read off the per-tile cache.
+			# The cache is documented as decision-only — repeated add and
+			# subtract on floats drifts — and this number is both said out loud
+			# ("3 mouths in the road") and used to rank entries when the report
+			# has to drop some. Both of those are reporting.
 			found.append(TurnChange.new(
 				citizen.coord,
 				TurnChange.Kind.ROUTE_BLOCKED,
-				world.forage_demand_at(citizen.coord)
+				world.forage_demand_summed_at(citizen.coord)
 			))
 
 	# The bar: a granary's store crossed a multiple of `STORE_STEP`.
