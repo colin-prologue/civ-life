@@ -61,7 +61,7 @@ static func _fingerprint(world_seed: int) -> int:
 	for style in [DioramaStyles.residential(), DioramaStyles.hero_arch()]:
 		for id in IDS:
 			var parts := DioramaCompose.build(style, world_seed, id)
-			DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+			DioramaCompose.apply_roles(parts, DioramaCultures.palette("sunlit"))
 			DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 			for p: Dictionary in parts:
 				# Quantised, because a float printed through two processes must

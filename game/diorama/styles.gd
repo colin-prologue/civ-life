@@ -3,20 +3,15 @@ extends RefCounted
 ## The style library: buildings as data.
 ##
 ## A style names roles rather than colours, so the same tree can be rendered in
-## two cultures' palettes without touching its geometry. Slice 1 ships one
-## mapping; per-culture mappings arrive with S3.
-
-const ROLES := {
-	"plaster": Color(0.902, 0.875, 0.800),
-	"plaster_dim": Color(0.812, 0.776, 0.682),
-	"ochre": Color(0.659, 0.475, 0.290),
-	"brass": Color(0.788, 0.643, 0.290),
-	"wood": Color(0.478, 0.361, 0.220),
-}
+## two cultures' palettes without touching its geometry. The mappings themselves
+## live in DioramaCultures, and the role names say what a part is FOR
+## (`structure`, `footing`, `cap`, `aspiration`) rather than what it is made of
+## — a role called `ochre` has already decided its own colour and leaves a
+## culture nothing to express.
 
 
-## A terrace of one to three units, each a plaster body under a tapered ochre
-## roof that overhangs it. This replaced a sixteen-line function that computed
+## A terrace of one to three units, each a body under a tapered roof that
+## overhangs it. This replaced a sixteen-line function that computed
 ## the same geometry with hand arithmetic; the bar set when it was written was
 ## that the data form must not read worse than the code it replaced, and by
 ## three independent judgements at the time, it did. What justifies it is not
@@ -27,9 +22,9 @@ static func residential() -> Dictionary:
 		{"stack": {"name": "unit", "children": [
 			{"mass": {"name": "body", "kind": "box",
 					"w": [0.55, 1.05], "d": [0.55, 1.05], "h": [0.60, 1.30],
-					"role": "plaster"}},
+					"role": "structure"}},
 			{"mass": {"name": "roof", "kind": "tapered", "taper": 0.8,
-					"h": 0.22, "oversize": 1.08, "role": "ochre"}}]}}}}
+					"h": 0.22, "oversize": 1.08, "role": "cap"}}]}}}}
 
 
 ## The hero structure: a monument whose scale breaks the settlement's
@@ -48,28 +43,29 @@ static func residential() -> Dictionary:
 ## genuinely coupled-but-varying dimensions, that is the gap to close.
 ##
 ## Read outward: a base slab, then two piers with a clear opening between them,
-## then the arc spanning that opening, then a beam across the top and a brass
-## finial above it. `gap` is what makes the opening sayable — as a ratio it
+## then the arc spanning that opening, then a beam across the top and a finial
+## above it — the finial is one of only two parts in the whole library that
+## carry `aspiration`, which is how gold stays scarce. `gap` is what makes the opening sayable — as a ratio it
 ## would be a number derived from the pier thickness, which is not something a
 ## style author can write down.
 static func hero_arch() -> Dictionary:
 	return {"stack": {"name": "arch", "children": [
 		{"mass": {"name": "plinth", "kind": "box",
 				"w": [4.6, 5.4], "d": 1.2, "h": 0.33,
-				"role": "plaster_dim"}},
+				"role": "footing"}},
 		{"row": {"name": "piers", "gap": 2.6, "children": [
 			{"mass": {"name": "west", "kind": "box",
-					"w": 0.42, "d": 0.63, "h": 1.62, "role": "plaster"}},
+					"w": 0.42, "d": 0.63, "h": 1.62, "role": "structure"}},
 			{"mass": {"name": "east", "kind": "box",
-					"w": 0.42, "d": 0.63, "h": 1.62, "role": "plaster"}}]}},
+					"w": 0.42, "d": 0.63, "h": 1.62, "role": "structure"}}]}},
 		{"ring": {"name": "span", "radius": 1.51, "from": 0.0, "to": PI,
 				"count": 9,
 				"of": {"mass": {"name": "voussoir", "kind": "box",
-						"w": 0.42, "d": 0.63, "role": "plaster"}}}},
+						"w": 0.42, "d": 0.63, "role": "structure"}}}},
 		{"mass": {"name": "entablature", "kind": "box",
-				"h": 0.45, "oversize": 1.1, "role": "ochre"}},
+				"h": 0.45, "oversize": 1.1, "role": "cap"}},
 		{"mass": {"name": "finial", "kind": "cone",
-				"w": 0.31, "d": 0.31, "h": 1.5, "role": "brass"}}]}}
+				"w": 0.31, "d": 0.31, "h": 1.5, "role": "aspiration"}}]}}
 
 
 ## A civic hall: a podium, a hall under a tapered roof, and a colonnade
@@ -83,33 +79,34 @@ static func civic() -> Dictionary:
 	return {"stack": {"name": "civic", "children": [
 		{"mass": {"name": "podium", "kind": "box",
 				"w": [1.7, 2.5], "d": [1.1, 1.6], "h": 0.15,
-				"role": "plaster_dim"}},
+				"role": "footing"}},
 		{"row": {"name": "front", "axis": "z", "children": [
 			{"stack": {"name": "hall", "children": [
 				{"mass": {"name": "walls", "kind": "box",
 						"w": [1.2, 1.8], "d": [0.6, 0.9], "h": 0.8,
-						"role": "plaster"}},
+						"role": "structure"}},
 				{"mass": {"name": "roof", "kind": "tapered", "taper": 0.5,
-						"h": 0.22, "oversize": 1.06, "role": "ochre"}}]}},
+						"h": 0.22, "oversize": 1.06, "role": "cap"}}]}},
 			{"row": {"name": "colonnade", "count": 5, "advance": 2.6, "of":
 				{"mass": {"name": "column", "kind": "prism",
 						"w": 0.09, "d": 0.09, "h": 0.72,
-						"role": "plaster"}}}}]}}]}}
+						"role": "structure"}}}}]}}]}}
 
 
 ## A stepped monument: a plinth, three or four tiers each set back from the one
-## below, and a brass spire. `setback` is the whole shape — without it the
+## below, and a spire — the library's other `aspiration` part. `setback` is the
+## whole shape — without it the
 ## tiers would be a column, and a style would have to restate every width.
 static func stepped() -> Dictionary:
 	return {"stack": {"name": "stepped", "setback": [0.24, 0.30], "children": [
 		{"mass": {"name": "plinth", "kind": "box",
 				"w": [1.1, 1.6], "d": [1.1, 1.6], "h": 0.17,
-				"role": "plaster_dim"}},
-		{"mass": {"name": "tier0", "kind": "box", "h": 0.61, "role": "plaster"}},
-		{"mass": {"name": "tier1", "kind": "box", "h": 0.61, "role": "plaster"}},
-		{"mass": {"name": "tier2", "kind": "box", "h": 0.61, "role": "plaster"}},
+				"role": "footing"}},
+		{"mass": {"name": "tier0", "kind": "box", "h": 0.61, "role": "structure"}},
+		{"mass": {"name": "tier1", "kind": "box", "h": 0.61, "role": "structure"}},
+		{"mass": {"name": "tier2", "kind": "box", "h": 0.61, "role": "structure"}},
 		{"mass": {"name": "spire", "kind": "cone",
-				"h": 0.79, "oversize": 0.5, "role": "brass"}}]}}
+				"h": 0.79, "oversize": 0.5, "role": "aspiration"}}]}}
 
 
 ## Style trees by name, for scenes that pick one from an export. Centralised
