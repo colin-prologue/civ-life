@@ -117,6 +117,20 @@ const _CITIZEN_SCALE := 0.20
 const _ROAD_WIDTH_SCALE := 0.18
 const _ROAD_MIN_WIDTH := 2.0
 
+## The selection outline, and the same outline once a route has been started
+## from it. White because nothing on the map is white — every terrain, every
+## structure and every animal is a saturated mid-tone, so an unsaturated ring
+## cannot be mistaken for a thing standing on the tile. Amber when a route is
+## armed, because at that point the ring means "and now click the other end"
+## rather than "this is where you are".
+const _SELECTION_COLOR := Color(1.00, 1.00, 1.00, 0.95)
+const _ROUTE_ARMED_COLOR := Color(1.00, 0.78, 0.30, 0.95)
+
+## Selection ring width as a fraction of the hex radius, floored in pixels for
+## the same reason the road is.
+const _SELECTION_WIDTH_SCALE := 0.14
+const _SELECTION_MIN_WIDTH := 2.0
+
 ## Colour a tile fades toward as its forage falls — a pale, bleached version of
 ## itself rather than a darker one, because a winter map should read as drained
 ## rather than as a map at night.
@@ -148,6 +162,13 @@ var _origin := Vector2.ZERO
 var _polygons: Array[PackedVector2Array] = []
 var _outlines: Array[PackedVector2Array] = []
 var _fills: PackedColorArray = PackedColorArray()
+
+## What to outline, as last stated by the controller. Not owned here — see the
+## note at the top of the file — and not read out of the world, because what a
+## player is looking at is not a fact about the world.
+var _selected := Vector2i.ZERO
+var _has_selection := false
+var _route_armed := false
 
 
 ## Point this view at a world and size it to the space available.
@@ -187,6 +208,48 @@ func hex_radius() -> float:
 func center_of(coord: Vector2i) -> Vector2:
 	var off := HexGrid.to_offset(coord)
 	return _center_of_offset(off.x, off.y)
+
+
+## Which tile a point in viewport pixels landed on, for the current fit.
+##
+## The result is a coordinate, not a promise that it is on the map: a click in
+## the margin or on the legend lands outside the grid, and the caller checks with
+## `grid.has_coord()`. Returning something off the map is the honest answer to
+## "which tile is under the legend", and clamping it to the nearest real one
+## would make the map's edge sticky.
+func coord_at_point(point: Vector2) -> Vector2i:
+	if _radius <= 0.0:
+		# Nothing has been fitted yet, so no point is on any tile. Column -1 is
+		# off every grid.
+		return Vector2i(-1, -1)
+	return point_to_axial(point, _origin, _radius)
+
+
+## The inverse of `center_of()`, written out rather than searched for.
+##
+## Static and parameterised so the round trip can be checked without a viewport.
+## Pixels come back to a *fractional* axial coordinate here, and `HexGrid` rounds
+## it to a real hex — a point near a hex corner is nearest to a different tile
+## than the bounding box it sits in, so a rectangle test would put clicks on the
+## wrong tile along every second edge.
+static func point_to_axial(point: Vector2, origin: Vector2, radius: float) -> Vector2i:
+	assert(radius > 0.0, "a hex has a size before anything is clicked on it")
+	# Undo the half-step the layout adds so column 0 and row 0 sit inside the
+	# viewport rather than half off it, then undo the packing.
+	var px := (point.x - origin.x) / radius - 1.0
+	var py := (point.y - origin.y) / radius - sqrt(3.0) * 0.5
+	var qf := px / 1.5
+	var rf := py / sqrt(3.0) - qf * 0.5
+	return HexGrid.round_axial(qf, rf)
+
+
+## What the controller wants outlined. Called on every selection change; there is
+## no other way this node learns what is selected.
+func set_selection(has_selection: bool, coord: Vector2i, route_armed: bool) -> void:
+	_has_selection = has_selection
+	_selected = coord
+	_route_armed = route_armed
+	queue_redraw()
 
 
 func _center_of_offset(col: int, row: int) -> Vector2:
@@ -280,6 +343,9 @@ func _draw() -> void:
 	_draw_herds()
 	_draw_nodes()
 	_draw_citizens()
+	# On top of everything, because the point of it is to say "this one" about
+	# whatever is underneath.
+	_draw_selection()
 	_draw_season()
 	_draw_legend()
 
@@ -334,6 +400,24 @@ func _draw_citizens() -> void:
 		var fill := _CITIZEN_LOADED if citizen.carrying > 0.0 else _CITIZEN_FILL
 		draw_circle(centre, radius, fill)
 		draw_arc(centre, radius, 0.0, TAU, 14, _CITIZEN_EDGE, maxf(1.0, radius * 0.30))
+
+
+## A ring around the selected tile, if there is one.
+##
+## Corners are recomputed rather than looked up in `_polygons`: the selection
+## changes on a click and the polygons are rebuilt on a turn, and reaching into
+## the other one's cache is how those two get out of step.
+func _draw_selection() -> void:
+	if not _has_selection:
+		return
+	var corners := _corners(center_of(_selected), _radius)
+	var loop := corners.duplicate()
+	loop.append(corners[0])
+	draw_polyline(
+		loop,
+		_ROUTE_ARMED_COLOR if _route_armed else _SELECTION_COLOR,
+		maxf(_SELECTION_MIN_WIDTH, _radius * _SELECTION_WIDTH_SCALE)
+	)
 
 
 ## Marker radius as a fraction of the hex radius, for a herd of this size.
