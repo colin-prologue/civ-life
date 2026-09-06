@@ -42,11 +42,12 @@ func test_channel_varies_by_path_purpose_and_building() -> void:
 
 
 func test_sample_scalar_is_fixed_and_range_is_inside_bounds() -> void:
-	assert_eq(DioramaCompose.sample(0.75, SEED, 7, "p", "w", 1.0), 0.75,
+	var ctx := _ctx()
+	assert_eq(DioramaCompose.sample(0.75, ctx, "p", "w", 1.0), 0.75,
 			"a scalar spec was not returned verbatim")
-	var v := DioramaCompose.sample([0.5, 1.5], SEED, 7, "p", "w", 1.0)
+	var v := DioramaCompose.sample([0.5, 1.5], ctx, "p", "w", 1.0)
 	assert_between(v, 0.5, 1.5, "sampled value escaped its range")
-	assert_eq(DioramaCompose.sample(null, SEED, 7, "p", "w", 0.25), 0.25,
+	assert_eq(DioramaCompose.sample(null, ctx, "p", "w", 0.25), 0.25,
 			"a missing spec did not fall back to the default")
 
 

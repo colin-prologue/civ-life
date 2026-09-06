@@ -49,8 +49,11 @@ static func channel(seed: int, building_id: int, path: String,
 
 
 ## A proportion spec is a scalar (fixed), a two-element array (sampled), or
-## absent (the caller's default).
-static func sample(spec: Variant, seed: int, building_id: int, path: String,
+## absent (the caller's default). `ctx` carries seed and id rather than
+## threading them as their own arguments — it is also where a culture will
+## live once a style can be modulated by one, and passing ctx instead of a
+## seventh positional argument is what makes that addition free.
+static func sample(spec: Variant, ctx: Dictionary, path: String,
 		purpose: String, dflt: float) -> float:
 	if spec == null:
 		return dflt
@@ -65,7 +68,7 @@ static func sample(spec: Variant, seed: int, building_id: int, path: String,
 	# Not swapped silently: a reversed range is a typo, and quietly "fixing" it
 	# hides the typo while changing what the style means.
 	assert(lo <= hi, "'%s' on '%s' has lo > hi" % [purpose, path])
-	return lo + (hi - lo) * channel(seed, building_id, path, purpose)
+	return lo + (hi - lo) * channel(ctx["seed"], ctx["id"], path, purpose)
 
 
 ## `count` is inclusive integer bounds: a scalar is that exact count, and
@@ -190,16 +193,14 @@ static func _path_of(ctx: Dictionary, n: Dictionary) -> String:
 
 static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var path := _path_of(ctx, n)
-	var seed: int = ctx["seed"]
-	var id: int = ctx["id"]
 	var xf: Transform3D = ctx["frame"]["xf"]
 	var inherited: Vector2 = ctx["frame"]["footprint"]
-	var oversize := sample(n.get("oversize"), seed, id, path, "oversize", 1.0)
+	var oversize := sample(n.get("oversize"), ctx, path, "oversize", 1.0)
 	# A mass with no w/d takes the footprint it is standing on. That is how a
 	# roof overhangs its body without restating the body's dimensions.
-	var w := sample(n.get("w"), seed, id, path, "w", inherited.x) * oversize
-	var d := sample(n.get("d"), seed, id, path, "d", inherited.y) * oversize
-	var h := sample(n.get("h"), seed, id, path, "h", 0.0)
+	var w := sample(n.get("w"), ctx, path, "w", inherited.x) * oversize
+	var d := sample(n.get("d"), ctx, path, "d", inherited.y) * oversize
+	var h := sample(n.get("h"), ctx, path, "h", 0.0)
 	# A node that emits nothing reports the bottom of its own band rather than a
 	# drawn need. Nothing reads it: the combinators fold `need` only over
 	# children that actually emitted parts, so a ghost cannot make what stacks
@@ -213,7 +214,7 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# exist, and everything stacking on this frame inherits the lie.
 	if kind == "prism" or kind == "cone":
 		d = w
-	var params := _params_for(kind, n, w, d, h, seed, id, path)
+	var params := _params_for(kind, n, w, d, h, ctx, path)
 	# A part never outlives what it rests on: its band's floor already sits at or
 	# above the top of the band its support drew from, so there is nothing to
 	# clamp here.
@@ -228,13 +229,13 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 ## Maps a footprint and height onto whatever DioramaMeshKit's helper for this
 ## primitive expects. Round primitives take a radius from half the width.
 static func _params_for(kind: String, n: Dictionary, w: float, d: float,
-		h: float, seed: int, id: int, path: String) -> Dictionary:
+		h: float, ctx: Dictionary, path: String) -> Dictionary:
 	match kind:
 		"box":
 			return {"size": Vector3(w, h, d)}
 		"tapered":
 			return {"size": Vector3(w, h, d),
-					"taper": sample(n.get("taper"), seed, id, path, "taper", 0.5)}
+					"taper": sample(n.get("taper"), ctx, path, "taper", 0.5)}
 		"prism", "cone":
 			return {"radius": w * 0.5, "height": h}
 	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
@@ -293,8 +294,7 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# below — a stepped monument's taper. It shrinks what a child INHERITS, not
 	# what it declares, so a style can still break the taper deliberately by
 	# stating a width.
-	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
-			"setback", 0.0)
+	var setback := sample(n.get("setback"), ctx, path, "setback", 0.0)
 	# The load path, expressed as a partition rather than as a running maximum.
 	# A part can never outlive what it rests on, so the stack cuts its inherited
 	# band into one slice per child, bottom child lowest: child i's whole
@@ -416,8 +416,8 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	assert(String(n.get("axis", "x")) in ["x", "z"],
 			"'%s' row axis must be \"x\" or \"z\"" % path)
 	var has_gap := n.has("gap")
-	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
-	var gap := sample(n.get("gap"), seed, id, path, "gap", 0.0)
+	var advance := sample(n.get("advance"), ctx, path, "advance", 1.0)
+	var gap := sample(n.get("gap"), ctx, path, "gap", 0.0)
 	var parts: Array = []
 	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
 	# xf.origin sits at ITS centre, not its near edge.
@@ -523,9 +523,9 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var seed: int = ctx["seed"]
 	var id: int = ctx["id"]
 	var base_xf: Transform3D = ctx["frame"]["xf"]
-	var radius := sample(n.get("radius"), seed, id, path, "radius", 1.0)
-	var from := sample(n.get("from"), seed, id, path, "from", 0.0)
-	var to := sample(n.get("to"), seed, id, path, "to", PI)
+	var radius := sample(n.get("radius"), ctx, path, "radius", 1.0)
+	var from := sample(n.get("from"), ctx, path, "from", 0.0)
+	var to := sample(n.get("to"), ctx, path, "to", PI)
 	var count := _sample_count(n.get("count"), seed, id, path)
 	var template: Dictionary = n.get("of", {})
 	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
@@ -548,8 +548,8 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var child := _indexed(template, i)
 		var body: Dictionary = child[child.keys()[0]]
 		var child_path := path + "/" + String(body["name"])
-		var thickness := sample(body.get("w"), seed, id, child_path, "w", 0.2)
-		var depth := sample(body.get("d"), seed, id, child_path, "d", thickness)
+		var thickness := sample(body.get("w"), ctx, child_path, "w", 0.2)
+		var depth := sample(body.get("d"), ctx, child_path, "d", thickness)
 		if thickness <= EPS or depth <= EPS or seg_len <= EPS:
 			continue
 		# Rotate first, then drop by half the segment so the box — which builds
@@ -564,7 +564,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# style that looks entirely valid.
 		var kind: String = body.get("kind", "box")
 		var params := _params_for(kind, body, thickness, depth, seg_len,
-				seed, id, child_path)
+				ctx, child_path)
 		parts.append({"kind": kind, "xf": xf,
 				"params": params, "color": Color.MAGENTA,
 				"need": need, "y": 0.0,
