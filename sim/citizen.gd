@@ -59,8 +59,15 @@ var capacity: float
 ## enough to answer "how far along am I".
 var _index: int
 
-## Consecutive turns spent unable to leave the current tile.
-var _held_up: int
+## Consecutive turns spent unable to leave the current tile. Zero when the road
+## is clear, 1 on the first turn of a hold-up.
+##
+## Readable rather than private because the turn report needs to know when a
+## route's throughput dropped, and this citizen already counts it. The
+## alternative was for the report to keep its own memory of who moved last turn,
+## which would be a second copy of a fact the world already holds — and a report
+## with state of its own is a cache that can disagree with the world.
+var held_up: int
 
 
 func _init(p_id: int, p_route: Route, p_index := 0, p_capacity := CARRY_CAPACITY) -> void:
@@ -70,7 +77,7 @@ func _init(p_id: int, p_route: Route, p_index := 0, p_capacity := CARRY_CAPACITY
 	_index = p_index
 	carrying = 0.0
 	capacity = p_capacity
-	_held_up = 0
+	held_up = 0
 
 
 ## One turn: do the business of wherever you are standing, then walk.
@@ -89,6 +96,26 @@ func step(world: WorldMap) -> void:
 		# Nothing to carry. Wait at the farm rather than walk an empty road.
 		return
 	_walk(world)
+
+
+## Whether this citizen finished its last turn standing still because something
+## was in the way.
+##
+## A query, not a flag: it reads the counter `_held_up_by_traffic()` already
+## keeps, which is zero on any turn the citizen walked or waited by choice and
+## non-zero only while it is blocked. There is nothing here for the two to
+## disagree about, which is the same property `carrying` has for direction.
+##
+## This exists because the hold-up is the only place the wild world touches the
+## built one (`MAX_HELD_UP` above) and it was, until now, impossible to see
+## happen: a stalled dot and a walking dot rendered identically.
+func is_held_up() -> bool:
+	return held_up > 0
+
+
+## How many consecutive turns this citizen has been stuck, out of `MAX_HELD_UP`.
+func held_up_turns() -> int:
+	return held_up
 
 
 ## Fill up from the source node, up to what will fit in the sack.
@@ -120,11 +147,11 @@ func _deliver() -> void:
 ## not a branch.
 func _held_up_by_traffic(world: WorldMap) -> bool:
 	if world.forage_demand_at(coord) <= 0.0:
-		_held_up = 0
+		held_up = 0
 		return false
-	_held_up += 1
-	if _held_up > MAX_HELD_UP:
-		_held_up = 0
+	held_up += 1
+	if held_up > MAX_HELD_UP:
+		held_up = 0
 		return false
 	return true
 

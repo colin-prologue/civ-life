@@ -141,6 +141,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			faster()
 		KEY_BRACKETLEFT:
 			slower()
+		KEY_O:
+			# The overlay is a property of the view, not of the world, so this
+			# forwards and decides nothing — the same shape as every other key
+			# here, and it still moves no part of the simulation.
+			_view.cycle_overlay()
 		_:
 			return
 	get_viewport().set_input_as_handled()
@@ -150,17 +155,44 @@ func _on_viewport_resized() -> void:
 	_view.resize_to(get_viewport_rect().size)
 
 
+## What the status area says when the turn crossed no threshold at all.
+##
+## Said out loud rather than left blank. An empty report is a real answer — the
+## world ran a turn and nothing in it was worth pointing at — and a blank space
+## is indistinguishable from an instrument that has stopped working.
+const QUIET_TURN := "nothing crossed a threshold this turn"
+
+
 func _update_status() -> void:
-	# The herd total is here because the thing this world is trying to show is
-	# change over time, and a number that moves every turn is the cheapest way to
-	# tell whether what is on screen is going anywhere.
-	_status.text = "Turn %d — %s, year %d — %d animals in %d herds — %d grain in store — seed %d — %s  [space] step  [P] play/pause  [ ] speed %0.1f/s" % [
+	# The totals line, and underneath it the same turn said as events rather than
+	# as totals. A total that moves tells you something happened somewhere; the
+	# lines below say what and where, and the number on each one is the number
+	# ringed on the map.
+	_status.text = _totals_line() + "\n" + _report_text()
+
+
+## The report in words, or the quiet-turn line. Rebuilt from `world.report` every
+## time, holding nothing between calls — the view keeps no memory of a turn the
+## world has finished with.
+func _report_text() -> String:
+	var report := world.report
+	if report == null or report.is_empty():
+		return QUIET_TURN
+	return "\n".join(report.lines())
+
+
+## The clock, the seed and the controls. The quantities that used to be here —
+## animals, grain in store — moved into the view's panel when they acquired rates
+## and directions to sit next to. Two places quoting the same number is two
+## places that can disagree, and the one with the trend beside it is the one
+## worth reading. The herd *count* stays: it is a count of things on the map
+## rather than a stock the panel is tracking.
+func _totals_line() -> String:
+	return "Turn %d — %s, year %d — %d herds — seed %d — %s  [space] step  [P] play/pause  [ ] speed %0.1f/s  [O] overlay" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
-		roundi(world.total_herd_population()),
 		world.herds().size(),
-		roundi(world.total_granary_store()),
 		world.world_seed,
 		"playing" if playing else "paused",
 		float(TURNS_PER_SECOND[speed_index]),
