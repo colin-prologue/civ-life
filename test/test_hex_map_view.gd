@@ -234,6 +234,95 @@ func test_the_whole_map_fits_in_the_viewport() -> void:
 		assert_between(c.y, half_tall, size.y - half_tall, "tile %s sits inside the height" % coord)
 
 
+func test_a_click_lands_on_the_tile_it_is_drawn_over() -> void:
+	# The hit test is the whole of "which tile was clicked", and the way it fails
+	# is off-by-one rather than absent: a hex is not a rectangle, so a click near
+	# a corner belongs to a different tile than the bounding box it sits in. The
+	# check is the round trip — every tile centre must come back as its own tile,
+	# and so must a point pushed most of the way toward a neighbour.
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+
+	var view: HexMapView = main.get_node("HexMapView")
+	assert_gt(view.hex_radius(), 0.0, "the map was fitted before anything was clicked on it")
+
+	for coord in main.world.grid.all_coords():
+		assert_eq(
+			view.coord_at_point(view.center_of(coord)),
+			coord,
+			"the centre of tile %s is on tile %s" % [coord, coord]
+		)
+
+	# Well inside the hex but nowhere near its centre — the region a rectangular
+	# hit test gets wrong.
+	var centre := HexGrid.from_offset(20, 15)
+	for neighbor in main.world.grid.neighbors_in_bounds(centre):
+		var toward := view.center_of(centre).lerp(view.center_of(neighbor), 0.4)
+		assert_eq(view.coord_at_point(toward), centre, "a point 40%% of the way to %s" % neighbor)
+
+
+func test_a_click_outside_the_map_is_reported_as_outside_the_map() -> void:
+	# The legend and the margins are inside the window and on no tile at all.
+	# Clamping to the nearest real tile would make the map's edge sticky, and
+	# would make clicking the legend build something.
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+
+	var view: HexMapView = main.get_node("HexMapView")
+	var grid: HexGrid = main.world.grid
+	assert_false(grid.has_coord(view.coord_at_point(Vector2(-40.0, -40.0))), "above and left")
+	var size := main.get_viewport_rect().size
+	assert_false(grid.has_coord(view.coord_at_point(size + Vector2(40.0, 40.0))), "below and right")
+
+
+func test_the_text_over_the_map_does_not_eat_the_clicks_under_it() -> void:
+	# The status and prompt labels overlap the top rows of the map, and a
+	# Label's default mouse filter is STOP — it would swallow a click before
+	# `_unhandled_input` ever saw it. The hit-test checks above would not
+	# notice, because they call `coord_at_point()` directly rather than
+	# clicking through the GUI, so the filter itself is the thing to pin.
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	for label_name in ["Status", "Prompt"]:
+		var label: Control = main.get_node(label_name)
+		assert_eq(
+			label.mouse_filter,
+			Control.MOUSE_FILTER_IGNORE,
+			"the %s label lets clicks through to the map" % label_name
+		)
+
+
+func test_the_selected_tile_is_outlined_in_a_colour_nothing_else_uses() -> void:
+	# The selection has to read as "this one" rather than as another thing
+	# standing on the tile, which is why it is unsaturated. Not evidence that it
+	# is visible — that is the human criterion — but it catches the ring drifting
+	# into a terrain colour during a palette tweak.
+	var swatches := {
+		"selection": HexMapView._SELECTION_COLOR,
+		"route armed": HexMapView._ROUTE_ARMED_COLOR,
+	}
+	for name in swatches:
+		for terrain in WorldGen.Terrain.values():
+			var a: Color = swatches[name]
+			var b: Color = HexMapView.TERRAIN_COLORS[terrain]
+			var distance := Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length()
+			assert_gt(
+				distance,
+				MIN_COLOR_DISTANCE,
+				"the %s ring is distinguishable from %s" % [name, HexMapView.TERRAIN_NAMES[terrain]]
+			)
+	var armed: Color = HexMapView._ROUTE_ARMED_COLOR
+	var idle: Color = HexMapView._SELECTION_COLOR
+	assert_gt(
+		Vector3(armed.r - idle.r, armed.g - idle.g, armed.b - idle.b).length(),
+		MIN_COLOR_DISTANCE,
+		"a selection with a route started from it looks different from one without"
+	)
+
+
 # --- flows, not stocks -------------------------------------------------------
 #
 # The tests below are about the rates the map shows. Same caveat as everything

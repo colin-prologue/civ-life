@@ -1,4 +1,4 @@
-# AgDR-018 — A node reads the world, not the agents in it
+# AgDR-019 — A node reads the world, not the agents in it
 
 **Status:** accepted
 **Date:** 2026-09-05
