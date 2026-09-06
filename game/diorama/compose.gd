@@ -55,19 +55,27 @@ static func channel(seed: int, building_id: int, path: String,
 ## seventh positional argument is what makes that addition free.
 static func sample(spec: Variant, ctx: Dictionary, path: String,
 		purpose: String, dflt: float) -> float:
-	if spec == null:
+	# The culture moves the RANGE. The channel draw below is untouched, so the
+	# same building id under two cultures lands at the same relative position
+	# in each — the same building, differently proportioned, rather than two
+	# unrelated buildings.
+	var m: Variant = DioramaCulture.modulate(spec, ctx["culture"], purpose)
+	if m == null:
 		return dflt
-	if spec is float or spec is int:
-		return float(spec)
-	assert(spec is Array, "'%s' on '%s' must be a number or [lo, hi]"
+	if m is float or m is int:
+		return float(m)
+	assert(m is Array, "'%s' on '%s' must be a number or [lo, hi]"
 			% [purpose, path])
-	assert(spec.size() == 2, "'%s' on '%s' must have exactly two bounds"
+	assert(m.size() == 2, "'%s' on '%s' must have exactly two bounds"
 			% [purpose, path])
-	var lo := float(spec[0])
-	var hi := float(spec[1])
+	var lo := float(m[0])
+	var hi := float(m[1])
 	# Not swapped silently: a reversed range is a typo, and quietly "fixing" it
-	# hides the typo while changing what the style means.
-	assert(lo <= hi, "'%s' on '%s' has lo > hi" % [purpose, path])
+	# hides the typo while changing what the style means. Asserted on the
+	# MODULATED range, not the authored one: this guard exists to catch
+	# reversed-range typos, and a bad multiplier is exactly as worth catching.
+	assert(lo <= hi, "'%s' on '%s' has lo > hi after culture '%s'"
+			% [purpose, path, ctx["culture"].get("name", "none")])
 	return lo + (hi - lo) * channel(ctx["seed"], ctx["id"], path, purpose)
 
 
@@ -109,8 +117,9 @@ static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
 
-static func new_ctx(seed: int, building_id: int) -> Dictionary:
-	return {"seed": seed, "id": building_id, "path": "",
+static func new_ctx(seed: int, building_id: int,
+		culture: Dictionary = {}) -> Dictionary:
+	return {"seed": seed, "id": building_id, "path": "", "culture": culture,
 			"need_lo": ENDURE_LO, "need_hi": ENDURE_HI,
 			"frame": zero_frame(Transform3D.IDENTITY)}
 
@@ -314,6 +323,7 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var worst: float = band_lo
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
+				"culture": ctx["culture"],
 				"need_lo": band_lo + band_span * i / float(slices),
 				"need_hi": band_lo + band_span * (i + 1) / float(slices),
 				"frame": {"xf": base_xf.translated_local(
@@ -434,6 +444,7 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# each other, which is what lets a colonnade lose columns from the middle
 		# rather than from one end.
 		var child_ctx := {"seed": seed, "id": id, "path": path,
+				"culture": ctx["culture"],
 				"need_lo": ctx["need_lo"], "need_hi": ctx["need_hi"],
 				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
@@ -607,8 +618,9 @@ static func _indexed(template: Dictionary, i: int) -> Dictionary:
 ## Public entry point. Resolve the tree, then derive each part's centre height.
 ## A part's `need` — the condition at which it survives — was already settled
 ## during resolution, where the tree still knows what rests on what.
-static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
-	var out := resolve(tree, new_ctx(seed, building_id))
+static func build(tree: Dictionary, seed: int, building_id: int,
+		culture: Dictionary = {}) -> Array:
+	var out := resolve(tree, new_ctx(seed, building_id, culture))
 	var parts: Array = out["parts"]
 	_finish(parts)
 	return parts
