@@ -190,9 +190,13 @@ func test_the_generator_still_puts_a_city_on_a_fresh_world() -> void:
 	# routing the generator through the player's calls cannot have quietly
 	# stopped it working.
 	var world := WorldGen.generate(SEED_A)
-	assert_eq(world.nodes.size(), 2, "a farm and a granary at worldgen")
-	assert_eq(world.routes.size(), 1, "with a road between them")
-	assert_eq(world.citizens().size(), CityGen.CITIZENS_PER_ROUTE, "and people on it")
+	assert_eq(world.nodes.size(), 3, "a farm, a granary and a camp at worldgen")
+	assert_eq(world.routes.size(), 2, "with a road along each spoke")
+	assert_eq(
+		world.citizens().size(),
+		CityGen.CITIZENS_PER_ROUTE * world.routes.size(),
+		"and people on both"
+	)
 
 
 # --- 3. determinism under player input --------------------------------------

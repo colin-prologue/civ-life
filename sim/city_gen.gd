@@ -5,11 +5,17 @@ extends RefCounted
 ## it. Both go through the same three calls.
 ##
 ## `populate()` puts the smallest possible city on a freshly generated world: a
-## farm, a granary a short walk away, a road between them, and people on it.
-## `place_node()` and `connect_nodes()` are the same operations with the site
-## chosen by somebody rather than drawn — and `populate()` calls them, so there
-## is one way to build a city rather than a generator's way and a player's way
-## that can drift apart.
+## granary, a farm a short walk out one side of it, a gathering camp the same
+## walk out another, roads between them, and people on both. `place_node()` and
+## `connect_nodes()` are the same operations with the site chosen by somebody
+## rather than drawn — and `populate()` calls them, so there is one way to build
+## a city rather than a generator's way and a player's way that can drift apart.
+##
+## Two spokes rather than one because the two kinds of production say different
+## things. The farm's year is the tile's — the same every year, moving with the
+## season. The camp's year is whatever the animals happen to do, and the pair of
+## them side by side on the same map is the only way that difference is legible
+## as a difference rather than as noise.
 ##
 ## **Validity is here, not in `game/`.** Whether a tile can hold a structure and
 ## whether two structures can be joined are world rules, so they are answered by
@@ -72,7 +78,7 @@ const REFUSAL_OFF_MAP := "that is not on the map"
 const REFUSAL_WATER := "nothing is built on water"
 const REFUSAL_OCCUPIED := "something already stands there"
 const REFUSAL_SAME_STRUCTURE := "a route needs two structures, not one"
-const REFUSAL_NOT_A_PAIR := "a route runs from a farm to a granary"
+const REFUSAL_NOT_A_PAIR := "a route runs from a farm or a camp to a granary"
 const REFUSAL_ALREADY_LINKED := "those two are already connected"
 const REFUSAL_NO_STRAIGHT_RUN := "the straight run between them leaves the land"
 
@@ -139,7 +145,7 @@ static func can_connect(world: WorldMap, a: CityNode, b: CityNode) -> bool:
 ## if the pair refuses the connection.
 ##
 ## The route is oriented by what the structures are rather than by which was
-## picked first: grain leaves a farm and arrives at a granary, so the direction
+## picked first: grain leaves a farm or a camp and arrives at a granary, so the direction
 ## is a property of the pair and clicking them the other way round builds the
 ## same road. That also makes the result independent of selection order, which
 ## is one less thing for a replay to have to reproduce.
@@ -150,13 +156,21 @@ static func connect_nodes(world: WorldMap, a: CityNode, b: CityNode) -> Route:
 	return _lay_route(world, ends[0], ends[1])
 
 
-## The pair as [farm, granary], or empty if it is not one of each.
+## The pair as [source, granary] — a farm or a gathering camp feeding the
+## granary — or empty if it is not such a pair. Both producing kinds ride the
+## same roads and carriers on purpose: one transport model, no special case for
+## gathered goods (see `test_gathering.gd`, AC5).
 static func _grain_order(a: CityNode, b: CityNode) -> Array:
-	if a.kind == CityNode.Kind.FARM and b.kind == CityNode.Kind.GRANARY:
+	if _produces_grain(a) and b.kind == CityNode.Kind.GRANARY:
 		return [a, b]
-	if b.kind == CityNode.Kind.FARM and a.kind == CityNode.Kind.GRANARY:
+	if _produces_grain(b) and a.kind == CityNode.Kind.GRANARY:
 		return [b, a]
 	return []
+
+
+## Whether this node grows something a carrier could take to a granary.
+static func _produces_grain(node: CityNode) -> bool:
+	return node.kind == CityNode.Kind.FARM or node.kind == CityNode.Kind.GATHERING
 
 
 ## An existing road joining these two, whichever way round it runs.
@@ -203,9 +217,14 @@ static func populate(world: WorldMap) -> void:
 ## Directions are tried in `HexGrid.DIRECTIONS` order rather than drawn, so the
 ## road a given farm site produces never depends on how many draws happened
 ## before it.
-static func _road_from(world: WorldMap, from: Vector2i) -> Array[Vector2i]:
+##
+## `avoid` names one direction to skip, which is how the second spoke is stopped
+## from being laid back down the first one.
+static func _road_from(world: WorldMap, from: Vector2i, avoid := Vector2i.ZERO) -> Array[Vector2i]:
 	for candidate_direction in HexGrid.DIRECTIONS:
 		var direction: Vector2i = candidate_direction
+		if direction == avoid:
+			continue
 		var to := from + direction * ROUTE_LENGTH
 		if not world.grid.has_coord(to):
 			continue
@@ -243,18 +262,51 @@ static func _build(world: WorldMap, path: Array[Vector2i]) -> void:
 		return
 	connect_nodes(world, farm, granary)
 
+	_add_gathering_spoke(world, granary, path[-2] - path[-1])
+
+
+## A gathering camp on a second spoke out of the granary, joined to it by a road
+## of its own — placed and connected through the same two calls the player uses.
+##
+## The granary is the hub because that is what a granary is, and because it keeps
+## `ROUTE_LENGTH` honest: both roads are the same short walk, so the delivery lag
+## that fixes that constant applies equally to both and neither road is a special
+## case (see `AgDR-013`'s closing note).
+##
+## The direction back toward the farm is excluded and nothing else is: this
+## placement is as unclever as the farm's, and deliberately so. Where the camp
+## ends up is not chosen against where animals are, because the animals move and
+## nothing here knows where they are going. Whether the camp turns out to be
+## worth having is the world's answer, not generation's.
+##
+## `_road_from` proved the outward run is straight land, and `connect_nodes`
+## lays `HexGrid.line(camp, granary)` — the same tiles walked the other way, a
+## route running from the node it collects from to the node it delivers to.
+##
+## Silently does nothing if there is no second road out of the granary, or if
+## either call refuses. A city with a farm and no camp is the honest outcome on
+## a cramped site.
+static func _add_gathering_spoke(world: WorldMap, granary: CityNode, toward_farm: Vector2i) -> void:
+	var outward := _road_from(world, granary.coord, toward_farm)
+	if outward.is_empty():
+		return
+	var camp := place_node(world, outward[-1], CityNode.Kind.GATHERING)
+	if camp == null:
+		return
+	connect_nodes(world, camp, granary)
+
 
 ## Build the road and the people on it. The one place a `Route` and its carriers
 ## come into existence; everything that lays a route arrives here.
+##
+## Citizens start spread along the road rather than stacked at the source, so the
+## first thing anyone sees is a road in use rather than a queue. They
+## desynchronise on their own after that — whoever reaches the source first
+## leaves with what is there and the next has to wait for the following turn.
 static func _lay_route(world: WorldMap, source: CityNode, sink: CityNode) -> Route:
 	var path := HexGrid.line(source.coord, sink.coord)
 	var route := Route.new(world.routes.size(), source, sink, path)
 	world.add_route(route)
-
-	# Citizens start spread along the road rather than stacked at the farm, so
-	# the first thing anyone sees is a road in use rather than a queue. They
-	# desynchronise on their own after that — whoever reaches the farm first
-	# leaves with the harvest and the next has to wait for the following turn.
 	for i in range(CITIZENS_PER_ROUTE):
 		var start := (i * (path.size() - 1)) / maxi(1, CITIZENS_PER_ROUTE - 1)
 		world.add_agent(Citizen.new(world.agents.size(), route, start))

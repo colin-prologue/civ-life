@@ -213,6 +213,33 @@ func forage_demand_at(coord: Vector2i) -> float:
 	return _forage_demand[i]
 
 
+## The same total over every tile within `radius` of `coord`, the centre tile
+## included. Tiles off the map contribute nothing rather than being an error, so
+## a structure near the coast is not a special case.
+##
+## This is the widening that lets something standing still notice the world
+## moving past it. A citizen reads one tile because it only cares what is
+## underfoot; a gathering node reads a disc because what it cares about is
+## whether anything is *around*. Neither can find out what kind of thing is
+## producing the number, which is the whole of `AgDR-013` and the reason this is
+## a second read of the same census rather than a scan of `agents`.
+##
+## Summed on demand rather than cached per radius: a handful of nodes read
+## nineteen tiles once a turn, against a cache that would have to be invalidated
+## on every one of the world's agent movements.
+func forage_demand_within(coord: Vector2i, radius: int) -> float:
+	assert(radius >= 0, "a radius is not negative")
+	var total := 0.0
+	# Axial disc, enumerated in the same fixed order `Herd._best_ground()` uses,
+	# so a float sum over it is identical run to run.
+	for dq in range(-radius, radius + 1):
+		for dr in range(maxi(-radius, -dq - radius), mini(radius, -dq + radius) + 1):
+			var i := grid.index_of(coord + Vector2i(dq, dr))
+			if i >= 0:
+				total += _forage_demand[i]
+	return total
+
+
 ## The same figure, summed from the agents actually standing there rather than
 ## read off the cache — the version anything *quoting* the number has to use.
 ##
