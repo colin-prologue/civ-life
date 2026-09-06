@@ -426,6 +426,13 @@ if [ "$MODE" = "stills" ]; then
   [ "$GOT" -eq "$EXPECTED" ] \
     || { rm -rf "$ABS_OUT"; die "asked for $EXPECTED frame(s), got $GOT"; }
 else
+  # Staging is a stills concept: the herd is placed one turn short of a single
+  # photographed frame. A span has no such frame, so accepting --stage here
+  # would record an ordinary movie under a name that promises a held-up
+  # citizen — refused rather than silently ignored. --overlay, by contrast, is
+  # applied before the clock starts and holds for the whole span, so it is
+  # forwarded below like any other view option.
+  [ -z "$STAGE" ] || die "--stage is a stills option; a movie has no single frame to stage against. Capture a staged still instead."
   command -v ffmpeg >/dev/null \
     || die "--movie needs ffmpeg to assemble a GIF (brew install ffmpeg). Godot's own movie output is AVI, which GitHub will not play inline."
   FRAMES_DIR="$(mktemp -d)"
@@ -441,7 +448,7 @@ else
     -s tools/capture.gd -- \
     "--mode=movie" "--seed=$SEED" "--from=$FROM_TURN" "--to=$TO_TURN" \
     "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" \
-    ${SCENE:+"--scene=$SCENE"} || RC=$?
+    ${SCENE:+"--scene=$SCENE"} ${OVERLAY:+"--overlay=$OVERLAY"} || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: movie capture failed and nothing was kept." >&2

@@ -241,6 +241,17 @@ func _run_stills() -> void:
 	if not _is_turn_driven():
 		await _run_static_still()
 		return
+	# Staging happens one turn short of the photographed frame, so a target the
+	# clock has already reached — turn 0 included, and 0 is in the default turn
+	# list — has no turn left to stage in. The loop below would simply never run
+	# for it, and the frame would carry a name that promises a held-up citizen
+	# it does not show. Refused rather than skipped: falsely staged evidence is
+	# the one thing this harness must not emit.
+	if _stage != "" and not _turns.is_empty() and _turns[0] <= _main.world.turn:
+		_fail("--stage=%s cannot be shown at turn %d — staging happens during a turn advance; request turn %d or later" % [
+			_stage, _turns[0], _main.world.turn + 1,
+		])
+		return
 	for target in _turns:
 		while _main.world.turn < target:
 			# Staged one turn short of the frame, because being held up is a
