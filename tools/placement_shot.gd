@@ -44,8 +44,8 @@ const SETTLE_FRAMES := 4
 ## trips to have landed grain in the granary and for the status line to show it.
 const RUN_TURNS := 20
 
-const WIDTH := 1280
-const HEIGHT := 720
+var _width := 1280
+var _height := 720
 
 var _main: Node = null
 var _view: Node = null
@@ -57,10 +57,20 @@ var _drew := false
 func _initialize() -> void:
 	RenderingServer.frame_post_draw.connect(_on_frame_post_draw)
 	var args := OS.get_cmdline_user_args()
-	if args.is_empty():
+	# `--width=`/`--height=` mirror tools/capture.gd. Godot's own --resolution
+	# flag does not survive into a SceneTree script's viewport, so the wrapper
+	# says the size twice — once for the window, once here — and this is the
+	# copy the PNGs actually get.
+	for arg in args:
+		if arg.begins_with("--width="):
+			_width = int(arg.trim_prefix("--width="))
+		elif arg.begins_with("--height="):
+			_height = int(arg.trim_prefix("--height="))
+		elif not arg.begins_with("--"):
+			_out_dir = arg
+	if _out_dir.is_empty():
 		_fail("no output directory given")
 		return
-	_out_dir = args[0]
 	if DirAccess.make_dir_recursive_absolute(_out_dir) != OK:
 		_fail("could not create the output directory %s" % _out_dir)
 		return
@@ -68,11 +78,11 @@ func _initialize() -> void:
 	print("[shot] driver=%s display=%s target=%dx%d" % [
 		RenderingServer.get_video_adapter_name(),
 		DisplayServer.get_name(),
-		WIDTH,
-		HEIGHT,
+		_width,
+		_height,
 	])
 
-	root.size = Vector2i(WIDTH, HEIGHT)
+	root.size = Vector2i(_width, _height)
 	await process_frame
 	await process_frame
 

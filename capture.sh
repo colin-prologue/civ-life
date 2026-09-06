@@ -280,7 +280,7 @@ capture_placement() {
   local out="$1" log="$2"
   local -a argv
   argv=("$GODOT" --resolution "${WIDTH}x${HEIGHT}"
-    -s tools/placement_shot.gd -- "$out")
+    -s tools/placement_shot.gd -- "$out" "--width=$WIDTH" "--height=$HEIGHT")
   local rc=0
   run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"
@@ -403,7 +403,7 @@ self_test() {
   mkdir -p "$tmp/placement"
   local -a placement_argv
   placement_argv=("$GODOT" --headless --resolution "${WIDTH}x${HEIGHT}"
-    -s tools/placement_shot.gd -- "$tmp/placement")
+    -s tools/placement_shot.gd -- "$tmp/placement" "--width=$WIDTH" "--height=$HEIGHT")
   run_bounded "$tmp/placement.log" "${placement_argv[@]}" || rc_p=$?
   local wrote_p
   wrote_p="$(find "$tmp/placement" -name '*.png' | wc -l | tr -d ' ')"
@@ -413,13 +413,17 @@ self_test() {
   elif [ "$wrote_p" != "0" ]; then
     echo "  FAIL: it wrote $wrote_p file(s) before failing; the check runs too late."
     failures=$((failures + 1))
-  elif ! grep -q "SHOT-FAIL" "$tmp/placement.log"; then
+  elif ! grep -q "SHOT-FAIL .*would have been blank" "$tmp/placement.log"; then
+    # The specific verdict, not the generic prefix: placement_shot fails with
+    # SHOT-FAIL for plenty of earlier reasons (no HexMapView, no build site),
+    # and any of those would make this leg claim the guard fired when
+    # FrameCheck.inspect() was never reached.
     echo "  FAIL: it failed, but not with a blank-frame verdict:"
     tail -10 "$tmp/placement.log" | sed 's/^/    /'
     failures=$((failures + 1))
   else
     echo "  PASS: exit $rc_p, no files written, guard said:"
-    grep "SHOT-FAIL" "$tmp/placement.log" | sed 's/^/    /'
+    grep "SHOT-FAIL .*would have been blank" "$tmp/placement.log" | sed 's/^/    /'
   fi
 
   [ "$failures" -eq 0 ] || die "$failures self-test check(s) failed."

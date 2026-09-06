@@ -243,6 +243,24 @@ func test_a_click_outside_the_map_is_reported_as_outside_the_map() -> void:
 	assert_false(grid.has_coord(view.coord_at_point(size + Vector2(40.0, 40.0))), "below and right")
 
 
+func test_the_text_over_the_map_does_not_eat_the_clicks_under_it() -> void:
+	# The status and prompt labels overlap the top rows of the map, and a
+	# Label's default mouse filter is STOP — it would swallow a click before
+	# `_unhandled_input` ever saw it. The hit-test checks above would not
+	# notice, because they call `coord_at_point()` directly rather than
+	# clicking through the GUI, so the filter itself is the thing to pin.
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	for label_name in ["Status", "Prompt"]:
+		var label: Control = main.get_node(label_name)
+		assert_eq(
+			label.mouse_filter,
+			Control.MOUSE_FILTER_IGNORE,
+			"the %s label lets clicks through to the map" % label_name
+		)
+
+
 func test_the_selected_tile_is_outlined_in_a_colour_nothing_else_uses() -> void:
 	# The selection has to read as "this one" rather than as another thing
 	# standing on the tile, which is why it is unsaturated. Not evidence that it
