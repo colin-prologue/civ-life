@@ -96,6 +96,20 @@ var chronicle := Chronicle.new()
 ## floats drifts, so anything quoting a total sums the agents themselves.
 var _forage_demand: PackedFloat32Array
 
+## The per-tile forage census as it stood at the start of this turn, before any
+## agent grazed or moved.
+##
+## `Herd.step()` grazes and then migrates, so the live census changes underneath
+## the agents still to be stepped. A herd dividing a tile's forage by the live
+## demand would see earlier herds vanish and claim their share as well, and the
+## tile would be charged for more than it grew. Sharing is settled against the
+## world as it was when the turn began.
+##
+## A copy per turn rather than a second running total: one `duplicate()` of an
+## array the map already keeps, against a bookkeeping path that would have to
+## stay correct through every future mutator.
+var _forage_demand_at_turn_start: PackedFloat32Array = PackedFloat32Array()
+
 
 func _init(p_grid: HexGrid, p_seed: int) -> void:
 	grid = p_grid
@@ -139,6 +153,7 @@ func advance_turn() -> int:
 	var before := TurnReport.snapshot(self)
 	turn += 1
 	_recompute_forage()
+	_forage_demand_at_turn_start = _forage_demand.duplicate()
 	for node in nodes:
 		node.begin_turn()
 	for node in nodes:
@@ -195,6 +210,24 @@ func forage_demand_at(coord: Vector2i) -> float:
 	var i := grid.index_of(coord)
 	assert(i >= 0, "cannot read forage demand off the map")
 	return _forage_demand[i]
+
+
+## What this tile's total forage demand was before anything moved this turn.
+##
+## The figure to divide a tile's forage by when deciding who gets what share of
+## it, so that the shares taken by everything standing there sum to at most one
+## whole tile however the step order falls. `forage_demand_at()` is the live
+## number and is the right read for a *hypothetical* tile — somewhere a herd is
+## considering going, where arrivals this turn genuinely count.
+##
+## Falls back to the live census on a world that has never been advanced, where
+## no snapshot has been taken yet and the two are the same thing anyway.
+func forage_demand_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read demand off the map")
+	if i >= _forage_demand_at_turn_start.size():
+		return _forage_demand[i]
+	return _forage_demand_at_turn_start[i]
 
 
 ## The same figure, summed from the agents actually standing there rather than
@@ -431,6 +464,20 @@ func set_vitality(coord: Vector2i, use: int, value: float) -> void:
 	assert(i >= 0, "cannot write vitality off the map")
 	var row: PackedFloat32Array = _vitality[use]
 	row[i] = clampf(value, Land.MIN_VITALITY, Land.MAX_VITALITY)
+	_vitality[use] = row
+
+
+## Report that this tile was worked, for this use, at `intensity` in 0..1.
+##
+## The world does not ask who is calling. A herd knows that it grazes and a farm
+## knows that it cultivates; `WorldMap` is told a use and a quantity and applies
+## them, which is `AgDR-013`'s rule — agents report quantities, and nothing here
+## branches on what kind of thing reported.
+func draw_vitality(coord: Vector2i, use: int, intensity: float) -> void:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot wear ground off the map")
+	var row: PackedFloat32Array = _vitality[use]
+	row[i] = Land.depleted(row[i], intensity)
 	_vitality[use] = row
 
 
