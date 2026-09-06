@@ -78,6 +78,17 @@ var store: float
 ## a loss of what was built (`world-growth-tone` rule 1).
 var capacity: float
 
+## Grain that arrived here this turn, and grain that left it. Cleared by the
+## world at the top of every turn, so between turns these are the two flows that
+## produced the change in `store`.
+##
+## Counted rather than inferred from the difference. A store that took eight in
+## and gave eight out looks identical to one that did nothing, and the whole
+## point of showing a flow is that those are not the same event. This costs two
+## additions per transfer and decides nothing — no rule reads them.
+var took_in: float
+var gave_out: float
+
 
 func _init(p_id: int, p_coord: Vector2i, p_kind: int, p_capacity := -1.0) -> void:
 	id = p_id
@@ -85,6 +96,8 @@ func _init(p_id: int, p_coord: Vector2i, p_kind: int, p_capacity := -1.0) -> voi
 	kind = p_kind
 	store = 0.0
 	capacity = p_capacity if p_capacity >= 0.0 else default_capacity(p_kind)
+	took_in = 0.0
+	gave_out = 0.0
 
 
 static func default_capacity(kind_: int) -> float:
@@ -105,7 +118,26 @@ func kind_name() -> String:
 func produce(world: WorldMap) -> void:
 	if kind != Kind.FARM:
 		return
-	deposit(FARM_YIELD_PER_TURN * world.forage_at(coord))
+	deposit(yield_rate(world))
+
+
+## What this node would grow this turn, before anything is done with it.
+##
+## The same expression `produce()` uses, pulled out so a display can show the
+## field's current yield without either re-deriving it or waiting for a turn to
+## pass. A number quoted from somewhere other than the place it is computed is a
+## number that can be wrong, and this is the one the ticket asks to be visible.
+func yield_rate(world: WorldMap) -> float:
+	if kind != Kind.FARM:
+		return 0.0
+	return FARM_YIELD_PER_TURN * world.forage_at(coord)
+
+
+## Start a turn with both flow counters at zero. Called by the world before
+## anything produces or carries.
+func begin_turn() -> void:
+	took_in = 0.0
+	gave_out = 0.0
 
 
 ## Put grain in. Returns how much was actually accepted, which is less than was
@@ -113,6 +145,7 @@ func produce(world: WorldMap) -> void:
 func deposit(amount: float) -> float:
 	var accepted := minf(maxf(amount, 0.0), capacity - store)
 	store += accepted
+	took_in += accepted
 	return accepted
 
 
@@ -121,4 +154,5 @@ func deposit(amount: float) -> float:
 func withdraw(amount: float) -> float:
 	var given := minf(maxf(amount, 0.0), store)
 	store -= given
+	gave_out += given
 	return given
