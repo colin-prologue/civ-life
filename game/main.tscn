@@ -12,6 +12,15 @@ script = ExtResource("2_view")
 [node name="Status" type="Label" parent="."]
 offset_left = 12.0
 offset_top = 8.0
-offset_right = 900.0
+offset_right = 1100.0
 offset_bottom = 180.0
+mouse_filter = 2
 text = "Turn 0"
+
+[node name="Prompt" type="Label" parent="."]
+offset_left = 12.0
+offset_top = 188.0
+offset_right = 1100.0
+offset_bottom = 212.0
+mouse_filter = 2
+text = "nothing selected"
