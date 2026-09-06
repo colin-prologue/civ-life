@@ -326,6 +326,11 @@ func test_the_response_saturates_rather_than_scaling() -> void:
 	# an opportunity instead of a thing to farm.
 	assert_eq(CityNode.gathering_share(0.0), 0.0, "empty ground is worth nothing")
 	assert_eq(CityNode.gathering_share(-5.0), 0.0, "and so is a nonsense reading")
+	assert_eq(
+		CityNode.gathering_share(0.0001),
+		0.0,
+		"float32 census residue on a tile the animals left is not demand"
+	)
 	assert_almost_eq(
 		CityNode.gathering_share(CityNode.GATHERING_HALF_AT),
 		0.5,

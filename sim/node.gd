@@ -122,6 +122,19 @@ const GATHERING_RADIUS := 2
 ## and never becomes "how do I pile animals up".
 const GATHERING_HALF_AT := 40.0
 
+## Mouths below which a census reading counts as nobody there.
+##
+## The per-tile census is a `PackedFloat32Array` maintained by adding a herd's
+## demand on arrival and subtracting it on departure, and a 32-bit
+## add-then-subtract of a 64-bit quantity can leave a residue on the order of
+## 1e-4 mouths on a tile the animals have left. Without a floor that residue is
+## "demand", and a camp whose herds are long gone stays faintly lit forever —
+## which also poisons every measurement that classifies a turn by
+## `last_yield > 0.0`. A thousandth of a mouth is orders of magnitude above any
+## residue the census can accumulate and orders of magnitude below the tens of
+## mouths a real herd reports, so nothing real is ever rounded away.
+const GATHERING_DEMAND_FLOOR := 0.001
+
 ## What a gathering node holds between carriers. The same barn as a farm, and
 ## for the same reason: a store that could absorb a whole quiet season would make
 ## the carriers decorative, and here it would also hide the thing this kind
@@ -230,12 +243,14 @@ func yield_of(world: WorldMap) -> float:
 
 
 ## The fraction of its best turn a gathering node gets from `nearby` mouths in
-## range. Saturating, zero at zero, and never reaching one.
+## range. Saturating, zero at zero — and at anything under
+## `GATHERING_DEMAND_FLOOR`, which is where float32 census residue lives — and
+## never reaching one.
 ##
 ## Static and pure so the shape can be asserted on the numbers directly, without
 ## a world to put it in.
 static func gathering_share(nearby: float) -> float:
-	if nearby <= 0.0:
+	if nearby < GATHERING_DEMAND_FLOOR:
 		return 0.0
 	return nearby / (nearby + GATHERING_HALF_AT)
 
