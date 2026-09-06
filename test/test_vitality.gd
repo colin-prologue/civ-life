@@ -256,6 +256,59 @@ func test_grazing_does_not_wear_the_ground_for_cultivation() -> void:
 		assert_eq(value, Land.MAX_VITALITY, "and left cultivation untouched")
 
 
+func test_a_farm_wears_the_ground_it_works() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var farm := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(farm)
+
+	for i in range(Seasons.TURNS_PER_YEAR):
+		world.advance_turn()
+
+	assert_lt(world.vitality_at(land, Land.Use.CULTIVATE), 0.95,
+			"a year of farming shows on the field")
+	assert_almost_eq(world.vitality_at(land, Land.Use.GRAZE), Land.MAX_VITALITY, 0.0001,
+			"and leaves the grazing untouched")
+
+
+func test_a_worn_field_yields_less() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var fresh := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(fresh)
+	world.advance_turn()
+	var first_year := fresh.store
+
+	world.set_vitality(land, Land.Use.CULTIVATE, Land.MIN_VITALITY)
+	fresh.store = 0.0
+	world.advance_turn()
+
+	assert_lt(fresh.store, first_year, "exhausted ground gives less than fresh ground")
+	assert_gt(fresh.store, 0.0, "but never nothing — the floor is above zero")
+
+
+func test_the_field_a_farm_advertises_is_the_field_it_actually_works() -> void:
+	# `yield_rate()` exists so a display can quote a farm's output without
+	# re-deriving it, and `produce()` deposits exactly what it returns. Wear had
+	# to go into the same expression rather than beside it: a `produce()` that
+	# read the worn field while `yield_rate()` still read the unworn curve would
+	# put a number on the map that the granary never sees.
+	var world := _world()
+	var land := _first_land_coord(world)
+	var farm := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(farm)
+	world.set_vitality(land, Land.Use.CULTIVATE, 0.5)
+
+	var advertised := farm.yield_rate(world)
+	assert_almost_eq(advertised, CityNode.FARM_YIELD_PER_TURN * world.forage_at(land) * 0.5,
+			0.0001, "the quoted rate is the curve scaled by how worn the field is")
+
+	farm.begin_turn()
+	farm.produce(world)
+	assert_almost_eq(farm.took_in, advertised, 0.0001,
+			"and it is what the farm actually put in the barn")
+
+
 func test_a_herd_on_worn_ground_gets_less_from_it() -> void:
 	var world := _world()
 	var land := _first_land_coord(world)
