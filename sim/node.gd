@@ -27,7 +27,7 @@ extends RefCounted
 ## split would delete the tag and immediately rebuild it as `is Granary` at every
 ## call site. The split becomes right when a kind needs *inputs* (a workshop that
 ## consumes one good to emit another) or per-kind fields, because that is when
-## the shared shape of `produce()` stops being true. See `AgDR-015`.
+## the shared shape of `produce()` stops being true. See `AgDR-018`.
 ##
 ## Note that this is *not* the unification `AgDR-002` cares about. Nodes stand
 ## still and are placed; agents move and act. The type that must not branch on
@@ -107,7 +107,7 @@ const GATHERING_YIELD_PER_TURN := 1.0
 ## mattering — a farm with a seasonal curve, the outcome the ticket named as the
 ## failure. Two is kept because it is the value at which placement is
 ## unambiguously a decision, which is the claim this kind is built on and the one
-## `AgDR-015` says not to tune away.
+## `AgDR-018` says not to tune away.
 const GATHERING_RADIUS := 2
 
 ## Mouths within `GATHERING_RADIUS` at which the node produces half of
@@ -211,7 +211,7 @@ func produce(world: WorldMap) -> void:
 ## and a farm in a wood have different years, and so `Seasons` stays the city's
 ## only calendar rather than one that can drift out of step with the world's.
 ##
-## The gathering branch is the whole of `AgDR-015`, and its restraint is the
+## The gathering branch is the whole of `AgDR-018`, and its restraint is the
 ## point: it asks for a quantity on a set of tiles and there is no question it
 ## could ask that would tell it what is producing that quantity. A herd reports
 ## its mouths, a citizen reports nothing, and anything later that wants to be
