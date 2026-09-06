@@ -1,4 +1,4 @@
-# AgDR-015 — The turn report is derived and bounded, not an event log
+# AgDR-016 — The turn report is derived and bounded, not an event log
 
 **Status:** accepted
 **Date:** 2026-09-04

@@ -63,6 +63,8 @@ TURNS="0,4,12"
 NAME=""
 SCENE=""
 LABEL=""
+OVERLAY=""
+STAGE=""
 OUT_ROOT="docs/shots"
 MODE="stills"
 FROM_TURN=0
@@ -98,9 +100,13 @@ Options
                       captured as a single verified still; --turns and --movie
                       do not apply to it and --movie is refused rather than
                       recording one frame N times.
-  --label NAME        filename stem for a --scene still (default: the scene's
-                      own basename). Ignored for the game scene, whose stills
-                      are named by seed and turn.
+  --label NAME        filename stem for the stills (default: the scene's own
+                      basename for --scene, the seed for the game scene). For
+                      the game scene the turn number is still appended.
+  --overlay NAME      turn a map overlay on before capturing (e.g. forage)
+  --stage held-up     put a herd on top of a citizen so the frame shows
+                      somebody held up. Say so wherever the frame is used:
+                      the shipped seed does not produce this on its own.
   --resolution WxH    render size (default 1280x720)
   --reduce MODE       also write a <stem>-reduced.png beside every still, run
                       through tools/spike_reduce.gd. MODE is 'value' (greyscale)
@@ -137,6 +143,8 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --scene) SCENE="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
+    --overlay) OVERLAY="$2"; shift 2 ;;
+    --stage) STAGE="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
     --reduce) REDUCE="$2"; shift 2 ;;
@@ -258,6 +266,8 @@ capture_stills() {
   # reproducible by the command that made it.
   [ -n "$SCENE" ] && argv+=("--scene=$SCENE")
   [ -n "$LABEL" ] && argv+=("--label=$LABEL")
+  [ -n "$OVERLAY" ] && argv+=("--overlay=$OVERLAY")
+  [ -n "$STAGE" ] && argv+=("--stage=$STAGE")
   local rc=0
   run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"
@@ -490,6 +500,13 @@ elif [ "$MODE" = "placement" ]; then
   [ "$GOT" -eq "${REPORTED:-0}" ] \
     || { rm -rf "$ABS_OUT"; die "harness reported ${REPORTED:-none} frame(s), got $GOT"; }
 else
+  # Staging is a stills concept: the herd is placed one turn short of a single
+  # photographed frame. A span has no such frame, so accepting --stage here
+  # would record an ordinary movie under a name that promises a held-up
+  # citizen — refused rather than silently ignored. --overlay, by contrast, is
+  # applied before the clock starts and holds for the whole span, so it is
+  # forwarded below like any other view option.
+  [ -z "$STAGE" ] || die "--stage is a stills option; a movie has no single frame to stage against. Capture a staged still instead."
   command -v ffmpeg >/dev/null \
     || die "--movie needs ffmpeg to assemble a GIF (brew install ffmpeg). Godot's own movie output is AVI, which GitHub will not play inline."
   FRAMES_DIR="$(mktemp -d)"
@@ -505,7 +522,7 @@ else
     -s tools/capture.gd -- \
     "--mode=movie" "--seed=$SEED" "--from=$FROM_TURN" "--to=$TO_TURN" \
     "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" \
-    ${SCENE:+"--scene=$SCENE"} || RC=$?
+    ${SCENE:+"--scene=$SCENE"} ${OVERLAY:+"--overlay=$OVERLAY"} || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: movie capture failed and nothing was kept." >&2

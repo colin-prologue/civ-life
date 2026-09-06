@@ -1,4 +1,4 @@
-# AgDR-017 — One builder for cities, and refusals that travel as prose
+# AgDR-018 — One builder for cities, and refusals that travel as prose
 
 **Status:** accepted, provisional
 **Ticket:** #27 — one player verb: select a tile, place a node, draw a route

@@ -293,6 +293,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			place(CityNode.Kind.GRANARY)
 		KEY_R:
 			arm_route()
+		KEY_O:
+			# The overlay is a property of the view, not of the world, so this
+			# forwards and decides nothing — the same shape as every other key
+			# here, and it still moves no part of the simulation.
+			_view.cycle_overlay()
 		_:
 			return
 	get_viewport().set_input_as_handled()
@@ -311,13 +316,10 @@ const QUIET_TURN := "nothing crossed a threshold this turn"
 
 
 func _update_status() -> void:
-	# The herd total is here because the thing this world is trying to show is
-	# change over time, and a number that moves every turn is the cheapest way to
-	# tell whether what is on screen is going anywhere.
-	#
-	# Underneath it, the same turn said as events rather than as totals. A total
-	# that moves tells you something happened somewhere; the lines below say what
-	# and where, and the number on each one is the number ringed on the map.
+	# The totals line, and underneath it the same turn said as events rather than
+	# as totals. A total that moves tells you something happened somewhere; the
+	# lines below say what and where, and the number on each one is the number
+	# ringed on the map.
 	_status.text = _totals_line() + "\n" + _report_text()
 
 
@@ -335,18 +337,20 @@ func _report_text() -> String:
 ## granaries and routes belong on this line rather than in the report below it:
 ## the report says what *changed* this turn, and a structure the player placed
 ## three turns ago is not news — but "how much of this is mine" is exactly the
-## question a first verb makes worth answering every turn.
+## question a first verb makes worth answering every turn. The stocks that used
+## to sit here — animals, grain in store — live in the view's panel now, where
+## each has a rate and a direction beside it; two places quoting the same number
+## is two places that can disagree. The herd *count* stays: it is a count of
+## things on the map rather than a stock the panel is tracking.
 ##
 ## The key hints live on the prompt line instead, so this one stays a reading of
 ## the world rather than half a control legend.
 func _totals_line() -> String:
-	return "Turn %d — %s, year %d — %d animals in %d herds — %d grain in store — %d farms, %d granaries, %d routes — seed %d — %s %0.1f/s" % [
+	return "Turn %d — %s, year %d — %d herds — %d farms, %d granaries, %d routes — seed %d — %s %0.1f/s" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
-		roundi(world.total_herd_population()),
 		world.herds().size(),
-		roundi(world.total_granary_store()),
 		_node_count(CityNode.Kind.FARM),
 		_node_count(CityNode.Kind.GRANARY),
 		world.routes.size(),
@@ -376,7 +380,7 @@ func _update_prompt() -> void:
 		var off := HexGrid.to_offset(selected_coord)
 		where = "tile %d,%d" % [off.x, off.y]
 	var said := "" if message.is_empty() else " — %s" % message
-	_prompt.text = "%s%s     [click] select  [F] farm  [G] granary  [R] route  [Esc] clear  [space] step  [P] play  [ ] speed" % [
+	_prompt.text = "%s%s     [click] select  [F] farm  [G] granary  [R] route  [Esc] clear  [space] step  [P] play  [ ] speed  [O] overlay" % [
 		where,
 		said,
 	]
