@@ -48,7 +48,17 @@ const FARM_YIELD_PER_TURN := 1.0
 ## anything, and widening this number closes it — measured, at twelve the same
 ## obstruction cost eight percent of deliveries instead of most of them, because
 ## the barn simply absorbed the delay.
-const FARM_CAPACITY := 3.0
+##
+## **Re-derived when fields started wearing out (`AgDR-014`).** The rule above did
+## not change; the harvest it is stated in terms of did. A farm now holds its own
+## field at about two thirds of the seasonal curve — measured at 0.66 after ten
+## years — so a good harvest fell from 0.95 to roughly 0.63 a turn and three turns
+## of one fell with it. Left at 3.0 the barn had become six turns deep instead of
+## three, and a held-up carrier no longer cost the city anything much: the
+## obstruction test's share of throughput went from 54% to 71% against a 60%
+## ceiling. This is that ratio put back where its own sizing rule says it belongs,
+## not a number chosen to clear a red suite.
+const FARM_CAPACITY := 2.0
 
 ## What a granary holds. Large enough that nothing in a normal run meets it —
 ## `world-growth-tone` is abundance-baseline, and a granary that fills up and
@@ -118,7 +128,22 @@ func kind_name() -> String:
 func produce(world: WorldMap) -> void:
 	if kind != Kind.FARM:
 		return
-	deposit(yield_rate(world))
+	var grown := yield_rate(world)
+	deposit(grown)
+	# Working the field wears it, for cultivation and for nothing else
+	# (`AgDR-014`). A herd can eat this same tile down to the floor and the farm
+	# will not notice, which is the whole content of that record.
+	#
+	# Charged against what the field actually grew rather than against the fact
+	# that a farm stands here — the same correction `Herd._graze()` carries. Wear
+	# proportional to how badly a farm wanted a harvest would floor every field
+	# in the world each winter, when the ground gives least and the want is
+	# largest. A field that grew nothing was barely worked.
+	#
+	# `grown` is charged rather than what `deposit()` accepted. A full barn is a
+	# harvest with nowhere to go, not a harvest that never happened, and the
+	# ground was turned either way.
+	world.draw_vitality(coord, Land.Use.CULTIVATE, grown / FARM_YIELD_PER_TURN)
 
 
 ## What this node would grow this turn, before anything is done with it.
@@ -127,10 +152,15 @@ func produce(world: WorldMap) -> void:
 ## field's current yield without either re-deriving it or waiting for a turn to
 ## pass. A number quoted from somewhere other than the place it is computed is a
 ## number that can be wrong, and this is the one the ticket asks to be visible.
+##
+## Which is why wear went in *here* rather than beside the `deposit()` in
+## `produce()`. Reading the worn field in one place and the bare seasonal curve
+## in the other would leave the map advertising a yield the granary never sees —
+## exactly the drift this method exists to prevent.
 func yield_rate(world: WorldMap) -> float:
 	if kind != Kind.FARM:
 		return 0.0
-	return FARM_YIELD_PER_TURN * world.forage_at(coord)
+	return FARM_YIELD_PER_TURN * world.forage_for_use(coord, Land.Use.CULTIVATE)
 
 
 ## Start a turn with both flow counters at zero. Called by the world before
