@@ -78,7 +78,7 @@ func _build() -> void:
 func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	var tree: Dictionary = DioramaStyles.for_name(style)
 	var parts := DioramaCompose.build(tree, world_seed, i)
-	DioramaCompose.apply_roles(parts, DioramaStyles.ROLES)
+	DioramaCompose.apply_culture(parts, DioramaCulture.lowland())
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()

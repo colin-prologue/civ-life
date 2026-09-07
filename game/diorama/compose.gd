@@ -656,11 +656,14 @@ static func _height_of(p: Dictionary) -> float:
 	return params["size"].y if params.has("size") else params.get("height", 0.0)
 
 
-## Resolve each part's role into a concrete colour. Kept separate from build()
-## so one tree can be rendered in several palettes — which is what makes
-## culture a mapping rather than a fork of the geometry.
-static func apply_roles(parts: Array, roles: Dictionary) -> void:
+## Resolve each part's role into a concrete colour through a culture's palette.
+## Kept separate from build() so one tree can be rendered in several palettes —
+## which is what makes culture a mapping rather than a fork of the geometry.
+static func apply_culture(parts: Array, culture: Dictionary) -> void:
+	var palette: Dictionary = culture.get("palette", {})
 	for p: Dictionary in parts:
 		var role: String = p.get("role", "")
-		assert(roles.has(role), "no colour for role '%s'" % role)
-		p["color"] = roles[role]
+		assert(palette.has(role),
+				"culture '%s' has no colour for role '%s'"
+				% [culture.get("name", "none"), role])
+		p["color"] = palette[role]

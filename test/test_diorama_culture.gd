@@ -307,3 +307,40 @@ func test_every_shipped_culture_names_a_real_crown() -> void:
 		assert_true(DioramaCulture.CROWNS.has(c["crown"]),
 				"culture '%s' names crown '%s', which is not in CROWNS"
 				% [n, c["crown"]])
+
+
+func test_apply_culture_colours_every_part_from_the_palette() -> void:
+	var parts := DioramaCompose.build(DioramaStyles.residential(), SEED, 1,
+			DioramaCulture.highland())
+	DioramaCompose.apply_culture(parts, DioramaCulture.highland())
+	var pal: Dictionary = DioramaCulture.highland()["palette"]
+	for p: Dictionary in parts:
+		assert_eq(p["color"], pal[p["role"]],
+				"role '%s' did not take its culture's colour" % p["role"])
+
+
+func test_two_cultures_colour_the_same_building_differently() -> void:
+	var found := false
+	for n in DioramaCulture.NAMES:
+		var c := DioramaCulture.for_name(n)
+		var parts := DioramaCompose.build(DioramaStyles.residential(), SEED, 1, c)
+		DioramaCompose.apply_culture(parts, c)
+		if parts[0]["color"] != DioramaCulture.lowland()["palette"][parts[0]["role"]]:
+			found = true
+	assert_true(found, "no culture produced a colour differing from lowland's")
+
+
+func test_ruins_still_work_under_a_culture() -> void:
+	# Slice 3's guarantee must survive slice 4: need bands come from node
+	# structure and are untouched by culture, so ordered loss should hold.
+	for n in DioramaCulture.NAMES:
+		var c := DioramaCulture.for_name(n)
+		var parts := DioramaCompose.build(DioramaStyles.stepped(), SEED, 2, c)
+		var rungs := [1.0, 0.75, 0.5, 0.25, 0.05]
+		for i in range(rungs.size() - 1):
+			var higher := DioramaCondition.filter(parts, rungs[i])
+			var lower := DioramaCondition.filter(parts, rungs[i + 1])
+			for p: Dictionary in lower:
+				assert_true(higher.has(p),
+						"culture '%s': a part survived %f but not %f"
+						% [n, rungs[i + 1], rungs[i]])

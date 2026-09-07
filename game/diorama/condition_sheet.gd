@@ -141,7 +141,7 @@ func _add_cell(r: int, c: int, at: Vector3, scale: float,
 	var parts := DioramaCompose.build(DioramaStyles.for_name(style),
 			world_seed, _id_for(r))
 	var survivors := DioramaCondition.filter(parts, RUNGS[c])
-	DioramaCompose.apply_roles(survivors, DioramaStyles.ROLES)
+	DioramaCompose.apply_culture(survivors, DioramaCulture.lowland())
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, survivors, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()
