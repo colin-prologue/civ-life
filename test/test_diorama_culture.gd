@@ -132,6 +132,40 @@ func test_a_building_keeps_its_relative_position_across_cultures() -> void:
 			frac = here
 
 
+func test_stack_threads_culture_to_a_nested_mass() -> void:
+	# _stack builds its child_ctx by hand; every one of the other tests here
+	# builds a single top-level `mass`, so none of them would notice if
+	# `"culture": ctx["culture"]` were dropped from that literal — the nested
+	# mass would silently stop being modulated while everything still
+	# rendered. Nest a mass one level inside a stack and prove the nested
+	# mass's height moves under a strongly different verticality.
+	var tree := {"stack": {"name": "outer",
+			"children": [_box("inner", 2.0, 2.0, [1.0, 3.0])]}}
+	var strong := _plain()
+	strong["verticality"] = 5.0
+	var plain_h: float = DioramaCompose.build(tree, SEED, 9, _plain())[0][
+			"params"]["size"].y
+	var strong_h: float = DioramaCompose.build(tree, SEED, 9, strong)[0][
+			"params"]["size"].y
+	assert_ne(plain_h, strong_h,
+			"a mass nested under a stack did not receive the culture")
+
+
+func test_row_threads_culture_to_a_nested_mass() -> void:
+	# Same requirement as the stack test above, against _row's own hand-built
+	# child_ctx literal — a separate line the stack test cannot exercise.
+	var tree := {"row": {"name": "outer",
+			"children": [_box("inner", 2.0, 2.0, [1.0, 3.0])]}}
+	var strong := _plain()
+	strong["verticality"] = 5.0
+	var plain_h: float = DioramaCompose.build(tree, SEED, 9, _plain())[0][
+			"params"]["size"].y
+	var strong_h: float = DioramaCompose.build(tree, SEED, 9, strong)[0][
+			"params"]["size"].y
+	assert_ne(plain_h, strong_h,
+			"a mass nested under a row did not receive the culture")
+
+
 func test_an_empty_culture_leaves_geometry_untouched() -> void:
 	# Every pre-culture caller passes no culture; they must be unaffected.
 	var tree := _box("solo", [1.0, 2.0], 2.0, [1.0, 3.0])
@@ -160,12 +194,27 @@ func test_cultures_actually_produce_different_buildings() -> void:
 	assert_eq(pairs, 3, "expected three culture pairs to compare")
 
 
-func test_a_reversed_range_is_caught_after_modulation_not_before() -> void:
-	# The assert exists to catch authoring typos. It must see the range the
-	# sampler actually uses, or a bad multiplier walks straight past the guard.
+func test_modulate_never_inverts_a_range_for_any_nonnegative_scale_and_variance() -> void:
+	# The property this test exists to protect: a bad multiplier must not walk
+	# past the lo <= hi guard any more than a reversed literal range would.
+	# That property is unreachable through sample()'s own guard — none of the
+	# three shipped cultures can produce a negative variance, and GDScript's
+	# assert() aborts the function rather than letting GUT observe a failure —
+	# so it is checked here, directly against modulate(), at the layer where a
+	# bad culture's numbers are actually the thing under test. A negative
+	# variance is excluded: modulate() now asserts against it as an authoring
+	# error, not a range this sweep is meant to reach.
 	var c := _plain()
-	var r: Array = DioramaCulture.modulate([1.0, 2.0], c, "h")
-	assert_true(r[0] <= r[1], "identity modulation produced a reversed range")
-	c["variance"] = 0.0
-	var flat: Array = DioramaCulture.modulate([1.0, 2.0], c, "h")
-	assert_true(flat[0] <= flat[1], "zero variance produced a reversed range")
+	var ranges := [[1.0, 2.0], [0.6, 1.4], [-3.0, -1.0], [0.0, 0.0], [5.0, 5.0]]
+	var scales := [0.0, 0.1, 1.0, 1.7, 3.0]
+	var variances := [0.0, 0.1, 1.0, 1.7, 3.0]
+	for spec in ranges:
+		for scale in scales:
+			for variance in variances:
+				c["verticality"] = scale
+				c["variance"] = variance
+				var r: Array = DioramaCulture.modulate(spec, c, "h")
+				assert_true(r[0] <= r[1],
+						("range %s, scale %s, variance %s produced a reversed "
+						+ "result [%s, %s]")
+						% [spec, scale, variance, r[0], r[1]])

@@ -56,9 +56,15 @@ static func modulate(spec: Variant, culture: Dictionary,
 	var lo := float(spec[0])
 	var hi := float(spec[1])
 	var mid := (lo + hi) * 0.5
+	var variance: float = culture.get("variance", 1.0)
+	# A negative variance is the only way this arithmetic can invert a range,
+	# and it is authoring error, not a runtime condition — every shipped
+	# culture has variance >= 0, so this can only fire on a new culture's data.
+	assert(variance >= 0.0, "culture '%s' has a negative variance"
+			% culture.get("name", "none"))
 	# Half-width scales toward zero and never past it, so a variance under 1
 	# narrows without inverting the range.
-	var half := (hi - lo) * 0.5 * float(culture.get("variance", 1.0))
+	var half := (hi - lo) * 0.5 * variance
 	return [(mid - half) * scale, (mid + half) * scale]
 
 
