@@ -218,10 +218,10 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if w <= EPS or d <= EPS or h <= EPS:
 		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_lo"]}
 	var kind: String = n.get("kind", "box")
-	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
-	# the renderer. Reporting (w, d) would describe geometry that does not
-	# exist, and everything stacking on this frame inherits the lie.
-	if kind == "prism" or kind == "cone":
+	# A cone, prism or dome is emitted as a circle of radius w/2 — `d` never
+	# reaches the renderer. Reporting (w, d) would describe geometry that does
+	# not exist, and everything stacking on this frame inherits the lie.
+	if kind == "prism" or kind == "cone" or kind == "dome":
 		d = w
 	var params := _params_for(kind, n, w, d, h, ctx, path)
 	# A part never outlives what it rests on: its band's floor already sits at or
@@ -247,6 +247,12 @@ static func _params_for(kind: String, n: Dictionary, w: float, d: float,
 					"taper": sample(n.get("taper"), ctx, path, "taper", 0.5)}
 		"prism", "cone":
 			return {"radius": w * 0.5, "height": h}
+		"dome":
+			# squash is a PROPORTION of the radius, so it is unmodulated by
+			# culture for the same reason `taper` is — scaling it would
+			# compound with the thickness already applied to `w`.
+			return {"radius": w * 0.5,
+					"squash": sample(n.get("squash"), ctx, path, "squash", 0.85)}
 	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
 	return {}
 

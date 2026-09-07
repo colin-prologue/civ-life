@@ -847,3 +847,37 @@ func test_parts_no_longer_carry_a_tag() -> void:
 	for p: Dictionary in DioramaCompose.build(_tower(), SEED, 1):
 		assert_false(p.has("tag"), "a part still carries a tag")
 		assert_true(p.has("need"), "a part is missing its need")
+
+
+func test_a_dome_emits_the_params_the_renderer_reads() -> void:
+	# Checked against DioramaMeshKit.add_dome's actual signature
+	# (xf, radius, squash, col) rather than against what seems reasonable —
+	# grammar.gd reads params.radius and params.squash by name.
+	#
+	# `d` is stated explicitly (unlike the brief's fixture) because build()
+	# calls resolve() with a zero inherited footprint: an unstated `d` would
+	# default to 0 and trip the zero-footprint gate in `_mass` BEFORE the
+	# round-kind `d = w` override ever runs, dropping the part for a reason
+	# that has nothing to do with what this test is checking.
+	var tree := {"mass": {"name": "cap", "kind": "dome", "w": 3.0, "d": 3.0,
+			"h": 1.0, "role": "plaster"}}
+	var parts := DioramaCompose.build(tree, SEED, 1)
+	assert_eq(parts.size(), 1, "a dome should emit one part")
+	assert_eq(parts[0]["kind"], "dome", "kind should survive to the part")
+	assert_true(parts[0]["params"].has("radius"), "dome needs a radius")
+	assert_true(parts[0]["params"].has("squash"), "dome needs a squash")
+	assert_almost_eq(parts[0]["params"]["radius"], 1.5, 1e-6,
+			"radius should be half the width")
+
+
+func test_a_dome_reports_a_square_footprint() -> void:
+	# A dome is built from ONE radius, so a frame reporting (w, d) would
+	# describe geometry that does not exist and everything stacked on it would
+	# inherit that lie — the same reason prism and cone already do this.
+	var tree := {"stack": {"name": "s", "children": [
+		{"mass": {"name": "cap", "kind": "dome", "w": 4.0, "d": 9.0, "h": 1.0,
+				"role": "plaster"}}]}}
+	var out := DioramaCompose.resolve(tree, DioramaCompose.new_ctx(SEED, 1))
+	assert_almost_eq(out["frame"]["footprint"].x,
+			out["frame"]["footprint"].y, 1e-6,
+			"a dome reported a non-square footprint")
