@@ -81,8 +81,12 @@ const CROWNS := {
 
 static func crown_kind(culture: Dictionary) -> String:
 	var name: String = culture.get("crown", "hip")
+	# CROWNS[name] fails loudly on a missing key in every build, including
+	# release, where Godot strips asserts. A silent fallback here would let a
+	# typo'd crown name ship as a hipped roof that reads as a design choice
+	# instead of the mistake it is.
 	assert(CROWNS.has(name), "unknown crown '%s'" % name)
-	return CROWNS.get(name, "tapered")
+	return CROWNS[name]
 
 
 ## Names in sheet order.

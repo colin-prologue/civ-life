@@ -288,6 +288,16 @@ func test_every_style_actually_crowns_through_the_culture() -> void:
 						% style_name)
 
 
+func test_an_empty_culture_crowns_hipped() -> void:
+	# Stated requirement: crown_kind({}) must return "tapered" so pre-culture
+	# callers get the hipped roof three of the four styles had before crowns
+	# existed. Nothing else pins this default — mutating it to "spire" would
+	# go undetected and silently flip every pre-culture caller's residential
+	# and civic roofline from hipped to conical.
+	assert_eq(DioramaCulture.crown_kind({}), "tapered",
+			"an empty culture must crown hipped (tapered), not something else")
+
+
 func test_every_shipped_culture_names_a_real_crown() -> void:
 	# The assert inside crown_kind() cannot be observed from GUT, so guard the
 	# DATA instead: a typo in a culture's `crown` is the actual failure mode,
