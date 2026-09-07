@@ -218,3 +218,82 @@ func test_modulate_never_inverts_a_range_for_any_nonnegative_scale_and_variance(
 						("range %s, scale %s, variance %s produced a reversed "
 						+ "result [%s, %s]")
 						% [spec, scale, variance, r[0], r[1]])
+
+
+func test_each_crown_name_resolves_to_its_primitive() -> void:
+	var expected := {"spire": "cone", "dome": "dome", "hip": "tapered",
+			"parapet": "box"}
+	for crown: String in expected:
+		var c := _plain()
+		c["crown"] = crown
+		# THIRD BRIEF DEFECT (beyond the two corrected above): the brief's tree
+		# here declared no "d" and this mass has no inherited footprint (it is
+		# not nested in a stack), so _mass's degenerate gate — which reads w/d/h
+		# before it reads `kind`, unconditionally on kind — drops the mass before
+		# crown resolution ever runs, for every crown name, not only round ones.
+		# Verified as pre-existing and unrelated to crowns: a bare
+		# `"kind": "cone"` mass with the same shape (w and h only, no d, no
+		# inherited footprint) is dropped the same way before this task's
+		# changes. Declaring "d" here — matching "w", exactly what a round crown
+		# would force it to anyway — sidesteps the gate without touching it,
+		# which is out of this task's scope per the brief.
+		var tree := {"mass": {"name": "cap", "kind": "crown", "w": 2.0,
+				"d": 2.0, "h": 1.0, "role": "plaster"}}
+		var parts := DioramaCompose.build(tree, SEED, 1, c)
+		assert_eq(parts[0]["kind"], expected[crown],
+				"crown '%s' resolved wrong" % crown)
+
+
+func test_a_crown_resolving_round_still_reports_a_square_footprint() -> void:
+	# The ordering trap: crown resolution has to happen BEFORE _mass forces
+	# d = w for round kinds, or a spire reports a rectangular footprint and
+	# whatever stacks on it inherits that.
+	for crown in ["spire", "dome"]:
+		var c := _plain()
+		c["crown"] = crown
+		var tree := {"stack": {"name": "s", "children": [
+			{"mass": {"name": "cap", "kind": "crown", "w": 4.0, "d": 9.0,
+					"h": 1.0, "role": "plaster"}}]}}
+		var out := DioramaCompose.resolve(tree,
+				DioramaCompose.new_ctx(SEED, 1, c))
+		assert_almost_eq(out["frame"]["footprint"].x,
+				out["frame"]["footprint"].y, 1e-6,
+				"crown '%s' reported a non-square footprint" % crown)
+
+
+func _kinds(parts: Array) -> Array:
+	var out: Array = []
+	for p: Dictionary in parts:
+		out.append(p["kind"])
+	out.sort()
+	return out
+
+
+func test_every_style_actually_crowns_through_the_culture() -> void:
+	# Asserting that the SAME style produces DIFFERENT kinds under two crowns
+	# can only hold if `crown` is genuinely plumbed for that style. A style
+	# left with a literal "kind": "cone" produces identical kinds either way
+	# and fails here — which is the omission this test exists to catch.
+	for style_name in DioramaStyles.NAMES:
+		var spire := _plain()
+		spire["crown"] = "spire"
+		var parapet := _plain()
+		parapet["crown"] = "parapet"
+		assert_ne(
+				_kinds(DioramaCompose.build(DioramaStyles.for_name(style_name),
+						SEED, 0, spire)),
+				_kinds(DioramaCompose.build(DioramaStyles.for_name(style_name),
+						SEED, 0, parapet)),
+				"'%s' produced identical kinds under spire and parapet — its crowning mass is probably still a literal kind"
+						% style_name)
+
+
+func test_every_shipped_culture_names_a_real_crown() -> void:
+	# The assert inside crown_kind() cannot be observed from GUT, so guard the
+	# DATA instead: a typo in a culture's `crown` is the actual failure mode,
+	# and this fails the moment a fourth culture is added with a bad name.
+	for n in DioramaCulture.NAMES:
+		var c := DioramaCulture.for_name(n)
+		assert_true(DioramaCulture.CROWNS.has(c["crown"]),
+				"culture '%s' names crown '%s', which is not in CROWNS"
+				% [n, c["crown"]])

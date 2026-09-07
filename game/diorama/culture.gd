@@ -68,6 +68,23 @@ static func modulate(spec: Variant, culture: Dictionary,
 	return [(mid - half) * scale, (mid + half) * scale]
 
 
+## What a culture's `crown` name means in geometry. Roofline is what the eye
+## resolves first at settlement distance, which is why this one substitution
+## carries most of the silhouette half of experiment S3's bar.
+const CROWNS := {
+	"spire": "cone",
+	"dome": "dome",
+	"hip": "tapered",
+	"parapet": "box",
+}
+
+
+static func crown_kind(culture: Dictionary) -> String:
+	var name: String = culture.get("crown", "hip")
+	assert(CROWNS.has(name), "unknown crown '%s'" % name)
+	return CROWNS.get(name, "tapered")
+
+
 ## Names in sheet order.
 const NAMES := ["lowland", "highland", "delta"]
 
