@@ -18,7 +18,7 @@ extends GutTest
 ## keeps it runnable on a host with no rendering context (see capture.sh):
 ##
 ##   1. no two triangles occupy the same three positions   (nothing z-fights)
-##   2. a closed primitive's faces all point away from it  (windings agree)
+##   2. every primitive's faces all point away from it     (windings agree)
 ##
 ## Together those are what "single-sided, consistently wound" means in data.
 
@@ -58,9 +58,16 @@ func _assert_no_coincident_faces(kit: DioramaMeshKit, what: String) -> void:
 			"loser shades with the wrong normal and takes no directional light")
 
 
-## For a closed primitive, every face's STORED normal must point away from the
-## solid's centroid. The stored normal is what the light uses, so this is the
-## assertion that "the outside of this shape is lit like an outside".
+## Every face's STORED normal must point away from the shape's vertex centroid.
+## The stored normal is what the light uses, so this is the assertion that "the
+## outside of this shape is lit like an outside".
+##
+## What this needs from a shape is CONVEXITY, not closure: for a convex shape
+## the centroid lies on the inner side of every face plane, whether or not the
+## surface is sealed. A hemisphere open at its base qualifies. Treating
+## "closed" as the precondition is what exempted add_dome and add_blob, and
+## with them the one primitive wound inside-out — 70 of 70 dome faces and 56
+## of 56 blob faces stored inward, and nothing here looked.
 func _assert_outward(kit: DioramaMeshKit, what: String) -> void:
 	var centroid := Vector3.ZERO
 	for v in kit.verts:
@@ -125,10 +132,8 @@ func test_primitives_have_no_coincident_faces() -> void:
 		_assert_no_coincident_faces(case["kit"], case["name"])
 
 
-func test_closed_primitives_are_wound_outward() -> void:
+func test_primitives_are_wound_outward() -> void:
 	for case in _primitive_cases():
-		if not case["closed"]:
-			continue
 		_assert_outward(case["kit"], case["name"])
 
 
@@ -166,12 +171,14 @@ func _primitive_cases() -> Array:
 	dome.add_dome(Transform3D.IDENTITY, 0.8, 0.7, Color.WHITE, 10, 4)
 	var blob := DioramaMeshKit.new()
 	blob.add_blob(Transform3D.IDENTITY, 0.5, 0.75, Color.WHITE)
+	# All convex, so all carry the outward check (see _assert_outward). A
+	# non-convex primitive added here needs a different reference than the
+	# centroid — not an exemption.
 	return [
-		{"name": "add_box", "kit": box, "closed": true},
-		{"name": "add_tapered_box", "kit": tapered, "closed": true},
-		{"name": "add_prism", "kit": prism, "closed": true},
-		{"name": "add_cone", "kit": cone, "closed": true},
-		# a hemisphere is open at its base; only the duplicate check applies
-		{"name": "add_dome", "kit": dome, "closed": false},
-		{"name": "add_blob", "kit": blob, "closed": false},
+		{"name": "add_box", "kit": box},
+		{"name": "add_tapered_box", "kit": tapered},
+		{"name": "add_prism", "kit": prism},
+		{"name": "add_cone", "kit": cone},
+		{"name": "add_dome", "kit": dome},
+		{"name": "add_blob", "kit": blob},
 	]
