@@ -145,11 +145,19 @@ const GATHERING_HALF_AT := 40.0
 ## mouths a real herd reports, so nothing real is ever rounded away.
 const GATHERING_DEMAND_FLOOR := 0.001
 
-## What a gathering node holds between carriers. The same barn as a farm, and
-## for the same reason: a store that could absorb a whole quiet season would make
-## the carriers decorative, and here it would also hide the thing this kind
-## exists to show — that the flow stops when the animals leave.
-const GATHERING_CAPACITY := FARM_CAPACITY
+## What a gathering node holds between carriers: about three turns of its best
+## harvest, the sizing rule the farm's barn states and for the same reason — a
+## store that could absorb a whole quiet season would make the carriers
+## decorative, and here it would also hide the thing this kind exists to show,
+## that the flow stops when the animals leave.
+##
+## Its own number rather than `FARM_CAPACITY`, which it was until the farm's
+## barn was re-derived for worn fields (`AgDR-014`). That reason does not reach a
+## camp: what it gathers is set by the mouths in range and nothing it draws on
+## wears out, so three turns of its best harvest is still 3.0. Sharing the
+## constant had shrunk the camp's barn as a side effect of a farm change. Found
+## by codex review on PR #51.
+const GATHERING_CAPACITY := 3.0
 
 const KIND_NAMES := {
 	Kind.FARM: "farm",

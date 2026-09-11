@@ -121,7 +121,13 @@ func _graze(world: WorldMap) -> void:
 	# The animals that stood here and ate this turn, counted before the turn's
 	# growth or decline is applied. The wear charged below is charged for these.
 	var grazing := population
-	var ration := ration_at(world, coord)
+	# What was on this tile and how many mouths shared it, both as the turn
+	# began. Growth and wear below are settled against these same two readings,
+	# so they agree about what was on the table and who was at it — and neither
+	# depends on whether another herd here was stepped first.
+	var available := world.grazing_forage_at_turn_start(coord)
+	var mouths := maxf(world.forage_demand_at_turn_start(coord), species.minimum_population)
+	var ration := species.heads_supported_by(available) / mouths
 	var scaled := population
 	if ration >= 1.0:
 		scaled = population * (1.0 + species.growth_rate * minf(ration - 1.0, 1.0))
@@ -129,8 +135,8 @@ func _graze(world: WorldMap) -> void:
 		scaled = population * (1.0 - species.decline_rate * minf(1.0 - ration, 1.0))
 	world.set_herd_population(self, maxf(scaled, species.minimum_population))
 
-	# Wear is what THIS herd actually ate. Three mistakes are easy here and all
-	# three were made in earlier drafts of this plan.
+	# Wear is what THIS herd actually ate. Several mistakes are easy here, and
+	# every one below was made in an earlier draft or found in review.
 	#
 	# First: wear is not how hungry the herd was. The tempting `1.0 / ration`
 	# saturates on a tile supporting nothing, so a herd on dead winter grass
@@ -156,8 +162,11 @@ func _graze(world: WorldMap) -> void:
 	# eat, or missing ones that were. Measured against a start-of-turn
 	# denominator, that under-charges a starving tile and over-charges a rich
 	# one. Found by codex review on PR #51.
-	var available := world.forage_for_use(coord, Land.Use.GRAZE)
-	var mouths := maxf(world.forage_demand_at_turn_start(coord), species.minimum_population)
+	#
+	# Fifth, and the same again: what is being divided has to be frozen as well
+	# as who divides it. A herd stepped earlier has already worn this tile, so
+	# live forage here is what is left after it ate. Found by the same review;
+	# both readings are taken once, at the top.
 	var my_share := available * (grazing / mouths)
 	var my_want := grazing * species.consumption_per_head
 	world.draw_vitality(coord, Land.Use.GRAZE, minf(my_share, my_want) / Seasons.MAX_FORAGE)
@@ -252,18 +261,25 @@ func _step_toward(world: WorldMap, target: Vector2i) -> Vector2i:
 ## Food per head this herd would get on `candidate`, counting every other head
 ## already standing there — and its own, which is what makes an empty tile of
 ## the same forage preferable to a crowded one.
+##
+## Migration's reading, not grazing's. `_graze()` settles the turn's ration
+## against forage and census frozen at the start of the turn; this is asked after
+## the herd has eaten, about where to be next, so forage is read live — the
+## ground as it is now, this turn's wear included. Freezing it here too was tried
+## on PR #51 and made a herd blind to its own grazing when deciding whether to
+## stay.
+##
+## The cost is that staying can still depend on step order: a herd stepped after
+## another on the same tile sees that herd's wear as well as its own. Only
+## grazing every herd before migrating any would remove that, and `Agent.step()`
+## is one call.
 func ration_at(world: WorldMap, candidate: Vector2i) -> float:
 	var supported := species.heads_supported_by(
 			world.forage_for_use(candidate, Land.Use.GRAZE))
 	var mouths: float
 	if candidate == coord:
-		# The tile underfoot is shared with whoever was standing on it when the
-		# turn began, whether or not they have since moved on. Reading live
-		# demand here lets a herd stepped later grow on forage an earlier herd
-		# already ate — one herd thriving and its neighbour declining purely
-		# because of the order they sit in the agents array. The wear charged in
-		# `_graze()` is settled against the same frozen census, so growth and
-		# wear agree about how many mouths were at the table.
+		# The tile underfoot is counted as it was when the turn began, whoever has
+		# since moved on — the same census `_graze()` shared it by.
 		mouths = world.forage_demand_at_turn_start(candidate)
 	else:
 		# A destination is hypothetical and live demand is the right read: it

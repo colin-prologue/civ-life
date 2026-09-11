@@ -110,6 +110,16 @@ var _forage_demand: PackedFloat32Array
 ## stay correct through every future mutator.
 var _forage_demand_at_turn_start: PackedFloat32Array = PackedFloat32Array()
 
+## The grazing vitality of every tile as it stood when the turn began — the
+## other half of what a co-located herd divides. Freezing the census alone was
+## not enough: a herd stepped first wears the tile in `Herd._graze()`, and the
+## next one reading live vitality would be dividing forage an earlier herd had
+## already eaten. Frozen for the same reason as the census and at the same moment.
+##
+## Only the grazing row, because only herds share a tile: a farm is the only
+## structure on its ground and is the only thing that wears it for cultivation.
+var _grazing_vitality_at_turn_start: PackedFloat32Array = PackedFloat32Array()
+
 
 func _init(p_grid: HexGrid, p_seed: int) -> void:
 	grid = p_grid
@@ -154,6 +164,7 @@ func advance_turn() -> int:
 	turn += 1
 	_recompute_forage()
 	_forage_demand_at_turn_start = _forage_demand.duplicate()
+	_grazing_vitality_at_turn_start = (_vitality[Land.Use.GRAZE] as PackedFloat32Array).duplicate()
 	for node in nodes:
 		node.begin_turn()
 	for node in nodes:
@@ -244,6 +255,24 @@ func forage_demand_at_turn_start(coord: Vector2i) -> float:
 	if i >= _forage_demand_at_turn_start.size():
 		return _forage_demand[i]
 	return _forage_demand_at_turn_start[i]
+
+
+## The grazing forage this tile had when the turn began, before any herd ate it.
+##
+## What a herd divides by `forage_demand_at_turn_start()`: the forage and the
+## mouths sharing it have to be read at the same moment, or two identical herds
+## on one tile end the turn different purely because of the order they are
+## stepped in. `forage_for_use()` is the live number and stays the right read for
+## migration, which is decided after the herd has eaten: where to be next should
+## see the ground as it is now, this turn's wear included.
+##
+## Falls back to the live value on a world that has never been advanced.
+func grazing_forage_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read forage off the map")
+	if i >= _grazing_vitality_at_turn_start.size():
+		return forage_for_use_by_index(i, Land.Use.GRAZE)
+	return _forage[i] * _grazing_vitality_at_turn_start[i]
 
 
 ## The same total over every tile within `radius` of `coord`, the centre tile

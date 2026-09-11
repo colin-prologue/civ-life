@@ -212,8 +212,11 @@ func test_two_herds_sharing_a_tile_do_not_overcharge_it() -> void:
 
 	# Assert the premise rather than trusting it: if a later change to the forage
 	# table makes this tile generous enough to feed them, the comparison below
-	# stops testing anything and this is what says so.
-	assert_lt(shared.herds()[0].ration_at(shared, where), 1.0,
+	# stops testing anything and this is what says so. Read from the season curve
+	# rather than the world — a world that has never been advanced has no forage
+	# computed yet, and a ration of zero would satisfy this for the wrong reason.
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	assert_lt(Species.grazer().heads_supported_by(available), 300.0,
 			"the tile is forage-limited, so the proportional-share branch runs")
 
 	for i in range(Seasons.TURNS_PER_SEASON):
@@ -393,3 +396,41 @@ func test_the_chronicle_records_what_the_farm_actually_grew() -> void:
 			"the field is worth less now than it was when it was harvested")
 	assert_almost_eq(world.chronicle.latest(Chronicle.FARM_YIELD), farm.last_yield, 0.00001,
 			"the chronicle records the harvest the farm actually took")
+
+
+func test_identical_herds_sharing_a_tile_fare_identically() -> void:
+	# Codex review on PR #51, third round: the frozen census settled who divides
+	# the forage, but the forage being divided was still read live. The herd
+	# stepped first wears the tile in `_graze()`, so the next reads a smaller
+	# `forage_for_use()` and gets a smaller ration and a smaller share of the
+	# wear — two identical herds on one tile ending the turn different purely
+	# because of where they sit in the agents array.
+	#
+	# Identical herds make any difference between them an ordering effect by
+	# construction. The sharing test above compares against a solo herd at a
+	# tolerance far looser than this effect, so it cannot see it.
+	var world := _bare_world()
+	var where := Vector2i.ZERO
+	var first := Herd.new(1, where, Species.grazer(), 150.0)
+	var second := Herd.new(2, where, Species.grazer(), 150.0)
+	world.add_agent(first)
+	world.add_agent(second)
+
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	# The premise: ground too poor to feed both, so each herd's ration and its
+	# share of the wear both depend on the forage it reads.
+	assert_lt(first.species.heads_supported_by(available), 300.0,
+			"the tile cannot feed both herds")
+
+	# Depletion is linear, so two half-shares wear the tile exactly as one whole
+	# share does, and the expected wear is one herd of 300 eating everything.
+	var eaten := minf(available, 300.0 * first.species.consumption_per_head)
+	var expected := Land.recovered(Land.depleted(Land.MAX_VITALITY, eaten / Seasons.MAX_FORAGE))
+
+	world.advance_turn()
+
+	assert_lt(first.population, 150.0, "the herds did thin, so the ration reached their numbers")
+	assert_almost_eq(second.population, first.population, 0.000001,
+			"two identical herds on one tile end the turn identical, whichever stepped first")
+	assert_almost_eq(world.vitality_at(where, Land.Use.GRAZE), expected, 0.00001,
+			"and between them they wear the tile exactly as one herd of the same size would")

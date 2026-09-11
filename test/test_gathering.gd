@@ -142,17 +142,19 @@ const MIN_BUSY_OVER_QUIET := 8.0
 ## |-------------------------------|-----------------------------------------|----------------------------------|
 ## | `main` (no wear, live census) | 0 / 10                                  | 0                                |
 ## | merged, grazing wear removed  | 1 / 10                                  | 1                                |
-## | merged, as it stands          | 5 / 10                                  | 1                                |
+## | merged, as it stands          | 6 / 10                                  | 2                                |
 ##
-## The last row read 7 / 10 and 2 until codex review on PR #51 found `Herd._graze()`
-## charging wear for the herd's post-turn population. Correcting that moved it,
-## which is a finding in itself: whether a typical camp ever wins a year is a
-## coarse and somewhat fragile indicator. The busy camp's year-to-year swing
-## separates the worlds more steadily — median best-to-worst 2.80 with grazing
-## wear against 1.18 without — and moved further apart under the same fix.
+## The last row has moved twice under codex review on PR #51: from 7 / 10 to 5 / 10
+## when `Herd._graze()` stopped charging wear for the herd's post-turn population,
+## and to 6 / 10 when co-located herds stopped reading forage an earlier herd had
+## already eaten. That is a finding in itself: whether a typical camp ever wins a
+## year is a coarse and somewhat fragile indicator. The busy camp's year-to-year
+## swing — median best-to-worst 2.32 with grazing wear against 1.18 without — is
+## not precise either: it read 2.21, then 2.80, then 2.32, moving against the flip
+## count both times. Both stay well clear of the world without wear.
 ##
-## Ten seeds separate the worlds; the two standard seeds do not separate them at
-## all — one flip-year in each. So the claim is asserted over ten seeds in #42's
+## Ten seeds separate the worlds; the two standard seeds barely separate them —
+## two flip-years against one. So the claim is asserted over ten seeds in #42's
 ## population gate, beside the periodicity check, rather than here where ten seeds
 ## would cost a minute of every suite run (72 s to 131 s for this file). This test
 ## keeps flip-years as a printed diagnostic so the number stays visible in every
@@ -598,6 +600,16 @@ func test_the_stated_margins_have_not_been_quietly_weakened() -> void:
 		"the busy-over-quiet margin was lowered from %.2f to %.2f"
 			% [BUSY_OVER_QUIET_FLOOR, MIN_BUSY_OVER_QUIET]
 	)
+
+
+func test_a_camp_barn_holds_about_three_turns_of_its_best_harvest() -> void:
+	# Codex review on PR #51: the camp's barn was defined as the farm's, so when
+	# worn fields led to the farm's being re-derived from 3.0 to 2.0, the camp's
+	# shrank with it for a reason that does not apply to a camp. What is pinned is
+	# the sizing rule both barns state, not the number.
+	var turns := CityNode.GATHERING_CAPACITY / CityNode.GATHERING_YIELD_PER_TURN
+	assert_between(turns, 2.5, 3.5,
+			"a camp's barn holds about three turns of its best harvest, not %.1f" % turns)
 
 
 # --- helpers -----------------------------------------------------------------
