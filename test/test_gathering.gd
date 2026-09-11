@@ -123,20 +123,43 @@ const DETERMINISM_TURNS := 500
 ## ticket says to report rather than to tune away.
 const MIN_BUSY_OVER_QUIET := 8.0
 
-## The same claim against a *typical* site rather than the worst one, which is
-## the honest version of "placed away from it" — the quietest tile on the map is
-## usually ground no herd has crossed once, and a ratio against zero says less
-## than it looks like it says.
-const MIN_BUSY_OVER_TYPICAL := 3.0
-
-## The floors those two margins may not be lowered past, on the convention
-## `test_city.gd` sets: weakening an assertion to make a regression green is the
-## cheapest wrong move available, and this makes it a separate, visible edit
-## rather than a one-line adjustment made while chasing a red suite.
+## Retired, 2026-09-10: `MIN_BUSY_OVER_TYPICAL := 3.0` and its floor.
 ##
-## Raising a margin is always fine and these do not object to it.
+## That claim said a camp on the busiest ground beats one on a typical tile
+## threefold. It was measured against a world whose herds never moved: across ten
+## seeds without land vitality (`AgDR-014`) the typical tile saw no herd at all for
+## eight years on six of them, and the busy camp gathered the same amount every
+## year to three figures. A ratio against a tile nothing visits measured the static
+## world `AgDR-014` exists to cure, and with grazing wear it fell to a median near
+## 1.8x.
+##
+## The owner's call is that **camps reward attention, not siting** — this ticket's
+## own AC3, "yield varies over a year as herds migrate". The honest form of that is
+## "the best place to camp is not the same every year", and it is a claim about a
+## population of seeds. Measured on this file's own site selection:
+##
+## |                               | seeds with a year the typical camp won | flip-years on the standard seeds |
+## |-------------------------------|-----------------------------------------|----------------------------------|
+## | `main` (no wear, live census) | 0 / 10                                  | 0                                |
+## | merged, grazing wear removed  | 1 / 10                                  | 1                                |
+## | merged, as it stands          | 7 / 10                                  | 2                                |
+##
+## Ten seeds separate the worlds cleanly; the two standard seeds do not — 2 against
+## 1, and the one no-wear flip lands on 20260815. So the claim is asserted over ten
+## seeds in #42's population gate, beside the periodicity check, rather than here
+## where ten seeds would cost a minute of every suite run (72 s to 131 s for this
+## file). This test keeps flip-years as a printed diagnostic so the number stays
+## visible in every run.
+
+## The floor that margin may not be lowered past, on the convention `test_city.gd`
+## sets: weakening an assertion to make a regression green is the cheapest wrong
+## move available, and this makes it a separate, visible edit rather than a
+## one-line adjustment made while chasing a red suite. Raising it is always fine.
+##
+## There used to be a second floor, for the busy-over-typical ratio. It was retired
+## with that ratio (see the note above), deliberately and in the open, rather than
+## lowered.
 const BUSY_OVER_QUIET_FLOOR := 8.0
-const BUSY_OVER_TYPICAL_FLOOR := 3.0
 
 ## Turns the flow-to-the-granary experiment runs for. Two dozen round trips on a
 ## two-step road, which is long enough that the difference between the two runs
@@ -155,6 +178,7 @@ func test_a_camp_is_worth_far_more_where_the_animals_go() -> void:
 	# carry a camp *and* a farm, and the farms are the control — same terrain
 	# means the same forage curve every turn of the run, so a difference between
 	# the camps cannot be the ground they stand on.
+	var flip_years := 0
 	for world_seed in STANDARD_SEEDS:
 		var measured := _measure_placement(world_seed)
 		gut.p(
@@ -188,17 +212,27 @@ func test_a_camp_is_worth_far_more_where_the_animals_go() -> void:
 			"seed %d: a camp where the herds are beats one where they are not by %.1fx"
 				% [world_seed, MIN_BUSY_OVER_QUIET]
 		)
-		assert_gt(
-			measured["busy"],
-			MIN_BUSY_OVER_TYPICAL * measured["typical"],
-			"seed %d: and beats one on ordinary ground by %.1fx"
-				% [world_seed, MIN_BUSY_OVER_TYPICAL]
-		)
+		# Which site won each year, not only which won overall.
+		var busy_years: Array = measured["busy_years"]
+		var typical_years: Array = measured["typical_years"]
+		var flips_here := 0
+		for y in range(busy_years.size()):
+			if typical_years[y] > busy_years[y]:
+				flips_here += 1
+		flip_years += flips_here
+		gut.p("seed %d: a typical camp out-gathered the busy one in %d of %d years"
+				% [world_seed, flips_here, busy_years.size()])
 		assert_gt(
 			measured["busy"],
 			0.0,
 			"seed %d: the good site produced something at all" % world_seed
 		)
+
+	# Printed, not asserted. Whether the best place to camp moves between years is a
+	# claim about a population of seeds, and the two standard seeds cannot carry it
+	# — see the retirement note on the constants above. #42 asserts it over ten.
+	gut.p("across the standard seeds a typical camp out-gathered the busy one in %d year(s)"
+			% flip_years)
 
 
 func test_what_the_city_the_game_generates_actually_gathers() -> void:
@@ -557,11 +591,6 @@ func test_the_stated_margins_have_not_been_quietly_weakened() -> void:
 		"the busy-over-quiet margin was lowered from %.2f to %.2f"
 			% [BUSY_OVER_QUIET_FLOOR, MIN_BUSY_OVER_QUIET]
 	)
-	assert_gte(
-		MIN_BUSY_OVER_TYPICAL, BUSY_OVER_TYPICAL_FLOOR,
-		"the busy-over-typical margin was lowered from %.2f to %.2f"
-			% [BUSY_OVER_TYPICAL_FLOOR, MIN_BUSY_OVER_TYPICAL]
-	)
 
 
 # --- helpers -----------------------------------------------------------------
@@ -695,11 +724,20 @@ func _measure_placement(world_seed: int) -> Dictionary:
 
 	var totals := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
 	var farm_totals := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
-	for _turn in range(turns):
+	# Per-year camp totals as well as the run's, because the claim this carries is
+	# about *which* site wins a given year, not only which wins overall.
+	var years := {"busy": [], "typical": [], "quiet": []}
+	var this_year := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
+	for turn in range(turns):
 		world.advance_turn()
 		for key in totals:
 			totals[key] += camps[key].last_yield
 			farm_totals[key] += farms[key].last_yield
+			this_year[key] += camps[key].last_yield
+		if (turn + 1) % Seasons.TURNS_PER_YEAR == 0:
+			for key in this_year:
+				years[key].append(this_year[key])
+				this_year[key] = 0.0
 
 	return {
 		"busy": totals["busy"],
@@ -708,6 +746,8 @@ func _measure_placement(world_seed: int) -> Dictionary:
 		"farm": farm_totals["busy"],
 		"farm_busy": farm_totals["busy"],
 		"farm_quiet": farm_totals["quiet"],
+		"busy_years": years["busy"],
+		"typical_years": years["typical"],
 	}
 
 
