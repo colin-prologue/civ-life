@@ -378,10 +378,15 @@ func granary_outflow() -> float:
 	return total
 
 
-## What every farm in the world grows this turn, at the tiles they stand on.
+## What every farm in the world would grow if it harvested right now, at the
+## tiles they stand on.
 ##
-## Live rather than remembered: a farm's yield is a pure function of its tile and
-## the season, so this is the one flow on the map that needs no history at all.
+## Live rather than remembered, which is what a display wants: asked at any point
+## it answers for the fields as they stand. It is **not** a record of the turn
+## that ran — since `AgDR-014` a farm's yield depends on how worn its field is,
+## and the field is worn by the harvest itself, so asked after `produce()` this
+## already describes next turn's harvest. `farm_harvest()` is the one that says
+## what actually came off the fields, and the chronicle records that.
 func farm_yield_rate() -> float:
 	var total := 0.0
 	for node in nodes:
