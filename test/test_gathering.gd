@@ -142,14 +142,21 @@ const MIN_BUSY_OVER_QUIET := 8.0
 ## |-------------------------------|-----------------------------------------|----------------------------------|
 ## | `main` (no wear, live census) | 0 / 10                                  | 0                                |
 ## | merged, grazing wear removed  | 1 / 10                                  | 1                                |
-## | merged, as it stands          | 7 / 10                                  | 2                                |
+## | merged, as it stands          | 5 / 10                                  | 1                                |
 ##
-## Ten seeds separate the worlds cleanly; the two standard seeds do not — 2 against
-## 1, and the one no-wear flip lands on 20260815. So the claim is asserted over ten
-## seeds in #42's population gate, beside the periodicity check, rather than here
-## where ten seeds would cost a minute of every suite run (72 s to 131 s for this
-## file). This test keeps flip-years as a printed diagnostic so the number stays
-## visible in every run.
+## The last row read 7 / 10 and 2 until codex review on PR #51 found `Herd._graze()`
+## charging wear for the herd's post-turn population. Correcting that moved it,
+## which is a finding in itself: whether a typical camp ever wins a year is a
+## coarse and somewhat fragile indicator. The busy camp's year-to-year swing
+## separates the worlds more steadily — median best-to-worst 2.80 with grazing
+## wear against 1.18 without — and moved further apart under the same fix.
+##
+## Ten seeds separate the worlds; the two standard seeds do not separate them at
+## all — one flip-year in each. So the claim is asserted over ten seeds in #42's
+## population gate, beside the periodicity check, rather than here where ten seeds
+## would cost a minute of every suite run (72 s to 131 s for this file). This test
+## keeps flip-years as a printed diagnostic so the number stays visible in every
+## run.
 
 ## The floor that margin may not be lowered past, on the convention `test_city.gd`
 ## sets: weakening an assertion to make a regression green is the cheapest wrong
