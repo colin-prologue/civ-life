@@ -210,11 +210,13 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if w <= EPS or d <= EPS or h <= EPS:
 		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_lo"]}
 	var kind: String = n.get("kind", "box")
-	# A style says "crown" and the CULTURE says what that is. Resolved here,
-	# before the round-kind rule below, so a crown that becomes a cone or dome
-	# still reports the square footprint a round shape actually occupies.
+	# A style says "crown" and the CULTURE says what that is, or, when the
+	# culture names none, the mass's own `default`: the shape it was authored
+	# with. Resolved here, before the round-kind rule below, so a crown that
+	# becomes a cone or dome still reports the square footprint a round shape
+	# actually occupies.
 	if kind == "crown":
-		kind = DioramaCulture.crown_kind(ctx["culture"])
+		kind = DioramaCulture.crown_kind(ctx["culture"], n.get("default", ""))
 	# A cone, prism or dome is emitted as a circle of radius w/2 — `d` never
 	# reaches the renderer. Reporting (w, d) would describe geometry that does
 	# not exist, and everything stacking on this frame inherits the lie.

@@ -28,8 +28,9 @@ static func residential() -> Dictionary:
 			{"mass": {"name": "body", "kind": "box",
 					"w": [0.55, 1.05], "d": [0.55, 1.05], "h": [0.60, 1.30],
 					"role": "plaster"}},
-			{"mass": {"name": "roof", "kind": "crown", "taper": 0.8,
-					"h": 0.22, "oversize": 1.08, "role": "ochre"}}]}}}}
+			{"mass": {"name": "roof", "kind": "crown", "default": "tapered",
+					"taper": 0.8, "h": 0.22, "oversize": 1.08,
+					"role": "ochre"}}]}}}}
 
 
 ## The hero structure: a monument whose scale breaks the settlement's
@@ -68,7 +69,7 @@ static func hero_arch() -> Dictionary:
 						"w": 0.42, "d": 0.63, "role": "plaster"}}}},
 		{"mass": {"name": "entablature", "kind": "box",
 				"h": 0.45, "oversize": 1.1, "role": "ochre"}},
-		{"mass": {"name": "finial", "kind": "crown",
+		{"mass": {"name": "finial", "kind": "crown", "default": "cone",
 				"w": 0.31, "d": 0.31, "h": 1.5, "role": "brass"}}]}}
 
 
@@ -89,8 +90,9 @@ static func civic() -> Dictionary:
 				{"mass": {"name": "walls", "kind": "box",
 						"w": [1.2, 1.8], "d": [0.6, 0.9], "h": 0.8,
 						"role": "plaster"}},
-				{"mass": {"name": "roof", "kind": "crown", "taper": 0.5,
-						"h": 0.22, "oversize": 1.06, "role": "ochre"}}]}},
+				{"mass": {"name": "roof", "kind": "crown", "default": "tapered",
+						"taper": 0.5, "h": 0.22, "oversize": 1.06,
+						"role": "ochre"}}]}},
 			{"row": {"name": "colonnade", "count": 5, "advance": 2.6, "of":
 				{"mass": {"name": "column", "kind": "prism",
 						"w": 0.09, "d": 0.09, "h": 0.72,
@@ -108,7 +110,7 @@ static func stepped() -> Dictionary:
 		{"mass": {"name": "tier0", "kind": "box", "h": 0.61, "role": "plaster"}},
 		{"mass": {"name": "tier1", "kind": "box", "h": 0.61, "role": "plaster"}},
 		{"mass": {"name": "tier2", "kind": "box", "h": 0.61, "role": "plaster"}},
-		{"mass": {"name": "spire", "kind": "crown",
+		{"mass": {"name": "spire", "kind": "crown", "default": "cone",
 				"h": 0.79, "oversize": 0.5, "role": "brass"}}]}}
 
 

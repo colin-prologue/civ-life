@@ -288,14 +288,46 @@ func test_every_style_actually_crowns_through_the_culture() -> void:
 						% style_name)
 
 
-func test_an_empty_culture_crowns_hipped() -> void:
-	# Stated requirement: crown_kind({}) must return "tapered" so pre-culture
-	# callers get the hipped roof three of the four styles had before crowns
-	# existed. Nothing else pins this default — mutating it to "spire" would
-	# go undetected and silently flip every pre-culture caller's residential
-	# and civic roofline from hipped to conical.
-	assert_eq(DioramaCulture.crown_kind({}), "tapered",
-			"an empty culture must crown hipped (tapered), not something else")
+## The kind each style's crowning mass had before crowns existed, as literals
+## read from the branch's merge base (4cae245). A test that pinned one default
+## for all four ("tapered") is how two of them lost their spires: that premise
+## was false for hero_arch and stepped, and nothing checked it.
+const AUTHORED_CROWNS := {"residential": "tapered", "civic": "tapered",
+		"hero_arch": "cone", "stepped": "cone"}
+
+
+func test_an_empty_culture_builds_each_crown_as_authored() -> void:
+	# A fifth style must say what its crown was authored as, not skip this.
+	var names: Array = DioramaStyles.NAMES.duplicate()
+	names.sort()
+	var pinned: Array = AUTHORED_CROWNS.keys()
+	pinned.sort()
+	assert_eq(pinned, names, "AUTHORED_CROWNS does not cover every style")
+	# Parts carry no names, so the crowning part is found by what a culture
+	# changes: rebuild under a culture naming a crown of some OTHER kind, and
+	# the parts whose kind moved are the crowns.
+	for style_name: String in AUTHORED_CROWNS:
+		var expected: String = AUTHORED_CROWNS[style_name]
+		var named := _plain()
+		named["crown"] = "parapet"
+		assert_ne(DioramaCulture.CROWNS["parapet"], expected,
+				"the comparison crown must differ from what it is compared to")
+		var tree := DioramaStyles.for_name(style_name)
+		var bare := DioramaCompose.build(tree, SEED, 0, {})
+		var crowned := DioramaCompose.build(tree, SEED, 0, named)
+		assert_eq(bare.size(), crowned.size(),
+				"'%s' emitted a different part count under a crown" % style_name)
+		var crowns := 0
+		for i in range(mini(bare.size(), crowned.size())):
+			if bare[i]["kind"] == crowned[i]["kind"]:
+				continue
+			crowns += 1
+			assert_eq(bare[i]["kind"], expected,
+					"'%s' crowned '%s' with no culture, but was authored '%s'"
+					% [style_name, bare[i]["kind"], expected])
+		assert_gt(crowns, 0,
+				"no part of '%s' changed kind under a crown: its crowning mass is missing or already a box"
+				% style_name)
 
 
 func test_every_shipped_culture_names_a_real_crown() -> void:

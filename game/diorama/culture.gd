@@ -79,14 +79,32 @@ const CROWNS := {
 }
 
 
-static func crown_kind(culture: Dictionary) -> String:
-	var name: String = culture.get("crown", "hip")
-	# CROWNS[name] fails loudly on a missing key in every build, including
-	# release, where Godot strips asserts. A silent fallback here would let a
-	# typo'd crown name ship as a hipped roof that reads as a design choice
-	# instead of the mistake it is.
-	assert(CROWNS.has(name), "unknown crown '%s'" % name)
-	return CROWNS[name]
+## What a crowning mass becomes. A culture that names a crown puts it on every
+## style. A culture that names none gets `authored`, the primitive kind the
+## crowning mass was drawn with, so a caller building with no culture sees the
+## vocabulary as it was authored.
+##
+## There is deliberately no default crown. There was one: "hip", on the premise
+## that three of the four styles were tapered before crowns existed. Only two
+## were. hero_arch's finial and stepped's spire were cones, and the default
+## turned both into blunt tapered obelisks in every caller that builds without
+## a culture (the S0 spike, the lineup, the condition sheet). Nothing failed,
+## because a tapered finial is a perfectly valid mass.
+static func crown_kind(culture: Dictionary, authored: String) -> String:
+	if culture.has("crown"):
+		var name: String = culture["crown"]
+		# CROWNS[name] fails loudly on a missing key in every build, including
+		# release, where Godot strips asserts. A silent fallback here would let
+		# a typo'd crown name ship as a hipped roof that reads as a design
+		# choice instead of the mistake it is.
+		assert(CROWNS.has(name), "unknown crown '%s'" % name)
+		return CROWNS[name]
+	# A crowning mass with no `default`, under a culture that names no crown,
+	# has no shape to take. Refuse rather than guess: a guessed crown is exactly
+	# how the arch lost its spire without anything noticing.
+	assert(authored != "",
+			"a crowning mass records no default and the culture names no crown")
+	return authored
 
 
 ## Names in sheet order.
@@ -100,8 +118,11 @@ static func for_name(name: String) -> Dictionary:
 		_: return lowland()
 
 
-## The baseline: the proportions the styles were authored against, so one row
-## of the sheet shows the vocabulary unmodulated.
+## The baseline for PROPORTIONS and PALETTE: every multiplier is 1.0, and the
+## palette is DioramaStyles.ROLES verbatim. It is not the vocabulary
+## unmodulated, though. It is a people with a roofline of its own, and it hips
+## every crown, the arch's finial and stepped's spire included. The vocabulary
+## as authored is what building with NO culture produces.
 static func lowland() -> Dictionary:
 	return {
 		"name": "lowland",
