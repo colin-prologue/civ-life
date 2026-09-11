@@ -118,6 +118,9 @@ func step(world: WorldMap) -> void:
 ## an accidentally rich tile cannot produce a spike that the rest of the model
 ## then has to absorb.
 func _graze(world: WorldMap) -> void:
+	# The animals that stood here and ate this turn, counted before the turn's
+	# growth or decline is applied. The wear charged below is charged for these.
+	var grazing := population
 	var ration := ration_at(world, coord)
 	var scaled := population
 	if ration >= 1.0:
@@ -146,10 +149,17 @@ func _graze(world: WorldMap) -> void:
 	# earlier herds already gone from the live census, divides by a smaller
 	# number, and claims a share the tile was charged for a moment ago. Shares
 	# must sum to at most one, so they are settled against a frozen census.
+	#
+	# Fourth, and the frozen census's own sibling: the numerator has to be frozen
+	# too. `set_herd_population()` has already run above, so `population` is the
+	# herd *after* this turn's growth or decline — animals that were not there to
+	# eat, or missing ones that were. Measured against a start-of-turn
+	# denominator, that under-charges a starving tile and over-charges a rich
+	# one. Found by codex review on PR #51.
 	var available := world.forage_for_use(coord, Land.Use.GRAZE)
 	var mouths := maxf(world.forage_demand_at_turn_start(coord), species.minimum_population)
-	var my_share := available * (forage_demand() / mouths)
-	var my_want := population * species.consumption_per_head
+	var my_share := available * (grazing / mouths)
+	var my_want := grazing * species.consumption_per_head
 	world.draw_vitality(coord, Land.Use.GRAZE, minf(my_share, my_want) / Seasons.MAX_FORAGE)
 
 

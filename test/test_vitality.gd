@@ -326,3 +326,70 @@ func _highest(row: PackedFloat32Array) -> float:
 	for value in row:
 		top = maxf(top, value)
 	return top
+
+
+func test_a_herd_is_charged_for_the_animals_that_actually_grazed() -> void:
+	# Codex review on PR #51: `_graze()` updates the population before charging
+	# wear, so the share's numerator was this turn's *new* population while its
+	# denominator is the census frozen at the start of the turn. On ground that
+	# cannot feed the herd it shrinks first and is then under-charged; on rich
+	# ground it grows and is charged for animals that were not there to eat.
+	#
+	# A solo herd makes the arithmetic exact: the frozen census is its own
+	# pre-turn population, so its share is the whole tile's grazing, and the wear
+	# it causes can be written down before the turn is taken. The two-herd
+	# sharing test cannot see this — every herd shrinks by the same fraction and
+	# the error cancels.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.GRASS)
+	var where := Vector2i.ZERO
+	var herd := Herd.new(1, where, Species.grazer(), 300.0)
+	world.add_agent(herd)
+
+	# Read from the season curve rather than the world: forage on a world that
+	# has never been advanced may not be computed yet, and a zero here would
+	# make every assertion below pass for the wrong reason.
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	var before := herd.population
+	var per_head := herd.species.consumption_per_head
+
+	# The premise the bug needs: ground too poor to feed the herd, so it shrinks
+	# during the turn. If the forage table ever makes this tile generous, the
+	# comparison below stops testing anything, and this is what says so.
+	assert_lt(herd.species.heads_supported_by(available), before,
+			"the tile cannot feed all %d animals" % int(before))
+
+	var eaten := minf(available, before * per_head)
+	var expected := Land.recovered(Land.depleted(Land.MAX_VITALITY, eaten / Seasons.MAX_FORAGE))
+
+	world.advance_turn()
+
+	assert_lt(herd.population, before, "and it did shrink, so a post-graze count would differ")
+	assert_almost_eq(world.vitality_at(where, Land.Use.GRAZE), expected, 0.00001,
+			"the tile is worn by what the herd that stood on it ate, counted before it shrank")
+
+
+func test_the_chronicle_records_what_the_farm_actually_grew() -> void:
+	# Codex review on PR #51: `_record_turn()` runs after `produce()` has worn the
+	# field and after recovery has moved it again, so sampling
+	# `farm_yield_rate()` there records next turn's hypothetical harvest rather
+	# than this turn's. The chronicle is history; what was grown is `last_yield`,
+	# set before the wear.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.GRASS)
+	var farm := CityNode.new(1, Vector2i.ZERO, CityNode.Kind.FARM)
+	world.add_node(farm)
+
+	world.advance_turn()
+
+	# The premise: working the field moved its forward rate away from what it
+	# grew. Without wear these are the same number and the assertion below would
+	# hold whichever of them the chronicle recorded.
+	assert_gt(farm.last_yield - farm.yield_rate(world), 0.01,
+			"the field is worth less now than it was when it was harvested")
+	assert_almost_eq(world.chronicle.latest(Chronicle.FARM_YIELD), farm.last_yield, 0.00001,
+			"the chronicle records the harvest the farm actually took")

@@ -566,8 +566,24 @@ func _record_turn() -> void:
 	chronicle.record(Chronicle.GRANARY_STORE, total_granary_store())
 	chronicle.record(Chronicle.GRANARY_IN, granary_intake())
 	chronicle.record(Chronicle.GRANARY_OUT, granary_outflow())
-	chronicle.record(Chronicle.FARM_YIELD, farm_yield_rate())
+	chronicle.record(Chronicle.FARM_YIELD, farm_harvest())
 	chronicle.record(Chronicle.HERD_POPULATION, total_herd_population())
+
+
+## Grain the farms actually took off their fields this turn.
+##
+## Not `farm_yield_rate()`, which is forward-looking — what the fields would give
+## *now* — and is what the map quotes. By the time a turn is recorded the fields
+## have been worked and have partly recovered (`AgDR-014`), so the forward rate is
+## already next turn's harvest rather than this one's. The chronicle is history,
+## and history is what was grown: each farm's `last_yield`, set before the wear.
+## Found by codex review on PR #51.
+func farm_harvest() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.FARM:
+			total += node.last_yield
+	return total
 
 
 ## How many tiles differ from another map of the same size.
