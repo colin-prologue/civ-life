@@ -125,11 +125,10 @@ static func _top_of(parts: Array) -> float:
 	var top := 0.0
 	for p: Dictionary in parts:
 		# A primitive builds UPWARD from its own origin, so its top is the
-		# origin plus its own height. Height lives under `size.y` for boxes and
-		# `height` for the round kinds, the same split _params_for writes.
-		var prm: Dictionary = p["params"]
-		var h: float = prm["size"].y if prm.has("size") else prm.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		# origin plus its own height. Height itself is DioramaCompose's own
+		# measurement — the one _finish() uses to stamp `y` — so this sheet
+		# cannot drift out of sync with it the way it once did for domes.
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 

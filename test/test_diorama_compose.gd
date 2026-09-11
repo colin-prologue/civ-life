@@ -881,3 +881,35 @@ func test_a_dome_reports_a_square_footprint() -> void:
 	assert_almost_eq(out["frame"]["footprint"].x,
 			out["frame"]["footprint"].y, 1e-6,
 			"a dome reported a non-square footprint")
+
+
+## The review-7 regression: `_finish` stamps every part's `y` through
+## DioramaCompose.part_height, which for box/tapered params reads `size.y` and
+## for prism/cone reads `height` — neither key a dome's params carry. Before
+## part_height existed, `_finish` went straight to that two-way split
+## (`_height_of`), so a dome part's `y` silently came out as `origin.y + 0`:
+## a wrong centre height nobody asserted, in the one field the parts contract
+## keeps specifically for the planned assembly tween to read.
+##
+## A dome's true height is `radius * squash` (see add_dome / _dome_pt in
+## mesh_kit.gd — the apex sits at that y when p reaches PI/2), so this checks
+## `y` against that directly rather than against 0, and the fixture stacks the
+## dome on a plinth so `origin.y` is nonzero and cannot be confused for the
+## bug's answer by coincidence.
+func test_a_dome_part_s_y_is_its_true_centre_height() -> void:
+	var tree := {"stack": {"name": "capped", "children": [
+		_box("plinth", 4.0, 4.0, 2.0),
+		{"mass": {"name": "cap", "kind": "dome", "w": 3.0, "d": 3.0, "h": 1.0,
+				"squash": 0.6, "role": "plaster"}}]}}
+	var parts := DioramaCompose.build(tree, SEED, 1)
+	assert_eq(parts.size(), 2, "fixture should emit a plinth and a dome")
+	var dome: Dictionary = parts[1]
+	assert_eq(dome["kind"], "dome", "second part should be the dome cap")
+	var radius: float = dome["params"]["radius"]
+	var squash: float = dome["params"]["squash"]
+	var true_height := radius * squash
+	assert_almost_eq(dome["y"], dome["xf"].origin.y + true_height * 0.5, 1e-5,
+			"a dome part's y should be its origin plus half its TRUE height "
+			+ "(radius * squash), not treated as zero-height")
+	assert_false(is_equal_approx(dome["y"], dome["xf"].origin.y),
+			"dome part's y regressed to the pre-fix bug: origin.y + 0")

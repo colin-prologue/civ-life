@@ -648,12 +648,40 @@ static func build(tree: Dictionary, seed: int, building_id: int,
 ## tree still says what rests on what.
 static func _finish(parts: Array) -> void:
 	for p: Dictionary in parts:
-		p["y"] = p["xf"].origin.y + _height_of(p) * 0.5
+		p["y"] = p["xf"].origin.y + part_height(p) * 0.5
 
 
-static func _height_of(p: Dictionary) -> float:
+## A part's own vertical extent, in its own local space: `size.y` for boxes and
+## tapered masses, `height` for prism/cone, and `radius * squash` for a dome —
+## a dome's params carry no `size` or `height` key, its apex sits `radius *
+## squash` above its own origin (see add_dome / _dome_pt in mesh_kit.gd).
+##
+## The single copy of a match that used to exist three times: here (feeding
+## `y`, which the parts contract retains for the assembly tween to read),
+## and separately in culture_sheet.gd and condition_sheet.gd's own `_top_of`
+## helpers. The dome case was added to this one and to culture_sheet's when
+## `delta`'s dome crown first rendered, and condition_sheet's copy — never
+## exercised by a dome-crowned style at the time — was left behind with the
+## old two-way box/height split. `y` said as much for every dome part built by
+## `_finish` in the meantime: origin.y + 0, a wrong centre height nothing
+## caught because nothing asserted it. One helper, called from all three
+## sites, is what makes that impossible to repeat.
+##
+## An unrecognised params shape asserts rather than returning 0.0: a silent
+## zero is exactly how the dome gap went unnoticed here for as long as it did,
+## and a fourth primitive added to _params_for without a matching case here
+## should fail loudly, not quietly under-report every part built from it.
+static func part_height(p: Dictionary) -> float:
 	var params: Dictionary = p["params"]
-	return params["size"].y if params.has("size") else params.get("height", 0.0)
+	if params.has("size"):
+		return params["size"].y
+	if params.has("height"):
+		return params["height"]
+	if params.has("squash"):
+		return params["radius"] * params["squash"]
+	assert(false, "part kind '%s' has a params shape part_height doesn't "
+			% p.get("kind", "?") + "recognise: %s" % str(params.keys()))
+	return 0.0
 
 
 ## Resolve each part's role into a concrete colour through a culture's palette.

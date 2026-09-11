@@ -11,6 +11,10 @@ extends Node3D
 ## palette holds colour constant and leaves only geometry — if the cultures are
 ## still tellable apart, the geometry is doing the work. Without that frame the
 ## sheet cannot distinguish expressing culture from tinting one.
+##
+## Per-cell scaling (see _add_cell) normalises away absolute height
+## differences between cultures, so what this sheet compares is proportion and
+## silhouette, never size.
 
 @export var world_seed: int = 20260904
 @export var building_id: int = 0
@@ -101,22 +105,15 @@ static func _top_of(parts: Array) -> float:
 	var top := 0.0
 	for p: Dictionary in parts:
 		# A primitive builds UPWARD from its own origin, so its top is the
-		# origin plus its own height. Height lives under `size.y` for boxes,
-		# `height` for prism/cone, but a dome's params carry only `radius` and
-		# `squash` — its apex is `radius * squash` above its origin (see
-		# add_dome / _dome_pt in mesh_kit.gd). Missing that case undercounts
-		# every dome-crowned culture's true height, which under-scales `top`
-		# and renders that cell wildly oversized relative to its neighbours —
-		# exactly what the first capture of this sheet showed for `delta`.
-		var prm: Dictionary = p["params"]
-		var h: float
-		if prm.has("size"):
-			h = prm["size"].y
-		elif prm.has("squash"):
-			h = prm["radius"] * prm["squash"]
-		else:
-			h = prm.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		# origin plus its own height. Height is DioramaCompose.part_height —
+		# the same measurement _finish() uses to stamp `y` — not a second copy
+		# of the size/height/dome match: a second copy is exactly how the
+		# dome case (radius * squash; see add_dome / _dome_pt in mesh_kit.gd)
+		# went missing from condition_sheet.gd's own copy of this helper while
+		# it got fixed here, and how it went missing from compose.gd's `y`
+		# entirely — every dome-crowned culture's true height was undercounted
+		# there too, silently, because nothing asserted the params shape.
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 
