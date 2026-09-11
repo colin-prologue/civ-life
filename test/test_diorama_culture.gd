@@ -330,17 +330,41 @@ func test_two_cultures_colour_the_same_building_differently() -> void:
 	assert_true(found, "no culture produced a colour differing from lowland's")
 
 
-func test_ruins_still_work_under_a_culture() -> void:
-	# Slice 3's guarantee must survive slice 4: need bands come from node
-	# structure and are untouched by culture, so ordered loss should hold.
-	for n in DioramaCulture.NAMES:
-		var c := DioramaCulture.for_name(n)
-		var parts := DioramaCompose.build(DioramaStyles.stepped(), SEED, 2, c)
-		var rungs := [1.0, 0.75, 0.5, 0.25, 0.05]
-		for i in range(rungs.size() - 1):
-			var higher := DioramaCondition.filter(parts, rungs[i])
-			var lower := DioramaCondition.filter(parts, rungs[i + 1])
-			for p: Dictionary in lower:
-				assert_true(higher.has(p),
-						"culture '%s': a part survived %f but not %f"
-						% [n, rungs[i + 1], rungs[i]])
+## Slice 3's ruins survive slice 4 because culture never touches `need`: need
+## bands are partitioned from node STRUCTURE, and a culture changes proportions,
+## colour and crown shape but not what rests on what. So the same building must
+## emit the same number of parts carrying the same `need`s, in the same order,
+## under every culture.
+##
+## This replaced a test that filtered one culture's parts at descending rungs
+## and checked each survivor set nested in the last. That could not fail:
+## DioramaCondition.filter keeps a part when `effective >= need` against ONE
+## threshold, so "kept at a lower rung implies kept at a higher one" holds for
+## any `need` values whatsoever, culture-dependent or not.
+func test_culture_never_touches_need() -> void:
+	for style in DioramaStyles.NAMES:
+		var tree: Dictionary = DioramaStyles.for_name(style)
+		for id in [0, 1, 2, 5, 11]:
+			var ref_name: String = DioramaCulture.NAMES[0]
+			var ref := DioramaCompose.build(tree, SEED, id,
+					DioramaCulture.for_name(ref_name))
+			# An empty building would make every comparison below vacuous.
+			assert_gt(ref.size(), 0, "%s id %d emitted no parts" % [style, id])
+			for n in DioramaCulture.NAMES.slice(1):
+				var parts := DioramaCompose.build(tree, SEED, id,
+						DioramaCulture.for_name(n))
+				assert_eq(parts.size(), ref.size(),
+						"%s id %d: '%s' emits %d parts, '%s' emits %d"
+						% [style, id, n, parts.size(), ref_name, ref.size()])
+				var moved := 0
+				var first := ""
+				for i in range(mini(parts.size(), ref.size())):
+					if parts[i]["need"] != ref[i]["need"]:
+						moved += 1
+						if first == "":
+							first = (" (first: part %d, %f under '%s' vs %f)"
+									% [i, parts[i]["need"], n, ref[i]["need"]])
+				assert_eq(moved, 0,
+						"%s id %d: %d part(s) changed `need` under '%s'%s — "
+						% [style, id, moved, n, first]
+						+ "culture reached the ruin order")
