@@ -335,6 +335,23 @@ func yield_rate(world: WorldMap) -> float:
 	return yield_of(world)
 
 
+## What this farm actually took off its field on the last turn it produced.
+##
+## The remembered twin of `yield_rate()`, and farm-only for the same reason: the
+## chronicle's `FARM_YIELD` series quotes the fields, while a camp's flow is told
+## through `yield_share()`. `last_yield` itself is set for every producing kind,
+## so summing it across `nodes` would quietly fold a camp's gathering into the
+## fields' harvest.
+##
+## The kind test lives here rather than in `WorldMap.farm_harvest()` because a
+## node knows what it is and the world does not ask (`AgDR-013`) — the same split
+## `yield_rate()` above already makes.
+func harvest() -> float:
+	if kind != Kind.FARM:
+		return 0.0
+	return last_yield
+
+
 ## Start a turn with both flow counters at zero. Called by the world before
 ## anything produces or carries.
 func begin_turn() -> void:

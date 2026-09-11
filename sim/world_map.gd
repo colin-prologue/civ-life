@@ -610,13 +610,16 @@ func _record_turn() -> void:
 ## *now* — and is what the map quotes. By the time a turn is recorded the fields
 ## have been worked and have partly recovered (`AgDR-014`), so the forward rate is
 ## already next turn's harvest rather than this one's. The chronicle is history,
-## and history is what was grown: each farm's `last_yield`, set before the wear.
+## and history is what was grown: each farm's `harvest()`, set before the wear.
 ## Found by codex review on PR #51.
+##
+## Asked of the node rather than filtered here. `CityNode.harvest()` is farm-only
+## on its own account, exactly as `yield_rate()` is, so this sums without asking
+## what any node is — the same restraint `AgDR-013` asks of the agent loop.
 func farm_harvest() -> float:
 	var total := 0.0
 	for node in nodes:
-		if node.kind == CityNode.Kind.FARM:
-			total += node.last_yield
+		total += node.harvest()
 	return total
 
 

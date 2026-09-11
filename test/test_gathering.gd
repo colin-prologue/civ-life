@@ -612,6 +612,37 @@ func test_a_camp_barn_holds_about_three_turns_of_its_best_harvest() -> void:
 			"a camp's barn holds about three turns of its best harvest, not %.1f" % turns)
 
 
+func test_what_a_camp_gathers_is_not_counted_as_a_harvest() -> void:
+	# The chronicle's FARM_YIELD series quotes the fields. Every producing node
+	# records a `last_yield`, so a world summing that field across its nodes
+	# would fold a camp's gathering into the farms' harvest and the series would
+	# read high for a city that grew nothing more.
+	#
+	# Worth pinning because the two sums look identical from the outside — both
+	# rise when the city is doing well — and nothing else in the suite puts a
+	# camp and a farm in the same world and then reads the series.
+	var world := _flat_world()
+	var camp := CityNode.new(1, Vector2i(4, 4), CityNode.Kind.GATHERING)
+	world.add_node(camp)
+	world.add_agent(Herd.new(1, Vector2i(4, 4), Species.grazer(), 300.0))
+
+	world.advance_turn()
+
+	# The premise: the camp really did gather something this turn. Without the
+	# herd in range it gathers nothing, and the assertion below would hold
+	# against a farm_harvest() that counted camps.
+	assert_gt(camp.last_yield, 0.0, "the camp gathered on the turn being measured")
+	assert_eq(world.farm_harvest(), 0.0,
+			"a city with no fields harvested nothing, whatever its camp brought in")
+
+	var farm := CityNode.new(2, Vector2i(8, 4), CityNode.Kind.FARM)
+	world.add_node(farm)
+	world.advance_turn()
+
+	assert_almost_eq(world.farm_harvest(), farm.last_yield, 0.00001,
+			"and with one field, the harvest is that field's and nothing else's")
+
+
 # --- helpers -----------------------------------------------------------------
 
 ## A featureless world of one terrain with nothing alive on it, so a measured
