@@ -16,9 +16,17 @@ make it.
 ```sh
 ./capture.sh --seed 20260815 --turns 0,4,12 --name world   # stills
 ./capture.sh --movie --seed 20260815 --from 0 --to 8       # a short GIF
-./capture.sh --self-test                                   # prove the guard fires
+./capture.sh --placement --name placement                  # the player's verb
+./capture.sh --self-test                                   # prove the guards fire
 ./capture.sh --links docs/shots/growth                     # markdown for the PR
 ```
+
+`--placement` is the odd one out: every other mode varies the *clock* and names
+its frames by turn number, and three of the four frames it takes happen at the
+same turn. What varies across them is what the player did — a tile selected, a
+farm on it, a route drawn — which no turn list can state. It drives `main.gd`'s
+own click, place and route entry points rather than calling into `sim/`, so the
+hit test and the selection state are in the evidence too.
 
 Capture, **commit the frames**, then run `--links` and paste what it prints.
 That order is not a style preference: the URLs are pinned to `HEAD`, and the
@@ -89,3 +97,7 @@ than an empty directory, because it looks like evidence. `capture.sh` checks
 every frame for content before writing it, and `--self-test` runs the capture
 under `--headless` on purpose to watch the check reject the result. Run that
 after touching either the capture path or the renderer.
+
+There are now two capture scripts and therefore two copies of that guard, so
+`--self-test` watches both of them fail. A second capture path is a second thing
+that can be quietly broken, and the first three legs said nothing about it.

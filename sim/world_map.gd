@@ -198,6 +198,22 @@ func add_route(route: Route) -> void:
 	routes.append(route)
 
 
+## The structure standing on this tile, or null if the tile is free.
+##
+## Linear over `nodes`, for the reason `Route.index_of()` is linear: a city is a
+## handful of chunky structures (`AgDR-002`), and an index keyed by coordinate
+## would be a cache that can disagree with the array it summarises.
+##
+## This is a *query*, and the one placement asks before it is allowed to build.
+## Keeping it here rather than in whatever is doing the placing is what lets the
+## rule "a tile holds one structure" be asserted without a scene tree.
+func node_at(coord: Vector2i) -> CityNode:
+	for node in nodes:
+		if node.coord == coord:
+			return node
+	return null
+
+
 ## Set a herd's population. The only way it changes, for the same reason.
 func set_herd_population(herd: Herd, value: float) -> void:
 	_forage_demand[grid.index_of(herd.coord)] += value - herd.population
@@ -228,6 +244,33 @@ func forage_demand_at_turn_start(coord: Vector2i) -> float:
 	if i >= _forage_demand_at_turn_start.size():
 		return _forage_demand[i]
 	return _forage_demand_at_turn_start[i]
+
+
+## The same total over every tile within `radius` of `coord`, the centre tile
+## included. Tiles off the map contribute nothing rather than being an error, so
+## a structure near the coast is not a special case.
+##
+## This is the widening that lets something standing still notice the world
+## moving past it. A citizen reads one tile because it only cares what is
+## underfoot; a gathering node reads a disc because what it cares about is
+## whether anything is *around*. Neither can find out what kind of thing is
+## producing the number, which is the whole of `AgDR-013` and the reason this is
+## a second read of the same census rather than a scan of `agents`.
+##
+## Summed on demand rather than cached per radius: a handful of nodes read
+## nineteen tiles once a turn, against a cache that would have to be invalidated
+## on every one of the world's agent movements.
+func forage_demand_within(coord: Vector2i, radius: int) -> float:
+	assert(radius >= 0, "a radius is not negative")
+	var total := 0.0
+	# Axial disc, enumerated in the same fixed order `Herd._best_ground()` uses,
+	# so a float sum over it is identical run to run.
+	for dq in range(-radius, radius + 1):
+		for dr in range(maxi(-radius, -dq - radius), mini(radius, -dq + radius) + 1):
+			var i := grid.index_of(coord + Vector2i(dq, dr))
+			if i >= 0:
+				total += _forage_demand[i]
+	return total
 
 
 ## The same figure, summed from the agents actually standing there rather than

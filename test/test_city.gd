@@ -196,6 +196,11 @@ func test_a_route_is_an_ordered_walkable_path_between_two_nodes() -> void:
 
 
 func test_a_generated_world_comes_with_a_farm_a_granary_a_road_and_people() -> void:
+	# The city is two spokes out of one granary: a farm on one and a gathering
+	# camp on the other. The camp is asserted here rather than in
+	# `test_gathering.gd` because what is being checked is the *city's* shape —
+	# that the second kind of production arrives through the same road-and-carrier
+	# arrangement as the first, with no transport of its own.
 	for world_seed in [SEED_A, 987654321]:
 		var world := WorldGen.generate(world_seed)
 		var kinds := {}
@@ -208,18 +213,25 @@ func test_a_generated_world_comes_with_a_farm_a_granary_a_road_and_people() -> v
 			)
 		assert_true(kinds.has(CityNode.Kind.FARM), "seed %d: there is a farm" % world_seed)
 		assert_true(kinds.has(CityNode.Kind.GRANARY), "seed %d: and a granary" % world_seed)
-		assert_eq(world.routes.size(), 1, "seed %d: joined by one road" % world_seed)
+		assert_true(kinds.has(CityNode.Kind.GATHERING), "seed %d: and a camp" % world_seed)
+		assert_eq(world.routes.size(), 2, "seed %d: joined by a road each" % world_seed)
 		assert_eq(
 			world.citizens().size(),
-			CityGen.CITIZENS_PER_ROUTE,
-			"seed %d: with people on it" % world_seed
+			CityGen.CITIZENS_PER_ROUTE * world.routes.size(),
+			"seed %d: with people on both" % world_seed
 		)
-		for coord in world.routes[0].path:
-			assert_ne(
-				world.terrain_at(coord),
-				WorldGen.Terrain.WATER,
-				"seed %d: the road stays out of the water" % world_seed
+		for route in world.routes:
+			assert_eq(
+				route.sink.kind,
+				CityNode.Kind.GRANARY,
+				"seed %d: every road ends at the granary" % world_seed
 			)
+			for coord in route.path:
+				assert_ne(
+					world.terrain_at(coord),
+					WorldGen.Terrain.WATER,
+					"seed %d: the road stays out of the water" % world_seed
+				)
 
 
 # --- 3. grain moves ----------------------------------------------------------

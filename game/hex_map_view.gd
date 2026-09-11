@@ -10,6 +10,17 @@ extends Node2D
 ## and rebuilt from the world. If a rule ever needs to live here, it belongs in
 ## `sim/` instead — see `.decisions/AgDR-001-headless-sim-core.md`.
 ##
+## It now answers one question in the other direction — `coord_at_point()`, which
+## tile a click landed on. That is still pixels: the layout below is the only
+## place screen geometry exists, so its inverse has to be here too. What it is
+## emphatically not is placement. This says *which tile*; whether anything may be
+## built there is `CityGen`'s to answer.
+##
+## The selection outline is the one thing drawn that is not read out of the
+## world, and it is not owned here either — `main.gd` holds what is selected and
+## tells this node what to outline. Throw this node away and rebuild it and the
+## selection comes back with the next `set_selection()` call.
+##
 ## Layout is flat-top, odd-q offset, matching `sim/hex_grid.gd`'s extent. Centre
 ## spacing is `1.5 * radius` horizontally and `sqrt(3) * radius` vertically, with
 ## odd columns pushed down half a step — the standard flat-top packing, written
@@ -89,6 +100,30 @@ const _FARM_FILL := Color(0.93, 0.79, 0.32)
 const _GRANARY_FILL := Color(0.62, 0.20, 0.16)
 const _NODE_EDGE := Color(0.20, 0.12, 0.04, 0.95)
 
+## The gathering camp, working and quiet. A violet, because the two warm slots
+## the city had were already spent on the farm and the granary and every
+## remaining warm mid-tone collides with the hills — the same corner the road and
+## the granary were painted into, resolved the same way.
+##
+## Unlike the other two structures this one is drawn at a brightness rather than
+## at a colour, and that asymmetry is the point of the kind. A farm's year is
+## legible from the tile it stands on, which the map already washes with the
+## season; a camp's year is legible from nowhere on the map except the camp
+## itself, because what feeds it is a herd that may be four tiles away and out of
+## the frame the eye happens to be looking at.
+const _GATHERING_FILL := Color(0.80, 0.35, 0.85)
+const _GATHERING_QUIET := Color(0.26, 0.16, 0.31)
+
+## The halo a working camp throws, as a fraction of the hex radius. It reaches
+## past the node's own square on purpose: what a camp is doing is *reaching into
+## the tiles around it*, and a mark confined to its own hex would say only that
+## something there changed colour.
+##
+## Nothing about the halo's size claims to be `CityNode.GATHERING_RADIUS` drawn
+## to scale. It is an indicator, and a nineteen-hex disc outlined accurately
+## would cover the herds that are the reason it is lit.
+const _GATHERING_HALO_SCALE := 0.92
+
 ## The unworked part of a farm's square: bare earth, dark enough that the lit
 ## part reads as a level in a container rather than as two colours side by side.
 ## A farm in midwinter is nearly all this; a farm in spring is nearly none of it.
@@ -138,6 +173,20 @@ const _CITIZEN_SCALE := 0.20
 ## not vanish when the whole map is squeezed into a small window.
 const _ROAD_WIDTH_SCALE := 0.18
 const _ROAD_MIN_WIDTH := 2.0
+
+## The selection outline, and the same outline once a route has been started
+## from it. White because nothing on the map is white — every terrain, every
+## structure and every animal is a saturated mid-tone, so an unsaturated ring
+## cannot be mistaken for a thing standing on the tile. Amber when a route is
+## armed, because at that point the ring means "and now click the other end"
+## rather than "this is where you are".
+const _SELECTION_COLOR := Color(1.00, 1.00, 1.00, 0.95)
+const _ROUTE_ARMED_COLOR := Color(1.00, 0.78, 0.30, 0.95)
+
+## Selection ring width as a fraction of the hex radius, floored in pixels for
+## the same reason the road is.
+const _SELECTION_WIDTH_SCALE := 0.14
+const _SELECTION_MIN_WIDTH := 2.0
 
 ## The attention marks: a ring around every tile this turn's report named, with
 ## the entry's number beside it.
@@ -237,6 +286,13 @@ var _polygons: Array[PackedVector2Array] = []
 var _outlines: Array[PackedVector2Array] = []
 var _fills: PackedColorArray = PackedColorArray()
 
+## What to outline, as last stated by the controller. Not owned here — see the
+## note at the top of the file — and not read out of the world, because what a
+## player is looking at is not a fact about the world.
+var _selected := Vector2i.ZERO
+var _has_selection := false
+var _route_armed := false
+
 
 ## Point this view at a world and size it to the space available.
 func show_world(world: WorldMap, viewport_size: Vector2) -> void:
@@ -291,6 +347,48 @@ func hex_radius() -> float:
 func center_of(coord: Vector2i) -> Vector2:
 	var off := HexGrid.to_offset(coord)
 	return _center_of_offset(off.x, off.y)
+
+
+## Which tile a point in viewport pixels landed on, for the current fit.
+##
+## The result is a coordinate, not a promise that it is on the map: a click in
+## the margin or on the legend lands outside the grid, and the caller checks with
+## `grid.has_coord()`. Returning something off the map is the honest answer to
+## "which tile is under the legend", and clamping it to the nearest real one
+## would make the map's edge sticky.
+func coord_at_point(point: Vector2) -> Vector2i:
+	if _radius <= 0.0:
+		# Nothing has been fitted yet, so no point is on any tile. Column -1 is
+		# off every grid.
+		return Vector2i(-1, -1)
+	return point_to_axial(point, _origin, _radius)
+
+
+## The inverse of `center_of()`, written out rather than searched for.
+##
+## Static and parameterised so the round trip can be checked without a viewport.
+## Pixels come back to a *fractional* axial coordinate here, and `HexGrid` rounds
+## it to a real hex — a point near a hex corner is nearest to a different tile
+## than the bounding box it sits in, so a rectangle test would put clicks on the
+## wrong tile along every second edge.
+static func point_to_axial(point: Vector2, origin: Vector2, radius: float) -> Vector2i:
+	assert(radius > 0.0, "a hex has a size before anything is clicked on it")
+	# Undo the half-step the layout adds so column 0 and row 0 sit inside the
+	# viewport rather than half off it, then undo the packing.
+	var px := (point.x - origin.x) / radius - 1.0
+	var py := (point.y - origin.y) / radius - sqrt(3.0) * 0.5
+	var qf := px / 1.5
+	var rf := py / sqrt(3.0) - qf * 0.5
+	return HexGrid.round_axial(qf, rf)
+
+
+## What the controller wants outlined. Called on every selection change; there is
+## no other way this node learns what is selected.
+func set_selection(has_selection: bool, coord: Vector2i, route_armed: bool) -> void:
+	_has_selection = has_selection
+	_selected = coord
+	_route_armed = route_armed
+	queue_redraw()
 
 
 func _center_of_offset(col: int, row: int) -> Vector2:
@@ -455,6 +553,9 @@ func _draw() -> void:
 	# Last, and over everything: the marks are a reading of the map, so nothing
 	# on the map is allowed to sit on top of one.
 	_draw_changes()
+	# And the selection over even that, because the point of it is to say "this
+	# one" about whatever is underneath — including a mark on the same tile.
+	_draw_selection()
 	_draw_season()
 	var below := _draw_legend()
 	below = _draw_overlay_key(below)
@@ -505,10 +606,18 @@ func _draw_routes() -> void:
 ## downward for grain leaving. Both are drawn whenever there is a granary, so an
 ## outflow of zero is a stub of no height next to a visible inflow rather than a
 ## thing the display forgot to mention.
+##
+## A gathering camp additionally gets a halo, drawn under the square, so that the
+## turn a herd arrives is a change in the *size* of a mark rather than only in
+## its colour. Colour alone would ask the eye to compare a small square against
+## its own memory of that square a few turns ago, which is exactly the comparison
+## a person watching a map does not make.
 func _draw_nodes() -> void:
 	var half := _radius * _NODE_SCALE * 0.5
 	for node in _world.nodes:
 		var centre := center_of(node.coord)
+		if node.kind == CityNode.Kind.GATHERING:
+			_draw_gathering_halo(centre, node.yield_share())
 		var box := Rect2(centre - Vector2(half, half), Vector2(half, half) * 2.0)
 		if node.kind == CityNode.Kind.FARM:
 			draw_rect(box, _FARM_FALLOW)
@@ -518,10 +627,52 @@ func _draw_nodes() -> void:
 					box.position + Vector2(0.0, box.size.y * (1.0 - share)),
 					Vector2(box.size.x, box.size.y * share)
 				), _FARM_FILL)
+		elif node.kind == CityNode.Kind.GATHERING:
+			draw_rect(box, node_fill(node.kind, node.yield_share()))
 		else:
 			draw_rect(box, _GRANARY_FILL)
 			_draw_flow_stubs(box, node.took_in, node.gave_out)
 		draw_rect(box, _NODE_EDGE, false, maxf(1.0, half * 0.22))
+
+
+## The glow around a working camp: nothing at all when the ground around it is
+## empty, opening out as animals come into range.
+func _draw_gathering_halo(centre: Vector2, share: float) -> void:
+	var lit := _lit_fraction(share)
+	if lit <= 0.0:
+		return
+	var radius := _radius * _GATHERING_HALO_SCALE * lit
+	draw_circle(centre, radius, Color(_GATHERING_FILL, 0.22 * lit))
+	draw_arc(centre, radius, 0.0, TAU, 24, Color(_GATHERING_FILL, 0.55 * lit), maxf(1.0, _radius * 0.05))
+
+
+## The fill for one structure. Static and public so a test can check the palette
+## without a viewport, and so the lit/quiet reading is one function rather than
+## something reconstructed at each draw call.
+##
+## `share` is the node's own report of how good its last turn was
+## (`CityNode.yield_share()`), read rather than derived: how a yield was arrived
+## at is simulation's business, and a view that recomputed it would be the second
+## copy of a rule `AgDR-001` exists to prevent.
+static func node_fill(kind: int, share: float) -> Color:
+	match kind:
+		CityNode.Kind.FARM:
+			return _FARM_FILL
+		CityNode.Kind.GATHERING:
+			return _GATHERING_QUIET.lerp(_GATHERING_FILL, _lit_fraction(share))
+	return _GRANARY_FILL
+
+
+## How lit a camp looks for a given share of its best turn.
+##
+## Square root, for the same reason the herd marker uses one: the eye reads the
+## bottom of a brightness range far more finely than the top, and a single herd
+## in range is worth about half a camp's ceiling by construction
+## (`CityNode.GATHERING_HALF_AT`). Linear would render the ordinary good case —
+## one herd, right there, visible on the map — as a permanent half-light, and the
+## thing the player has to notice is *arrival*, not magnitude.
+static func _lit_fraction(share: float) -> float:
+	return sqrt(clampf(share, 0.0, 1.0))
 
 
 ## How much of a farm's square is lit: this turn's yield against what the same
@@ -566,6 +717,24 @@ func _draw_citizens() -> void:
 				maxf(1.5, radius * 0.45))
 		draw_circle(centre, radius, fill)
 		draw_arc(centre, radius, 0.0, TAU, 14, _CITIZEN_EDGE, maxf(1.0, radius * 0.30))
+
+
+## A ring around the selected tile, if there is one.
+##
+## Corners are recomputed rather than looked up in `_polygons`: the selection
+## changes on a click and the polygons are rebuilt on a turn, and reaching into
+## the other one's cache is how those two get out of step.
+func _draw_selection() -> void:
+	if not _has_selection:
+		return
+	var corners := _corners(center_of(_selected), _radius)
+	var loop := corners.duplicate()
+	loop.append(corners[0])
+	draw_polyline(
+		loop,
+		_ROUTE_ARMED_COLOR if _route_armed else _SELECTION_COLOR,
+		maxf(_SELECTION_MIN_WIDTH, _radius * _SELECTION_WIDTH_SCALE)
+	)
 
 
 ## A ring and a number on every tile this turn's report named.
@@ -720,6 +889,16 @@ func _draw_legend() -> float:
 	draw_rect(Rect2(pos + swatch * 0.24 + Vector2(chip.x * 0.35, chip.y),
 		Vector2(chip.x * 0.3, 2.0)), _FLOW_OUT)
 	_legend_caption(font, font_size, pos, "granary (in/out)")
+	pos.y += swatch.y + 6.0
+	# The camp's swatch is drawn twice, dark then lit, because its entry in the
+	# legend is not a colour but a *difference* — the whole thing worth knowing
+	# about this structure is that it has two states and the world decides which.
+	draw_rect(Rect2(pos + Vector2(0.0, swatch.y * 0.24), swatch * 0.52), _GATHERING_QUIET)
+	draw_rect(Rect2(pos + swatch * Vector2(0.48, 0.24), swatch * 0.52), _GATHERING_FILL)
+	# Caption kept to roughly the width of the longest terrain name: the panel is
+	# not clipped to, and "camp (lit=animals near)" ran off the right edge of a
+	# 1280-wide frame — visible in any capture taken at that size.
+	_legend_caption(font, font_size, pos, "camp (lit=animals)")
 	pos.y += swatch.y + 6.0
 	draw_circle(pos + swatch * 0.5, swatch.x * 0.22, _CITIZEN_LOADED)
 	_legend_caption(font, font_size, pos, "citizens (lit=laden)")
