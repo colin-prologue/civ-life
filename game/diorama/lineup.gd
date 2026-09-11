@@ -89,9 +89,7 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	add_child(inst)
 	var top := 0.0
 	for p: Dictionary in parts:
-		var params: Dictionary = p["params"]
-		var h: float = params["size"].y if params.has("size") else params.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 

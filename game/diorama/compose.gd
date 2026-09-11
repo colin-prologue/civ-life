@@ -105,14 +105,6 @@ static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> in
 	return lo + int(floor(c * span))
 
 
-static func seed_of(ctx: Dictionary) -> int:
-	return ctx["seed"]
-
-
-static func id_of(ctx: Dictionary) -> int:
-	return ctx["id"]
-
-
 static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
@@ -656,16 +648,21 @@ static func _finish(parts: Array) -> void:
 ## a dome's params carry no `size` or `height` key, its apex sits `radius *
 ## squash` above its own origin (see add_dome / _dome_pt in mesh_kit.gd).
 ##
-## The single copy of a match that used to exist three times: here (feeding
-## `y`, which the parts contract retains for the assembly tween to read),
-## and separately in culture_sheet.gd and condition_sheet.gd's own `_top_of`
-## helpers. The dome case was added to this one and to culture_sheet's when
-## `delta`'s dome crown first rendered, and condition_sheet's copy — never
-## exercised by a dome-crowned style at the time — was left behind with the
-## old two-way box/height split. `y` said as much for every dome part built by
-## `_finish` in the meantime: origin.y + 0, a wrong centre height nothing
-## caught because nothing asserted it. One helper, called from all three
-## sites, is what makes that impossible to repeat.
+## The single copy of a match that used to exist four times: here (feeding
+## `y`, which the parts contract retains for the assembly tween to read), in
+## culture_sheet.gd and condition_sheet.gd's own `_top_of` helpers, and inline
+## in lineup.gd's `_add_specimen`. The dome case was added to this one and to
+## culture_sheet's when `delta`'s dome crown first rendered, and condition_sheet's
+## copy — never exercised by a dome-crowned style at the time — was left behind
+## with the old two-way box/height split. `y` said as much for every dome part
+## built by `_finish` in the meantime: origin.y + 0, a wrong centre height
+## nothing caught because nothing asserted it. The first consolidation then
+## missed lineup's copy for the same reason the dome case was missed: it was
+## not named `_top_of`, and a search for the helper's name does not find an
+## inline ternary. Search for `has("size")` instead — outside this function it
+## should only ever be asking WHAT a part is, never how tall. Every site that
+## needs a part's height calls this one, which is what makes the dome gap
+## impossible to repeat.
 ##
 ## An unrecognised params shape asserts rather than returning 0.0: a silent
 ## zero is exactly how the dome gap went unnoticed here for as long as it did,
