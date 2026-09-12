@@ -21,3 +21,6 @@ reports/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local editor runtime for Windows development; never commit engine binaries.
+.tools/
