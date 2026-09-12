@@ -139,6 +139,20 @@ export GODOT='C:/path/to/Godot_v4.7.2-stable_win64_console.exe'
 Open `project.godot` in the Godot editor for interactive work. The first test
 run creates the local `.godot/` import cache; it is intentionally untracked.
 
+#### Existing Windows checkouts
+
+If this checkout predates the line-ending policy above, it may retain CRLF
+shell scripts after you pull the change. With no uncommitted work, rebuild the
+index and working tree so Git checks every text file out as LF:
+
+```bash
+git status --short  # must print nothing
+git rm --cached -r .
+git reset --hard
+```
+
+The last command discards uncommitted changes, so commit or stash them first.
+
 ## How work happens here
 
 This repo is driven by [Switchboard](https://github.com/colin-prologue/switchboard).
