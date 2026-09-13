@@ -13,10 +13,13 @@ extends Node3D
 
 @export var world_seed: int = 20260829
 
-## Which culture's palette resolves the roles. The ladder itself is unaffected —
-## `need` is drawn during resolution and colour is applied after — so switching
-## this re-paints the sheet and changes nothing about which parts survive.
-@export_enum("sunlit", "basalt") var culture: String = "sunlit"
+## Which culture's PALETTE resolves the roles — the palette only, and this scene
+## builds with no massing. The ladder itself is unaffected either way: `need` is
+## drawn during resolution from the node path, which a culture never touches, so
+## switching this re-paints the sheet and changes nothing about which parts
+## survive. Leaving the massing out keeps the geometry identical down a column
+## too, so the only thing that varies as the condition falls is what is missing.
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
 
 ## Which building id each style's row shows, in DioramaStyles.NAMES order.
 ##
@@ -134,11 +137,10 @@ static func _top_of(parts: Array) -> float:
 	var top := 0.0
 	for p: Dictionary in parts:
 		# A primitive builds UPWARD from its own origin, so its top is the
-		# origin plus its own height. Height lives under `size.y` for boxes and
-		# `height` for the round kinds, the same split _params_for writes.
-		var prm: Dictionary = p["params"]
-		var h: float = prm["size"].y if prm.has("size") else prm.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		# origin plus its own height. Height itself is DioramaCompose's own
+		# measurement — the one _finish() uses to stamp `y` — so this sheet
+		# cannot drift out of sync with it the way it once did for domes.
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 

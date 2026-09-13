@@ -44,9 +44,15 @@ extends Node3D
 @export var hero_scale: float = 1.5
 
 ## Which culture built this valley. One settlement, one culture — the whole
-## valley shares a palette, because a mapping is what a culture IS here and two
-## palettes in one town would be two towns.
-@export_enum("sunlit", "basalt") var culture: String = "sunlit"
+## valley shares a palette, because two palettes in one town would be two towns.
+##
+## The palette only, for now: this scene builds with no massing, so the valley
+## stands at the vocabulary's authored proportions whichever culture is
+## selected. That is a gap rather than a decision — a settlement really should
+## be built the way its people build, not merely painted that way — and closing
+## it means re-judging the S0 valley's composition against three different
+## silhouettes, which is a slice of its own.
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
 
 @export var rebuild: bool = false:
 	set(_v):

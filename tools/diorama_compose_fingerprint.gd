@@ -59,24 +59,32 @@ static func _fingerprint(world_seed: int) -> int:
 	var b := DioramaMeshKit.new()
 	var needs := 0
 	for style in [DioramaStyles.residential(), DioramaStyles.hero_arch()]:
-		for id in IDS:
-			var parts := DioramaCompose.build(style, world_seed, id)
-			DioramaCompose.apply_roles(parts, DioramaCultures.palette("sunlit"))
-			DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
-			for p: Dictionary in parts:
-				# Quantised, because a float printed through two processes must
-				# compare equal bit-for-bit and 1e-6 is far finer than any
-				# visible difference in when a part falls.
-				#
-				# Masked to 52 bits, not 60: int64 signed overflow on the `* 31`
-				# below is the same unspecified-behaviour smell str_hash() exists
-				# to avoid — it happens to wrap identically on two processes of
-				# the same binary, but that is an accident of platform, not a
-				# guarantee, and this fold sits inside a gate whose only job is
-				# to catch exactly that class of accident. 52 bits keeps
-				# `needs * 31` (~1.4e17 at most) comfortably under int64's
-				# ~9.2e18 ceiling, so the multiply never overflows in the first
-				# place — nothing to wrap, nothing platform-dependent to trust.
-				needs = (needs * 31 + int(round(p["need"] * 1000000.0))) \
-						& 0xFFFFFFFFFFFFF
+		# Every culture, not one. A culture moves the sampled RANGE and
+		# substitutes the crown primitive, so a divergence that only shows up
+		# under a modulated range — or only on the dome branch of the crown
+		# substitution — is invisible to a single-culture fold. Iterating
+		# NAMES rather than naming two keeps that true when a fourth is added.
+		for culture_name: String in DioramaCultures.NAMES:
+			var levers := DioramaCultures.massing(culture_name)
+			for id in IDS:
+				var parts := DioramaCompose.build(style, world_seed, id, levers)
+				DioramaCompose.apply_roles(parts,
+						DioramaCultures.palette(culture_name))
+				DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
+				for p: Dictionary in parts:
+					# Quantised, because a float printed through two processes must
+					# compare equal bit-for-bit and 1e-6 is far finer than any
+					# visible difference in when a part falls.
+					#
+					# Masked to 52 bits, not 60: int64 signed overflow on the `* 31`
+					# below is the same unspecified-behaviour smell str_hash() exists
+					# to avoid — it happens to wrap identically on two processes of
+					# the same binary, but that is an accident of platform, not a
+					# guarantee, and this fold sits inside a gate whose only job is
+					# to catch exactly that class of accident. 52 bits keeps
+					# `needs * 31` (~1.4e17 at most) comfortably under int64's
+					# ~9.2e18 ceiling, so the multiply never overflows in the first
+					# place — nothing to wrap, nothing platform-dependent to trust.
+					needs = (needs * 31 + int(round(p["need"] * 1000000.0))) \
+							& 0xFFFFFFFFFFFFF
 	return b.fingerprint() ^ needs

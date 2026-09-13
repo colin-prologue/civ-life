@@ -49,23 +49,33 @@ static func channel(seed: int, building_id: int, path: String,
 
 
 ## A proportion spec is a scalar (fixed), a two-element array (sampled), or
-## absent (the caller's default).
-static func sample(spec: Variant, seed: int, building_id: int, path: String,
+## absent (the caller's default). `ctx` carries seed, id and the culture's
+## massing rather than threading each as its own argument.
+static func sample(spec: Variant, ctx: Dictionary, path: String,
 		purpose: String, dflt: float) -> float:
-	if spec == null:
+	# The culture moves the RANGE. The channel draw below is untouched, so the
+	# same building id under two cultures lands at the same relative position
+	# in each — the same building, differently proportioned, rather than two
+	# unrelated buildings. Culture must never reach channel(); everything the
+	# design rests on follows from that one line staying true.
+	var m: Variant = DioramaCultures.modulate(spec, ctx["culture"], purpose)
+	if m == null:
 		return dflt
-	if spec is float or spec is int:
-		return float(spec)
-	assert(spec is Array, "'%s' on '%s' must be a number or [lo, hi]"
+	if m is float or m is int:
+		return float(m)
+	assert(m is Array, "'%s' on '%s' must be a number or [lo, hi]"
 			% [purpose, path])
-	assert(spec.size() == 2, "'%s' on '%s' must have exactly two bounds"
+	assert(m.size() == 2, "'%s' on '%s' must have exactly two bounds"
 			% [purpose, path])
-	var lo := float(spec[0])
-	var hi := float(spec[1])
+	var lo := float(m[0])
+	var hi := float(m[1])
 	# Not swapped silently: a reversed range is a typo, and quietly "fixing" it
-	# hides the typo while changing what the style means.
-	assert(lo <= hi, "'%s' on '%s' has lo > hi" % [purpose, path])
-	return lo + (hi - lo) * channel(seed, building_id, path, purpose)
+	# hides the typo while changing what the style means. Asserted on the
+	# MODULATED range, not the authored one: this guard exists to catch
+	# reversed-range typos, and a bad multiplier is exactly as worth catching.
+	assert(lo <= hi, "'%s' on '%s' has lo > hi after culture '%s'"
+			% [purpose, path, ctx["culture"].get("name", "none")])
+	return lo + (hi - lo) * channel(ctx["seed"], ctx["id"], path, purpose)
 
 
 ## `count` is inclusive integer bounds: a scalar is that exact count, and
@@ -94,20 +104,18 @@ static func _sample_count(spec: Variant, seed: int, id: int, path: String) -> in
 	return lo + int(floor(c * span))
 
 
-static func seed_of(ctx: Dictionary) -> int:
-	return ctx["seed"]
-
-
-static func id_of(ctx: Dictionary) -> int:
-	return ctx["id"]
-
-
 static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
 
-static func new_ctx(seed: int, building_id: int) -> Dictionary:
-	return {"seed": seed, "id": building_id, "path": "",
+## `culture` is a culture's MASSING only (see DioramaCultures.massing) — never
+## its palette. Colour is applied afterwards by apply_roles, which is what lets
+## the sheet hold one constant and vary the other. An empty Dictionary is the
+## no-culture case: authored proportions, and every crown the shape its style
+## drew it as.
+static func new_ctx(seed: int, building_id: int,
+		culture: Dictionary = {}) -> Dictionary:
+	return {"seed": seed, "id": building_id, "path": "", "culture": culture,
 			"need_lo": ENDURE_LO, "need_hi": ENDURE_HI,
 			"frame": zero_frame(Transform3D.IDENTITY)}
 
@@ -190,16 +198,14 @@ static func _path_of(ctx: Dictionary, n: Dictionary) -> String:
 
 static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var path := _path_of(ctx, n)
-	var seed: int = ctx["seed"]
-	var id: int = ctx["id"]
 	var xf: Transform3D = ctx["frame"]["xf"]
 	var inherited: Vector2 = ctx["frame"]["footprint"]
-	var oversize := sample(n.get("oversize"), seed, id, path, "oversize", 1.0)
+	var oversize := sample(n.get("oversize"), ctx, path, "oversize", 1.0)
 	# A mass with no w/d takes the footprint it is standing on. That is how a
 	# roof overhangs its body without restating the body's dimensions.
-	var w := sample(n.get("w"), seed, id, path, "w", inherited.x) * oversize
-	var d := sample(n.get("d"), seed, id, path, "d", inherited.y) * oversize
-	var h := sample(n.get("h"), seed, id, path, "h", 0.0)
+	var w := sample(n.get("w"), ctx, path, "w", inherited.x) * oversize
+	var d := sample(n.get("d"), ctx, path, "d", inherited.y) * oversize
+	var h := sample(n.get("h"), ctx, path, "h", 0.0)
 	# A node that emits nothing reports the bottom of its own band rather than a
 	# drawn need. Nothing reads it: the combinators fold `need` only over
 	# children that actually emitted parts, so a ghost cannot make what stacks
@@ -208,12 +214,19 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	if w <= EPS or d <= EPS or h <= EPS:
 		return {"parts": [], "frame": zero_frame(xf), "need": ctx["need_lo"]}
 	var kind: String = n.get("kind", "box")
-	# A cone or prism is emitted as a circle of radius w/2 — `d` never reaches
-	# the renderer. Reporting (w, d) would describe geometry that does not
-	# exist, and everything stacking on this frame inherits the lie.
-	if kind == "prism" or kind == "cone":
+	# A style says "crown" and the CULTURE says what that is, or, when the
+	# culture names none, the mass's own `default`: the shape it was authored
+	# with. Resolved here, before the round-kind rule below, so a crown that
+	# becomes a cone or dome still reports the square footprint a round shape
+	# actually occupies.
+	if kind == "crown":
+		kind = DioramaCultures.crown_kind(ctx["culture"], n.get("default", ""))
+	# A cone, prism or dome is emitted as a circle of radius w/2 — `d` never
+	# reaches the renderer. Reporting (w, d) would describe geometry that does
+	# not exist, and everything stacking on this frame inherits the lie.
+	if kind == "prism" or kind == "cone" or kind == "dome":
 		d = w
-	var params := _params_for(kind, n, w, d, h, seed, id, path)
+	var params := _params_for(kind, n, w, d, h, ctx, path)
 	# A part never outlives what it rests on: its band's floor already sits at or
 	# above the top of the band its support drew from, so there is nothing to
 	# clamp here.
@@ -228,15 +241,36 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 ## Maps a footprint and height onto whatever DioramaMeshKit's helper for this
 ## primitive expects. Round primitives take a radius from half the width.
 static func _params_for(kind: String, n: Dictionary, w: float, d: float,
-		h: float, seed: int, id: int, path: String) -> Dictionary:
+		h: float, ctx: Dictionary, path: String) -> Dictionary:
 	match kind:
 		"box":
 			return {"size": Vector3(w, h, d)}
 		"tapered":
 			return {"size": Vector3(w, h, d),
-					"taper": sample(n.get("taper"), seed, id, path, "taper", 0.5)}
+					"taper": sample(n.get("taper"), ctx, path, "taper", 0.5)}
 		"prism", "cone":
 			return {"radius": w * 0.5, "height": h}
+		"dome":
+			# DERIVED from `h`, never sampled. add_dome puts its apex at
+			# `radius * squash`, so squash is the ratio that makes the emitted
+			# geometry exactly `h` tall — which is the height _mass reports as
+			# this node's frame, and the height part_height reads back.
+			#
+			# It was authored as its own proportion once, defaulting to 0.85,
+			# and that was a real bug rather than a style choice. A dome's
+			# height was then `w * 0.5 * squash`: it ignored `h` entirely, so a
+			# dome crown took nothing from `verticality` (which scales `h`) and
+			# grew with `thickness` (which scales `w`) instead — the one lever
+			# that should not touch a roofline. Worse, `_mass` went on
+			# reporting `h` as the frame height, so anything stacked on a dome
+			# overlapped it or floated above it by the difference.
+			#
+			# The remaining guard is against a zero radius: a crowning mass can
+			# inherit a footprint of zero from a parent that emitted nothing,
+			# and squash is a division by it.
+			var radius := w * 0.5
+			return {"radius": radius,
+					"squash": 0.0 if radius <= EPS else h / radius}
 	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
 	return {}
 
@@ -293,8 +327,7 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# below — a stepped monument's taper. It shrinks what a child INHERITS, not
 	# what it declares, so a style can still break the taper deliberately by
 	# stating a width.
-	var setback := sample(n.get("setback"), seed_of(ctx), id_of(ctx), path,
-			"setback", 0.0)
+	var setback := sample(n.get("setback"), ctx, path, "setback", 0.0)
 	# The load path, expressed as a partition rather than as a running maximum.
 	# A part can never outlive what it rests on, so the stack cuts its inherited
 	# band into one slice per child, bottom child lowest: child i's whole
@@ -314,6 +347,7 @@ static func _stack(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var worst: float = band_lo
 	for child in children:
 		var child_ctx := {"seed": ctx["seed"], "id": ctx["id"], "path": path,
+				"culture": ctx["culture"],
 				"need_lo": band_lo + band_span * i / float(slices),
 				"need_hi": band_lo + band_span * (i + 1) / float(slices),
 				"frame": {"xf": base_xf.translated_local(
@@ -416,8 +450,8 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	assert(String(n.get("axis", "x")) in ["x", "z"],
 			"'%s' row axis must be \"x\" or \"z\"" % path)
 	var has_gap := n.has("gap")
-	var advance := sample(n.get("advance"), seed, id, path, "advance", 1.0)
-	var gap := sample(n.get("gap"), seed, id, path, "gap", 0.0)
+	var advance := sample(n.get("advance"), ctx, path, "advance", 1.0)
+	var gap := sample(n.get("gap"), ctx, path, "gap", 0.0)
 	var parts: Array = []
 	# DioramaMeshKit.add_box centres geometry in X (and Z), so a child's
 	# xf.origin sits at ITS centre, not its near edge.
@@ -434,6 +468,7 @@ static func _row(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# each other, which is what lets a colonnade lose columns from the middle
 		# rather than from one end.
 		var child_ctx := {"seed": seed, "id": id, "path": path,
+				"culture": ctx["culture"],
 				"need_lo": ctx["need_lo"], "need_hi": ctx["need_hi"],
 				"frame": {"xf": base_xf,
 						"footprint": ctx["frame"]["footprint"], "height": 0.0}}
@@ -523,9 +558,9 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var seed: int = ctx["seed"]
 	var id: int = ctx["id"]
 	var base_xf: Transform3D = ctx["frame"]["xf"]
-	var radius := sample(n.get("radius"), seed, id, path, "radius", 1.0)
-	var from := sample(n.get("from"), seed, id, path, "from", 0.0)
-	var to := sample(n.get("to"), seed, id, path, "to", PI)
+	var radius := sample(n.get("radius"), ctx, path, "radius", 1.0)
+	var from := sample(n.get("from"), ctx, path, "from", 0.0)
+	var to := sample(n.get("to"), ctx, path, "to", PI)
 	var count := _sample_count(n.get("count"), seed, id, path)
 	var template: Dictionary = n.get("of", {})
 	assert(not template.is_empty(), "'%s' ring has no 'of' template" % path)
@@ -548,8 +583,8 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		var child := _indexed(template, i)
 		var body: Dictionary = child[child.keys()[0]]
 		var child_path := path + "/" + String(body["name"])
-		var thickness := sample(body.get("w"), seed, id, child_path, "w", 0.2)
-		var depth := sample(body.get("d"), seed, id, child_path, "d", thickness)
+		var thickness := sample(body.get("w"), ctx, child_path, "w", 0.2)
+		var depth := sample(body.get("d"), ctx, child_path, "d", thickness)
 		if thickness <= EPS or depth <= EPS or seg_len <= EPS:
 			continue
 		# Rotate first, then drop by half the segment so the box — which builds
@@ -564,7 +599,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		# style that looks entirely valid.
 		var kind: String = body.get("kind", "box")
 		var params := _params_for(kind, body, thickness, depth, seg_len,
-				seed, id, child_path)
+				ctx, child_path)
 		parts.append({"kind": kind, "xf": xf,
 				"params": params, "color": Color.MAGENTA,
 				"need": need, "y": 0.0,
@@ -607,8 +642,9 @@ static func _indexed(template: Dictionary, i: int) -> Dictionary:
 ## Public entry point. Resolve the tree, then derive each part's centre height.
 ## A part's `need` — the condition at which it survives — was already settled
 ## during resolution, where the tree still knows what rests on what.
-static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
-	var out := resolve(tree, new_ctx(seed, building_id))
+static func build(tree: Dictionary, seed: int, building_id: int,
+		culture: Dictionary = {}) -> Array:
+	var out := resolve(tree, new_ctx(seed, building_id, culture))
 	var parts: Array = out["parts"]
 	_finish(parts)
 	return parts
@@ -625,12 +661,45 @@ static func build(tree: Dictionary, seed: int, building_id: int) -> Array:
 ## tree still says what rests on what.
 static func _finish(parts: Array) -> void:
 	for p: Dictionary in parts:
-		p["y"] = p["xf"].origin.y + _height_of(p) * 0.5
+		p["y"] = p["xf"].origin.y + part_height(p) * 0.5
 
 
-static func _height_of(p: Dictionary) -> float:
+## A part's own vertical extent, in its own local space: `size.y` for boxes and
+## tapered masses, `height` for prism/cone, and `radius * squash` for a dome —
+## a dome's params carry no `size` or `height` key, its apex sits `radius *
+## squash` above its own origin (see add_dome / _dome_pt in mesh_kit.gd).
+##
+## The single copy of a match that used to exist four times: here (feeding
+## `y`, which the parts contract retains for the assembly tween to read), in
+## culture_sheet.gd and condition_sheet.gd's own `_top_of` helpers, and inline
+## in lineup.gd's `_add_specimen`. The dome case was added to this one and to
+## culture_sheet's when a dome-crowned culture first rendered, and condition_sheet's
+## copy — never exercised by a dome-crowned style at the time — was left behind
+## with the old two-way box/height split. `y` said as much for every dome part
+## built by `_finish` in the meantime: origin.y + 0, a wrong centre height
+## nothing caught because nothing asserted it. The first consolidation then
+## missed lineup's copy for the same reason the dome case was missed: it was
+## not named `_top_of`, and a search for the helper's name does not find an
+## inline ternary. Search for `has("size")` instead — outside this function it
+## should only ever be asking WHAT a part is, never how tall. Every site that
+## needs a part's height calls this one, which is what makes the dome gap
+## impossible to repeat.
+##
+## An unrecognised params shape asserts rather than returning 0.0: a silent
+## zero is exactly how the dome gap went unnoticed here for as long as it did,
+## and a fourth primitive added to _params_for without a matching case here
+## should fail loudly, not quietly under-report every part built from it.
+static func part_height(p: Dictionary) -> float:
 	var params: Dictionary = p["params"]
-	return params["size"].y if params.has("size") else params.get("height", 0.0)
+	if params.has("size"):
+		return params["size"].y
+	if params.has("height"):
+		return params["height"]
+	if params.has("squash"):
+		return params["radius"] * params["squash"]
+	assert(false, "part kind '%s' has a params shape part_height doesn't "
+			% p.get("kind", "?") + "recognise: %s" % str(params.keys()))
+	return 0.0
 
 
 ## A mass's role, which is REQUIRED rather than defaulted. The old default —

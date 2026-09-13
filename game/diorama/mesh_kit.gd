@@ -113,6 +113,15 @@ func add_cone(xf: Transform3D, radius: float, height: float, col: Color,
 
 
 ## Faceted half-dome, flat side down at local origin.
+##
+## Wound like every other recipe: (v00, v10, ...) steps around the ring first
+## (+a) and up the meridian second (+p), so the right-hand normal is
+## d/da x d/dp — pointing INTO the dome — and add_tri's WINDING flip stores the
+## outward one. The first version stepped up the meridian first, which stored
+## every normal inward and wound every face as a back face. Culling-disabled
+## scenes hid that completely (the renderer flips a back face's normal, so the
+## two inversions cancelled); the culture sheet keeps default culling, dropped
+## the near half of every dome, and showed the far half's inside instead.
 func add_dome(xf: Transform3D, radius: float, squash: float, col: Color,
 		segments: int = 10, rings: int = 4) -> void:
 	for ri in range(rings):
@@ -126,9 +135,9 @@ func add_dome(xf: Transform3D, radius: float, squash: float, col: Color,
 			var v01 := xf * _dome_pt(radius, squash, a0, p1)
 			var v11 := xf * _dome_pt(radius, squash, a1, p1)
 			if ri == rings - 1:
-				add_tri(v00, v01, v10, col)
+				add_tri(v00, v10, v01, col)
 			else:
-				add_quad(v00, v01, v11, v10, col)
+				add_quad(v00, v10, v11, v01, col)
 
 
 func _dome_pt(radius: float, squash: float, a: float, p: float) -> Vector3:

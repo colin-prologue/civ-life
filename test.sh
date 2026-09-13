@@ -210,6 +210,34 @@ if [ -z "${loaded:-}" ] || [ "$loaded" -ne "$expected" ]; then
   exit 1
 fi
 
+# --- 3d. refuse a risky pass -------------------------------------------------
+# A test that runs and never reaches an assert_* is indistinguishable from a
+# passing one as far as GUT's failure count and exit code go: revert a
+# fixture until its subject emits zero parts, let the test hit an unrelated
+# out-of-bounds error before its first assert, and GUT logs "did not assert",
+# counts 0 failures, and the run still goes green. This is not hypothetical —
+# it is how roughly ten tests across two slices of this project shipped
+# unable to fail, caught only by a reviewer reverting one fixture by hand. A
+# prose instruction to write assertions loses to that mechanism every time;
+# only an executable gate here catches the next one.
+#
+# GUT calls this "risky" and marks it per line with a distinct "[Risky]"
+# tag — both a test that ran without asserting ("[Risky]:  <test> did not
+# assert") and a script GUT had to skip ("[Risky] Script was skipped:").
+# Its Totals line, however, folds risky and pending into one shared counter
+# ("Risky/Pending"), so that aggregate cannot be gated on directly: pending is
+# a deliberate authoring state (`pending("reason")`), logged separately under
+# its own "[Pending]:" tag, and must NOT fail the build the way an
+# accidentally-empty test should. Grepping the distinct per-line "[Risky]"
+# tag, instead of the combined total, is what keeps the two apart.
+if grep -q "\[Risky\]" "$out"; then
+  echo "ERROR: GUT reported at least one risky test — one that ran but never" >&2
+  echo "       asserted, or a script it had to skip. A test that cannot fail" >&2
+  echo "       is not a test. See the [Risky] lines above:" >&2
+  grep "\[Risky\]" "$out" | sed 's/^/         /' >&2
+  exit 1
+fi
+
 [ "$status" -eq 0 ] || exit "$status"
 
 # --- 4. determinism across processes, not just within one -------------------

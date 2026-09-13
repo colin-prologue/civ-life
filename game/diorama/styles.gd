@@ -8,9 +8,18 @@ extends RefCounted
 ## (`structure`, `footing`, `cap`, `aspiration`) rather than what it is made of
 ## — a role called `ochre` has already decided its own colour and leaves a
 ## culture nothing to express.
+##
+## Geometry is named the same way where a culture can speak to it. The four
+## crowning masses — two roofs, a finial and a spire — are `kind: "crown"`,
+## which is a PURPOSE and not a primitive: DioramaCultures says what shape a
+## crown comes out as for a given people. Each carries a `default`, the
+## primitive it was authored with, for the callers that build with no culture
+## at all (the spike, the lineup, the condition sheet). Every other `kind` in
+## the library is a literal primitive, because nothing about a pier or a
+## voussoir is a cultural choice this slice can express.
 
 
-## A terrace of one to three units, each a body under a tapered roof that
+## A terrace of one to three units, each a body under a crowning roof that
 ## overhangs it. This replaced a sixteen-line function that computed
 ## the same geometry with hand arithmetic; the bar set when it was written was
 ## that the data form must not read worse than the code it replaced, and by
@@ -23,8 +32,9 @@ static func residential() -> Dictionary:
 			{"mass": {"name": "body", "kind": "box",
 					"w": [0.55, 1.05], "d": [0.55, 1.05], "h": [0.60, 1.30],
 					"role": "structure"}},
-			{"mass": {"name": "roof", "kind": "tapered", "taper": 0.8,
-					"h": 0.22, "oversize": 1.08, "role": "cap"}}]}}}}
+			{"mass": {"name": "roof", "kind": "crown", "default": "tapered",
+					"taper": 0.8, "h": 0.22, "oversize": 1.08,
+					"role": "cap"}}]}}}}
 
 
 ## The hero structure: a monument whose scale breaks the settlement's
@@ -64,7 +74,7 @@ static func hero_arch() -> Dictionary:
 						"w": 0.42, "d": 0.63, "role": "structure"}}}},
 		{"mass": {"name": "entablature", "kind": "box",
 				"h": 0.45, "oversize": 1.1, "role": "cap"}},
-		{"mass": {"name": "finial", "kind": "cone",
+		{"mass": {"name": "finial", "kind": "crown", "default": "cone",
 				"w": 0.31, "d": 0.31, "h": 1.5, "role": "aspiration"}}]}}
 
 
@@ -85,8 +95,9 @@ static func civic() -> Dictionary:
 				{"mass": {"name": "walls", "kind": "box",
 						"w": [1.2, 1.8], "d": [0.6, 0.9], "h": 0.8,
 						"role": "structure"}},
-				{"mass": {"name": "roof", "kind": "tapered", "taper": 0.5,
-						"h": 0.22, "oversize": 1.06, "role": "cap"}}]}},
+				{"mass": {"name": "roof", "kind": "crown", "default": "tapered",
+						"taper": 0.5, "h": 0.22, "oversize": 1.06,
+						"role": "cap"}}]}},
 			{"row": {"name": "colonnade", "count": 5, "advance": 2.6, "of":
 				{"mass": {"name": "column", "kind": "prism",
 						"w": 0.09, "d": 0.09, "h": 0.72,
@@ -105,7 +116,7 @@ static func stepped() -> Dictionary:
 		{"mass": {"name": "tier0", "kind": "box", "h": 0.61, "role": "structure"}},
 		{"mass": {"name": "tier1", "kind": "box", "h": 0.61, "role": "structure"}},
 		{"mass": {"name": "tier2", "kind": "box", "h": 0.61, "role": "structure"}},
-		{"mass": {"name": "spire", "kind": "cone",
+		{"mass": {"name": "spire", "kind": "crown", "default": "cone",
 				"h": 0.79, "oversize": 0.5, "role": "aspiration"}}]}}
 
 

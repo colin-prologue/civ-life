@@ -1,19 +1,28 @@
 extends Node3D
-## The style × culture sheet: every style down one axis, both cultures across
+## The style × culture sheet: every style down one axis, every culture across
 ## the other, one camera and one light.
 ##
 ## This is the frame the slice exists to produce, and its whole argument rests
 ## on one property: a ROW IS ONE BUILDING. The style, the seed and the building
-## id are all held fixed across a row, so the two cells differ in nothing but
-## which palette resolved their roles. Vary the id across the row as well and
-## the sheet would show two different buildings in two palettes, which proves
-## nothing about culture and would flatter it besides.
+## id are all held fixed across a row, so the cells differ in nothing but the
+## culture that built them. Vary the id across the row as well and the sheet
+## would show four different buildings, which proves nothing about culture and
+## would flatter it besides.
 ##
 ## That is also what makes the sheet answer the question honestly rather than
 ## favourably. Whatever difference a reader sees here is the ENTIRE difference a
-## culture makes today. If it reads as one building painted twice, that is the
-## finding, not a failure of the capture — see
+## culture makes today. If it reads as one building painted three times, that is
+## the finding, not a failure of the capture — see
 ## docs/superpowers/findings/2026-09-04-culture-style-parameters.md.
+##
+## Which is precisely why `uniform_palette` exists. With it set, every cell is
+## painted through the FIRST culture's palette while keeping its own massing, so
+## colour is held constant and only geometry varies. The two frames are one
+## experiment: if the cultures are still tellable apart with the colour removed,
+## the geometry is carrying the difference, and if they are not, then the levers
+## are decoration and the sheet says so. A culture sheet without its control is
+## a sheet that cannot distinguish expressing a culture from tinting a building,
+## and that distinction is the entire claim.
 ##
 ## A sibling of condition_sheet.tscn rather than a mode inside it, on the same
 ## reasoning that scene gives for not being a mode inside lineup.tscn: the two
@@ -27,10 +36,21 @@ extends Node3D
 ##
 ## `hero_arch` uses id 8 for the same reason condition_sheet.gd does — it is the
 ## id whose arc survives — and the rest use 0. The choice matters less here than
-## on the condition sheet, because both cells of a row draw the same id by
-## construction, so no id can make the two cultures look more different than
-## they are.
+## on the condition sheet, because every cell of a row draws the same id by
+## construction, so no id can make the cultures look more different than they
+## are.
 @export var row_ids: Array[int] = [8, 0, 0, 0]
+
+## The control. Paint every cell through the first culture's palette — sunlit,
+## whose massing multipliers are all 1.0 and whose colours are the baseline —
+## while each cell keeps the massing of the culture it belongs to. What is left
+## in the frame is geometry and nothing else.
+##
+## Captured from culture_sheet_control.tscn, which is this same script with this
+## flag set, rather than by editing the export by hand before a capture and
+## remembering to put it back. A committed frame has to be reproducible by a
+## command, and "edit this line, capture, revert" is not one.
+@export var uniform_palette: bool = false
 @export var cell_size: float = 5.0
 @export var camera_pitch_deg: float = 34.0
 @export var fov_horizontal_deg: float = 24.0
@@ -84,14 +104,15 @@ func _build() -> void:
 	var cols := DioramaCultures.NAMES.size()
 	var tallest := 0.0
 	for r in range(rows):
-		# One scale per ROW, measured from that style's own building, so every
+		# One scale per ROW, measured from that style's own buildings, so every
 		# style reads at a comparable size. Measured rather than tabulated: a
 		# constant per style goes stale the moment a style is re-authored.
 		#
-		# Both cells of a row share it, which costs nothing here — they are the
-		# same geometry — but says the right thing if a culture ever does change
-		# massing, because then the row would show the size difference instead
-		# of normalising it away.
+		# Every cell of a row shares it, which is the load-bearing part now that
+		# cultures change massing: a culture that builds half again as tall
+		# SHOWS as half again as tall, instead of each cell being normalised to
+		# the same height and the verticality lever being scaled back out of the
+		# frame it was captured to demonstrate.
 		var scale := _row_scale(r)
 		for c in range(cols):
 			var at := Vector3(_col_x(c, cols), 0.0,
@@ -133,36 +154,53 @@ func _id_for(r: int) -> int:
 	return row_ids[r] if r < row_ids.size() else r
 
 
+## The row's scale, solved against the TALLEST culture in it rather than against
+## the style's uncultured build. The two were the same number while a culture
+## was only a palette; now they are not, and taking the uncultured height would
+## let the tallest culture in a row overrun its cell and collide with the row
+## above. Solving on the tallest keeps every cell inside its cell AND keeps the
+## height differences between cultures visible, because the whole row is divided
+## by one number.
 func _row_scale(r: int) -> float:
-	var style: String = DioramaStyles.NAMES[r]
-	var whole := DioramaCompose.build(DioramaStyles.for_name(style),
-			world_seed, _id_for(r))
-	var top := _top_of(whole)
+	var top := 0.0
+	for culture: String in DioramaCultures.NAMES:
+		top = maxf(top, _top_of(_parts_for(r, culture)))
 	return 1.0 if top <= 0.001 else (cell_size * ROW_HEIGHT) / top
 
 
-## Highest point of a part list, in the building's own space.
+## Highest point of a part list, in the building's own space. The height of a
+## part is DioramaCompose.part_height — the one measurement — and not a local
+## copy of the size/height/dome match. A local copy is exactly how the dome case
+## went missing from condition_sheet.gd's own copy of this helper.
 static func _top_of(parts: Array) -> float:
 	var top := 0.0
 	for p: Dictionary in parts:
-		var prm: Dictionary = p["params"]
-		var h: float = prm["size"].y if prm.has("size") else prm.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 
-## The cell. build() is called per cell rather than once per row and painted
-## twice, deliberately: it is the stronger claim. If two independent builds of
-## the same style, seed and id came out differing in anything but colour, this
-## sheet would show it as a geometric difference between the two columns, and
-## the reader would catch a determinism break by looking.
+## One cell's geometry: the row's style, seed and id, built through this
+## culture's MASSING. Colour is not applied here — see _add_cell.
+func _parts_for(r: int, culture: String) -> Array:
+	return DioramaCompose.build(DioramaStyles.for_name(DioramaStyles.NAMES[r]),
+			world_seed, _id_for(r), DioramaCultures.massing(culture))
+
+
+## The cell. build() is called per cell rather than once per row and repainted,
+## deliberately: it is the stronger claim. If two independent builds of the same
+## style, seed, id and culture came out differing at all, this sheet would show
+## it, and the reader would catch a determinism break by looking.
+##
+## The palette is chosen independently of the massing, which is the control:
+## with `uniform_palette` set every cell resolves through the first culture's
+## colours and keeps its own proportions.
 func _add_cell(r: int, c: int, at: Vector3, scale: float,
 		mat: StandardMaterial3D) -> float:
 	var style: String = DioramaStyles.NAMES[r]
 	var culture: String = DioramaCultures.NAMES[c]
-	var parts := DioramaCompose.build(DioramaStyles.for_name(style),
-			world_seed, _id_for(r))
-	DioramaCompose.apply_roles(parts, DioramaCultures.palette(culture))
+	var parts := _parts_for(r, culture)
+	var painted_as := DioramaCultures.NAMES[0] if uniform_palette else culture
+	DioramaCompose.apply_roles(parts, DioramaCultures.palette(painted_as))
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()

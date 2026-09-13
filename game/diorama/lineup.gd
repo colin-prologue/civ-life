@@ -20,14 +20,16 @@ extends Node3D
 ## thing it exists to isolate.
 @export_enum("residential", "hero_arch", "civic", "stepped") var style: String = "residential"
 
-## Which culture's palette resolves the roles. A second axis, but not a second
-## axis of the GRID: the sheet still varies building id across its cells, and
-## the culture applies to all of them, so two captures of this scene are two
-## sheets of the same twelve buildings in two palettes. The cross-product —
-## styles down, cultures across — is culture_sheet.tscn, which is the frame
-## that answers "is culture legible", because it puts the same building id
-## under two palettes side by side.
-@export_enum("sunlit", "basalt") var culture: String = "sunlit"
+## Which culture's PALETTE resolves the roles — the palette only. This scene
+## builds with no massing, so what it shows is the style vocabulary at its
+## authored proportions, with the crowns the shapes their styles drew them as.
+## That is deliberate: the lineup's job is to isolate style, and a culture's
+## proportion levers would vary geometry across a grid whose only variable is
+## supposed to be the building id.
+##
+## The cross-product — styles down, cultures across, massing and all — is
+## culture_sheet.tscn, which is the frame that answers "is culture legible".
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
 @export var world_seed: int = 20260826
 @export var specimen_count: int = 12
 @export var columns: int = 4
@@ -98,9 +100,7 @@ func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	add_child(inst)
 	var top := 0.0
 	for p: Dictionary in parts:
-		var params: Dictionary = p["params"]
-		var h: float = params["size"].y if params.has("size") else params.get("height", 0.0)
-		top = maxf(top, p["xf"].origin.y + h)
+		top = maxf(top, p["xf"].origin.y + DioramaCompose.part_height(p))
 	return top
 
 

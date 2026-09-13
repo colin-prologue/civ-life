@@ -11,8 +11,12 @@ extends GutTest
 ##   VALUE     the addendum's 3D rule. Roles are separated by LIGHTNESS, not
 ##             just by hue, under both the lit and the shadowed variant, and
 ##             they keep the same lightness ORDER across the two.
-##   INVARIANCE culture is a mapping applied after resolution, so swapping it
-##             may change colour and must change nothing else.
+##   INVARIANCE a PALETTE is a mapping applied after resolution, so swapping it
+##             may change colour and must change nothing else. The other half of
+##             a culture — its massing — does move geometry, and is guarded next
+##             door in test_diorama_culture_massing.gd. Keeping the two files
+##             apart is what keeps this one's invariance claim sharp: everything
+##             here is allowed to change exactly one field.
 ##
 ## The value check runs against the two variants DioramaCultures computes
 ## rather than against captured pixels: a screenshot test would fail for
@@ -199,10 +203,31 @@ func test_an_unknown_culture_falls_back_rather_than_emptying() -> void:
 
 # ----------------------------------------------------------------- the sheet
 
-func _sheet() -> Node3D:
-	var sheet: Node3D = load("res://game/diorama/culture_sheet.tscn").instantiate()
+func _sheet(scene: String = "culture_sheet") -> Node3D:
+	var sheet: Node3D = load("res://game/diorama/%s.tscn" % scene).instantiate()
 	add_child_autofree(sheet)
 	return sheet
+
+
+func _cell(sheet: Node3D, style: String, culture: String) -> MeshInstance3D:
+	return sheet.get_node_or_null("Cell_%s_%s" % [style, culture])
+
+
+## Is this colour one of `palette`'s, to within what a committed surface keeps?
+##
+## Exact comparison is wrong here and quietly so: a surface stores its vertex
+## colours at 8 bits per channel, and the value that comes back is the authored
+## float quantised — by truncation, not by the rounding Color.to_rgba32() would
+## apply, so neither the raw float nor its own rgba32 matches. The tolerance is
+## two 255ths, which is an order of magnitude tighter than the smallest gap
+## between any two colours in any two shipped palettes, so it cannot make a
+## different culture's colour pass for the baseline's.
+static func _is_one_of(c: Color, palette: Array) -> bool:
+	for p: Color in palette:
+		if absf(c.r - p.r) <= 2.0 / 255.0 and absf(c.g - p.g) <= 2.0 / 255.0 \
+				and absf(c.b - p.b) <= 2.0 / 255.0:
+			return true
+	return false
 
 
 func test_the_sheet_has_a_cell_per_style_and_culture() -> void:
@@ -220,31 +245,85 @@ func test_the_sheet_has_a_cell_per_style_and_culture() -> void:
 	assert_not_null(sheet.get_node_or_null("Stage"), "no stage")
 
 
-## The sheet's entire argument, asserted rather than eyeballed: across a row the
-## VERTICES are identical and the COLOURS are not. If the geometry differed the
-## frame would be two buildings in two palettes, which says nothing about
-## culture; if the colours matched, the culture axis would be doing nothing.
-func test_a_row_is_one_building_rendered_in_two_palettes() -> void:
+## The sheet's argument, asserted rather than eyeballed, and it is no longer the
+## argument this test made when a culture was only a palette. Then a row was one
+## building in several palettes and the VERTICES had to match across it. Now a
+## culture carries massing as well, so the cells of a row are the same style,
+## seed and id built three ways: the vertices must DIFFER, pairwise, and so must
+## the colours.
+##
+## Both halves matter and they fail for opposite reasons. Identical vertices
+## would mean the massing levers are wired to nothing and the sheet is a tinting
+## exercise. Identical colours would mean the palette axis is dead. The scale
+## being shared across a row is what keeps the geometric difference honest: one
+## divisor for the whole row, so a taller culture reads as taller instead of
+## being normalised back down to its neighbour.
+func test_a_row_is_one_building_that_each_culture_builds_its_own_way() -> void:
 	var sheet := _sheet()
 	await wait_frames(2)
 	for style: String in DioramaStyles.NAMES:
 		var verts: Array = []
 		var colors: Array = []
 		for culture: String in DioramaCultures.NAMES:
-			var cell: MeshInstance3D = sheet.get_node_or_null(
-					"Cell_%s_%s" % [style, culture])
+			var cell := _cell(sheet, style, culture)
 			assert_not_null(cell, "no cell for %s/%s" % [style, culture])
 			if cell == null:
 				continue
 			var arrays: Array = cell.mesh.surface_get_arrays(0)
 			verts.append(arrays[Mesh.ARRAY_VERTEX])
 			colors.append(arrays[Mesh.ARRAY_COLOR])
-			assert_eq(cell.scale, sheet.get_node(
-					"Cell_%s_%s" % [style, DioramaCultures.NAMES[0]]).scale,
+			assert_eq(cell.scale,
+					_cell(sheet, style, DioramaCultures.NAMES[0]).scale,
 					"row '%s' scales its cultures differently" % style)
-		if verts.size() == 2:
-			assert_eq(verts[0], verts[1],
-					"row '%s' is two different buildings, not one in two palettes"
-					% style)
-			assert_ne(colors[0], colors[1],
-					"row '%s' comes out the same colour in both cultures" % style)
+		for i in range(verts.size()):
+			for j in range(i + 1, verts.size()):
+				assert_ne(verts[i], verts[j],
+						"row '%s': '%s' and '%s' built identical geometry"
+						% [style, DioramaCultures.NAMES[i],
+						DioramaCultures.NAMES[j]])
+				assert_ne(colors[i], colors[j],
+						"row '%s': '%s' and '%s' came out the same colour"
+						% [style, DioramaCultures.NAMES[i],
+						DioramaCultures.NAMES[j]])
+
+
+## The control frame, which is the only thing that separates "we expressed a
+## culture" from "we tinted a building". It holds COLOUR constant and keeps each
+## cell's own massing, so what remains in the frame is geometry.
+##
+## Two assertions, and the test is worthless without both. The geometry must be
+## bit-identical to the main sheet's — otherwise the control is a different
+## experiment and proves nothing about the frame beside it — and every colour in
+## it must come from the baseline palette, otherwise colour is not actually held
+## constant.
+func test_the_control_holds_colour_constant_and_keeps_the_massing() -> void:
+	var sheet := _sheet()
+	var control := _sheet("culture_sheet_control")
+	await wait_frames(2)
+	var baseline: Array = DioramaCultures.palette(
+			DioramaCultures.NAMES[0]).values()
+	var checked := 0
+	for style: String in DioramaStyles.NAMES:
+		for culture: String in DioramaCultures.NAMES:
+			var plain := _cell(sheet, style, culture)
+			var held := _cell(control, style, culture)
+			assert_not_null(held, "no control cell for %s/%s" % [style, culture])
+			if plain == null or held == null:
+				continue
+			assert_eq(held.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
+					plain.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
+					"the control changed %s/%s's geometry" % [style, culture])
+			# Reduced to the DISTINCT colours first. Asserting per vertex would
+			# be tens of thousands of identical asserts for one cell and would
+			# report the same failure once per triangle corner.
+			var seen := {}
+			for c: Color in held.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]:
+				seen[c.to_rgba32()] = c
+			for key: int in seen:
+				assert_true(_is_one_of(seen[key], baseline),
+						"control cell %s/%s is painted %s, which is not in the "
+						% [style, culture, seen[key]]
+						+ "baseline palette — colour is not held constant")
+			checked += 1
+	assert_eq(checked, DioramaStyles.NAMES.size() * DioramaCultures.NAMES.size(),
+			"the control sheet is not the full cross-product")
