@@ -13,6 +13,11 @@ turn 500 is byte-identical to a world that was generated and advanced to turn
 
 Two consequences the next tickets inherit:
 
+> **Corrected by `AgDR-022`.** The paragraph below stopped being true when herds
+> began carrying position and population forward (#9): a save is the world's
+> object graph, not two numbers. What survives is the forage rule itself — forage
+> is still recomputed on load rather than stored.
+
 **A world's whole state is `(seed, turn)`.** Determinism after a hundred turns
 is the same claim as determinism after one, a save is two numbers, and a bug
 report is reproducible from a screenshot caption. The no-drift criterion on this
