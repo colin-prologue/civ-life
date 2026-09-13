@@ -196,8 +196,11 @@ func test_the_comparison_would_notice_a_difference() -> void:
 	# road and carrier that refers to it, so one changed store is several paths.
 	var fields := {}
 	for found in _differences(world, loaded):
-		fields[found.get_slice(":", 0).get_slice(" ", 0).get_slice(".", -1)] = true
-	assert_eq(fields.keys(), ["held_up", "store"], "both changes are found, and nothing else")
+		var at := found.get_slice(":", 0).get_slice(" ", 0)
+		fields[at.substr(at.rfind(".") + 1)] = true
+	var names := fields.keys()
+	names.sort()
+	assert_eq(names, ["held_up", "store"], "both changes are found, and nothing else")
 
 
 # --- AC7: forage is not stored ----------------------------------------------
