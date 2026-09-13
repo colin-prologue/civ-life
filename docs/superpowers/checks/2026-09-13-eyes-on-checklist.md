@@ -102,10 +102,31 @@ view. They are different findings, and only the first should stop the faction
 layer.
 
 **B2 — Does a herd standing on your road read as interference you care about?**
-A herd in the way delays a carrier and can never sever the route (`MAX_HELD_UP`
-is one season). The obstruction share measures 53% against a 60% ceiling, so the
-mechanism is definitely firing. The question is whether you notice it happening
-without being told.
+
+**Stage it rather than waiting for it.** The shipped seed does not reliably put a
+herd on a road — `capture.sh` carries a `--stage held-up` mode for exactly that
+reason, and the 53%-against-a-60%-ceiling measurement comes from a test that pins
+an immobile herd onto the route. Waiting for a collision could take a very long
+time and would leave this question unanswered. Found by codex review of this
+document.
+
+A carrier is held up only while something is standing on **its own tile**, so:
+
+1. Pause (`P`) and find ground with animals on it.
+2. Place the granary (`G`) on one side of that ground and the farm (`F`) on the
+   other, far enough apart that the route between them runs *through* the tile
+   the herd is on — routes are drawn as a line between the two nodes.
+3. Draw the route (`R`), then step one turn at a time with `space`.
+4. Watch the carrier reach the occupied tile and stop. It resumes within a season
+   at worst (`MAX_HELD_UP` is 6 turns), and the flows panel should show
+   deliveries dropping while it waits.
+
+Herds move about a tile a turn, so they may wander off before your carrier
+arrives; re-place, or step until they cross it again.
+
+**If you cannot make it happen at all, that is the answer to a different and more
+interesting question** — how often the wild world actually touches the built one
+— and worth writing down beside A3 rather than discarded.
 
 ## C. The long run
 
