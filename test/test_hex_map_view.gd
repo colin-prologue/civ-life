@@ -395,9 +395,9 @@ func test_the_readout_is_the_world_talking_and_not_the_view() -> void:
 
 
 func test_the_granary_reports_an_outflow_of_zero_rather_than_omitting_it() -> void:
-	# AC4. Nothing consumes yet (#29), so the honest outflow is zero — and a
-	# panel that simply left it out would be saying "nothing is leaving" and
-	# "I do not track what leaves" in the same breath.
+	# AC4. Since #29 people eat from the granary, so the outflow is what they ate
+	# — and a panel that simply left it out would be saying "nothing is leaving"
+	# and "I do not track what leaves" in the same breath.
 	var main: Node2D = MainScene.instantiate()
 	add_child_autofree(main)
 	await wait_frames(2)
@@ -407,7 +407,7 @@ func test_the_granary_reports_an_outflow_of_zero_rather_than_omitting_it() -> vo
 
 	var data := view.readout()
 	assert_true(data.has("granary_out"), "the outflow is a number the panel holds")
-	assert_eq(data["granary_out"], 0.0, "and while nothing consumes, it is zero")
+	assert_gt(data["granary_out"], 0.0, "and with people eating, it is not zero")
 	assert_gt(data["granary_in"], 0.0, "against an inflow that is not")
 
 

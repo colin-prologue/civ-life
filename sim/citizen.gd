@@ -46,6 +46,17 @@ const CARRY_CAPACITY := 8.0
 ## crossing a route costs a delivery, not a city.
 const MAX_HELD_UP := Seasons.TURNS_PER_SEASON
 
+## Grain one person eats in a turn, from the granary at the end of their road.
+##
+## A twentieth of what a farm grows on a full turn, so one farm on good ground
+## feeds something like a dozen people across a year once its field has settled
+## into wear (`AgDR-014`). That is the number that bounds a city: the land sets
+## what comes in, this sets what each person takes, and population settles where
+## the two meet (`CityGen.tend_population`). Small enough that the starting crew
+## of four builds a surplus within a couple of years; large enough that a
+## doubled city is visibly eating into it.
+const APPETITE := 0.05
+
 var route: Route
 
 ## Grain in hand. Also, and not incidentally, which way this person is walking.
@@ -85,6 +96,11 @@ func _init(p_id: int, p_route: Route, p_index := 0, p_capacity := CARRY_CAPACITY
 ## In that order, so a citizen who arrived at the farm last turn leaves with this
 ## turn's harvest rather than idling for a turn on arrival.
 func step(world: WorldMap) -> void:
+	# Everyone eats, wherever on the road they are standing: the granary feeds its
+	# people, not just the ones at its door. First, so that eating is not skipped
+	# on a turn spent held up.
+	route.sink.feed(APPETITE)
+
 	if _index == 0:
 		_collect()
 	elif _index == route.path.size() - 1:
@@ -125,8 +141,7 @@ func _collect() -> void:
 
 ## Put down what the sink node will take. A full granary is not a failure and
 ## nothing is thrown away — the citizen keeps hold of the remainder and tries
-## again next turn, which is the only way "stored grain never decreases" can be
-## true of both ends of the route at once.
+## again next turn.
 func _deliver() -> void:
 	carrying -= route.sink.deposit(carrying)
 

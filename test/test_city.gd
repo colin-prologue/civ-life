@@ -303,14 +303,14 @@ func test_the_seasons_reach_the_granary() -> void:
 	for i in range(SEASONAL_WARMUP_YEARS * Seasons.TURNS_PER_YEAR):
 		world.advance_turn()
 
+	# Counted as what arrived rather than as the change in store: since #29 the
+	# store is also what people ate, and this is a claim about deliveries.
 	var delivered := {}
 	for season in Seasons.SEASON_ORDER:
 		delivered[season] = 0.0
-	var previous := granary.store
 	for i in range(SEASONAL_YEARS * Seasons.TURNS_PER_YEAR):
 		world.advance_turn()
-		delivered[world.season()] += granary.store - previous
-		previous = granary.store
+		delivered[world.season()] += granary.took_in
 
 	var report: Array[String] = []
 	var peak := 0.0
@@ -377,7 +377,10 @@ func test_a_herd_in_the_road_slows_the_city_and_never_breaks_it() -> void:
 		CityGen.ROUTE_LENGTH + 1,
 		"unchanged, tile for tile"
 	)
-	assert_eq(run["decreases"], 0, "stored grain never went down at any point in the run")
+	assert_eq(
+		run["decreases"], 0,
+		"stored grain never went down by more than the people ate at any point in the run"
+	)
 	assert_gt(run["delivered"], 0.0, "and the road kept working, slowly — it was never severed")
 
 	# The citizens are still doing their job rather than parked forever on the
@@ -442,7 +445,13 @@ func test_two_worlds_from_one_seed_agree_about_the_city_after_five_hundred_turns
 		first.total_stored_grain(),
 		_citizen_coords(first),
 	])
-	assert_gt(first.total_granary_store(), 0.0, "and the city got somewhere in the meantime")
+	# Not the store any more: since #29 a well-fed city turns its store into
+	# people, and on a winter turn the granary of a grown city can be empty.
+	assert_gt(
+		first.citizen_count(),
+		CityGen.CITIZENS_PER_ROUTE * first.routes.size(),
+		"and the city got somewhere in the meantime"
+	)
 
 
 # --- helpers -----------------------------------------------------------------
@@ -492,17 +501,22 @@ func _obstructed_run(with_herd: bool) -> Dictionary:
 	if with_herd:
 		world.add_agent(Herd.new(500, route.path[1], _penned_species(), 40.0))
 
+	# Deliveries are summed from what arrived, not read off the store, because the
+	# store is also what the people on the road ate (#29). A "decrease" is the
+	# store falling by more than was eaten — grain lost rather than consumed.
 	var decreases := 0
+	var delivered := 0.0
 	var previous := route.sink.store
 	for i in range(OBSTRUCTION_TURNS):
 		world.advance_turn()
-		if route.sink.store < previous:
+		delivered += route.sink.took_in
+		if route.sink.store < previous - route.sink.gave_out - 0.0001:
 			decreases += 1
 		previous = route.sink.store
 
 	return {
 		"world": world,
-		"delivered": route.sink.store,
+		"delivered": delivered,
 		"decreases": decreases,
 	}
 
