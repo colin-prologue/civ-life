@@ -62,8 +62,23 @@ const SAVED := {
 	],
 	"HexGrid": ["width", "height"],
 	"Chronicle": ["_series"],
-	"CityNode": ["id", "coord", "kind", "store", "capacity", "last_yield", "took_in", "gave_out"],
-	"Route": ["id", "source", "sink", "path"],
+	"CityNode": [
+		"id", "coord", "kind", "store", "capacity", "last_yield", "took_in", "gave_out",
+		# The hunger books (#29). `mouths` and `unmet` clear with the flows each
+		# turn, exactly as `took_in` and `gave_out` do, and are saved for the same
+		# reason: a loaded world should be the world that was saved, down to what
+		# its panels were showing. The other four carry between turns and decide
+		# whether a road gains or loses a walker, so a world that lost them would
+		# reload and then grow differently — measured, before they were saved, as
+		# 30 people against 36 five hundred turns after the same save.
+		"mouths", "unmet", "plentiful_turns", "year_turns", "year_asked", "year_unmet",
+	],
+	# `carriers` is the road's own list of who walks it (#29), kept as ids. It is
+	# not derived: `CityGen` maintains it as the one place carriers are made and
+	# lost, and the growth rule reads it inside the turn loop. Rebuilding it on
+	# load by scanning agents would also mean rebuilding its order, which is the
+	# order growth and loss pick from.
+	"Route": ["id", "source", "sink", "path", "carriers"],
 	"Herd": ["id", "coord", "species", "population", "start_coord", "_destination", "_planned_in"],
 	"Citizen": ["id", "coord", "route", "carrying", "capacity", "_index", "held_up"],
 	"Species": [
@@ -150,6 +165,12 @@ static func encode(world: WorldMap) -> Dictionary:
 			"last_yield": _exact(node.last_yield),
 			"took_in": _exact(node.took_in),
 			"gave_out": _exact(node.gave_out),
+			"mouths": node.mouths,
+			"unmet": _exact(node.unmet),
+			"plentiful_turns": node.plentiful_turns,
+			"year_turns": node.year_turns,
+			"year_asked": _exact(node.year_asked),
+			"year_unmet": _exact(node.year_unmet),
 		})
 
 	var routes := []
@@ -157,11 +178,15 @@ static func encode(world: WorldMap) -> Dictionary:
 		var path := []
 		for coord in route.path:
 			path.append(_coord_out(coord))
+		var carriers := []
+		for who in route.carriers:
+			carriers.append(who)
 		routes.append({
 			"id": route.id,
 			"source": world.nodes.find(route.source),
 			"sink": world.nodes.find(route.sink),
 			"path": path,
+			"carriers": carriers,
 		})
 
 	var vitality := []
@@ -357,6 +382,12 @@ class _Reader extends RefCounted:
 			node.last_yield = _float(entry, "last_yield")
 			node.took_in = _float(entry, "took_in")
 			node.gave_out = _float(entry, "gave_out")
+			node.mouths = _int(entry, "mouths")
+			node.unmet = _float(entry, "unmet")
+			node.plentiful_turns = _int(entry, "plentiful_turns")
+			node.year_turns = _int(entry, "year_turns")
+			node.year_asked = _float(entry, "year_asked")
+			node.year_unmet = _float(entry, "year_unmet")
 			world.nodes.append(node)
 
 		for entry in _array(_data, "routes", -1):
@@ -373,7 +404,18 @@ class _Reader extends RefCounted:
 					or path[0] != world.nodes[source].coord or path[-1] != world.nodes[sink].coord:
 				_fail("a route's path does not run between its two structures")
 				return null
-			world.routes.append(Route.new(_int(entry, "id"), world.nodes[source], world.nodes[sink], path))
+			var route := Route.new(_int(entry, "id"), world.nodes[source], world.nodes[sink], path)
+			# Checked rather than trusted, like every other value here: a carrier
+			# id is a whole number, and a file saying otherwise is refused instead
+			# of producing a road whose crew list is nonsense.
+			for who in _numbers(entry, "carriers", -1):
+				if float(who) != floorf(float(who)):
+					_fail("a route's carrier id is not a whole number")
+					return null
+				route.carriers.append(int(who))
+			if not refusal.is_empty():
+				return null
+			world.routes.append(route)
 
 		for entry in _array(_data, "agents", -1):
 			if not refusal.is_empty():
