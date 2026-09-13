@@ -74,6 +74,11 @@ extends GutTest
 # a future change to migration shows up here as a difference rather than as a
 # surprise.
 
+## Site selection and the placement measurement, shared with
+## `tools/camp_attention_check.gd` so the ten-seed gate measures exactly what
+## this file does.
+const CampSites := preload("res://tools/camp_sites.gd")
+
 const SEED_A := 20260815
 const SEED_B := 987654321
 
@@ -154,8 +159,8 @@ const MIN_BUSY_OVER_QUIET := 8.0
 ## count both times. Both stay well clear of the world without wear.
 ##
 ## Ten seeds separate the worlds; the two standard seeds barely separate them —
-## two flip-years against one. So the claim is asserted over ten seeds in #42's
-## population gate, beside the periodicity check, rather than here where ten seeds
+## two flip-years against one. So the claim is asserted over ten seeds in
+## `tools/camp_attention_check.gd`, beside the periodicity check, rather than here where ten seeds
 ## would cost a minute of every suite run (72 s to 131 s for this file). This test
 ## keeps flip-years as a printed diagnostic so the number stays visible in every
 ## run.
@@ -189,7 +194,7 @@ func test_a_camp_is_worth_far_more_where_the_animals_go() -> void:
 	# the camps cannot be the ground they stand on.
 	var flip_years := 0
 	for world_seed in STANDARD_SEEDS:
-		var measured := _measure_placement(world_seed)
+		var measured := CampSites.measure_placement(world_seed, MEASURED_YEARS)
 		gut.p(
 			"seed %d over %d years — camp on busiest ground %.2f, on a typical tile %.2f, on the quietest %.2f; a farm on any of them %.2f"
 				% [
@@ -222,15 +227,10 @@ func test_a_camp_is_worth_far_more_where_the_animals_go() -> void:
 				% [world_seed, MIN_BUSY_OVER_QUIET]
 		)
 		# Which site won each year, not only which won overall.
-		var busy_years: Array = measured["busy_years"]
-		var typical_years: Array = measured["typical_years"]
-		var flips_here := 0
-		for y in range(busy_years.size()):
-			if typical_years[y] > busy_years[y]:
-				flips_here += 1
+		var flips_here := CampSites.flip_years(measured)
 		flip_years += flips_here
 		gut.p("seed %d: a typical camp out-gathered the busy one in %d of %d years"
-				% [world_seed, flips_here, busy_years.size()])
+				% [world_seed, flips_here, MEASURED_YEARS])
 		assert_gt(
 			measured["busy"],
 			0.0,
@@ -685,132 +685,6 @@ func _flow_to_granary(with_herd: bool) -> float:
 	for i in range(FLOW_TURNS):
 		world.advance_turn()
 	return granary.store
-
-
-## Where the herds of `world_seed` actually spend `MEASURED_YEARS`, as one
-## accumulated total of mouths per tile.
-##
-## Run rather than reasoned about: which ground is busy is a property of the
-## terrain, the seasons and fourteen independent migrations, and any site this
-## test picked by hand would be a guess that could quietly stop being true.
-func _presence(world_seed: int, turns: int) -> PackedFloat32Array:
-	var world := WorldGen.generate(world_seed)
-	var total := PackedFloat32Array()
-	total.resize(world.grid.tile_count())
-	for _turn in range(turns):
-		world.advance_turn()
-		for i in range(total.size()):
-			total[i] += world.forage_demand_by_index(i)
-	return total
-
-
-## The busiest, the quietest and the median land tile of one terrain, scored by
-## how many mouths passed within a camp's reach of each over the run.
-##
-## Restricted to a single terrain — whichever the busiest tile turns out to be —
-## so that the three camps in the measurement are separated by where the animals
-## went and by nothing else. A farm on each of them makes the identical amount,
-## which is what makes that claim checkable rather than asserted.
-func _sites(world: WorldMap, presence: PackedFloat32Array) -> Dictionary:
-	var busy := Vector2i.ZERO
-	var busiest := -1.0
-	var scores := {}
-	for coord in world.grid.all_coords():
-		if world.terrain_at(coord) == WorldGen.Terrain.WATER:
-			continue
-		var score := 0.0
-		for i in _disc_indices(world.grid, coord, CityNode.GATHERING_RADIUS):
-			score += presence[i]
-		scores[coord] = score
-		if score > busiest:
-			busiest = score
-			busy = coord
-
-	var terrain := world.terrain_at(busy)
-	# Insertion-ordered, and the insertion order is `all_coords()` — so the list
-	# this sorts is the same list on every run and on every host.
-	var same_terrain: Array[Vector2i] = []
-	for coord in scores:
-		if world.terrain_at(coord) == terrain:
-			same_terrain.append(coord)
-	same_terrain.sort_custom(
-		func(a: Vector2i, b: Vector2i) -> bool:
-			if scores[a] == scores[b]:
-				# Ties broken on grid order, so "the quietest tile" is one tile
-				# rather than whichever of four hundred equally empty ones the
-				# sort happened to leave in front.
-				return world.grid.index_of(a) < world.grid.index_of(b)
-			return scores[a] < scores[b]
-	)
-	return {
-		"busy": busy,
-		"quiet": same_terrain[0],
-		"typical": same_terrain[same_terrain.size() / 2],
-		"terrain": terrain,
-	}
-
-
-## The measurement itself: a camp and a farm on each of the three sites, run for
-## `MEASURED_YEARS`, totalling what each one *grew* rather than what reached its
-## store.
-##
-## Grown, not stored, because a barn holds three turns of a good harvest and a
-## camp on good ground fills it — a store would measure the barn.
-func _measure_placement(world_seed: int) -> Dictionary:
-	var turns := MEASURED_YEARS * Seasons.TURNS_PER_YEAR
-	var world := WorldGen.generate(world_seed)
-	var sites := _sites(world, _presence(world_seed, turns))
-
-	# Nodes are not agents: they have no forage demand, they do not move and
-	# nothing consults them. Adding these cannot shift a herd, which is what lets
-	# the sites chosen from one run be measured on another.
-	var camps := {}
-	var farms := {}
-	for key in ["busy", "typical", "quiet"]:
-		camps[key] = CityNode.new(world.nodes.size(), sites[key], CityNode.Kind.GATHERING)
-		world.add_node(camps[key])
-		farms[key] = CityNode.new(world.nodes.size(), sites[key], CityNode.Kind.FARM)
-		world.add_node(farms[key])
-
-	var totals := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
-	var farm_totals := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
-	# Per-year camp totals as well as the run's, because the claim this carries is
-	# about *which* site wins a given year, not only which wins overall.
-	var years := {"busy": [], "typical": [], "quiet": []}
-	var this_year := {"busy": 0.0, "typical": 0.0, "quiet": 0.0}
-	for turn in range(turns):
-		world.advance_turn()
-		for key in totals:
-			totals[key] += camps[key].last_yield
-			farm_totals[key] += farms[key].last_yield
-			this_year[key] += camps[key].last_yield
-		if (turn + 1) % Seasons.TURNS_PER_YEAR == 0:
-			for key in this_year:
-				years[key].append(this_year[key])
-				this_year[key] = 0.0
-
-	return {
-		"busy": totals["busy"],
-		"typical": totals["typical"],
-		"quiet": totals["quiet"],
-		"farm": farm_totals["busy"],
-		"farm_busy": farm_totals["busy"],
-		"farm_quiet": farm_totals["quiet"],
-		"busy_years": years["busy"],
-		"typical_years": years["typical"],
-	}
-
-
-## Every grid index within `radius` of `coord` that is on the map, in the same
-## fixed order `WorldMap.forage_demand_within()` walks.
-func _disc_indices(grid: HexGrid, coord: Vector2i, radius: int) -> Array:
-	var out: Array = []
-	for dq in range(-radius, radius + 1):
-		for dr in range(maxi(-radius, -dq - radius), mini(radius, -dq + radius) + 1):
-			var i := grid.index_of(coord + Vector2i(dq, dr))
-			if i >= 0:
-				out.append(i)
-	return out
 
 
 ## A ratio printed as a number, or as the honest thing to say when the

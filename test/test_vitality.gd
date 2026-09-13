@@ -434,3 +434,160 @@ func test_identical_herds_sharing_a_tile_fare_identically() -> void:
 			"two identical herds on one tile end the turn identical, whichever stepped first")
 	assert_almost_eq(world.vitality_at(where, Land.Use.GRAZE), expected, 0.00001,
 			"and between them they wear the tile exactly as one herd of the same size would")
+
+
+## Ground worth standing on. Deliberately a low bar: the claim being tested is
+## that options never vanish, not that they stay good.
+const VIABLE := 0.10
+
+## How much of a turn's recovery a reading taken after the turn can be hiding.
+##
+## The moment FR-8a is about is when a herd *chooses*, inside `_migrate()`. A test
+## can only read the world between turns, by which time `_recover_vitality()` has
+## already lifted every tile — so a tile that was under `VIABLE` when the herd
+## looked at it can read as viable a moment later.
+##
+## The gap is bounded rather than guessed. Recovery closes a fixed fraction of
+## the distance to full each turn, at most `(1 - MIN_VITALITY)` of it, and forage
+## is that vitality times a seasonal curve that never exceeds
+## `Seasons.MAX_FORAGE`. Requiring this much margin above `VIABLE` therefore
+## proves the tile cleared `VIABLE` before the recovery step as well.
+##
+## Found by codex review on PR #58, which caught that checking every turn still
+## reads the state *after* grazing, movement and recovery.
+##
+## A function rather than a `const` because it is derived from `Land`'s own
+## recovery rate rather than restated as a number that could drift from it.
+func _recovery_slack() -> float:
+	return (1.0 - Land.MIN_VITALITY) * Seasons.MAX_FORAGE * Land.recovery_rate()
+
+
+func test_a_herd_always_has_somewhere_worth_going() -> void:
+	# FR-8a, first half, and the one that is not negotiable. Depletion may move
+	# the answer; it may never remove the question. If this fails, the constants
+	# are wrong — do not lower VIABLE to make it pass.
+	var world := _world()
+
+	# Every turn, not every season. An earlier version sampled one turn in six and
+	# still said "never": a herd could have been stranded on any of the five
+	# skipped turns — grazing wears ground and herds move on all of them — and this
+	# would have stayed green. Found by codex review on PR #58.
+	#
+	# Checking six times as often is *cheaper* than before, because the scan is now
+	# the herd's own reachable disc rather than all twelve hundred tiles: about
+	# sixty tiles at a sense range of four, against a full-map sweep that threw
+	# away 95% of what it touched.
+	#
+	# Two things stand between a reading taken between turns and the moment the
+	# claim is about, and codex review on PR #58 caught both:
+	#
+	# The herd has *moved* by the time this reads it, so the disc around where it
+	# ended up is not the disc it chose from. Positions are recorded before the
+	# turn, and the scan is around those.
+	#
+	# The world has *recovered* by then, so a tile under the bar when the herd
+	# looked can read as viable afterwards. `_recovery_slack()` is how much one
+	# recovery step can add, so clearing `VIABLE` plus that margin here proves the
+	# tile cleared `VIABLE` before it.
+	var slack := _recovery_slack()
+	var stood_at := {}
+	for turn in range(Seasons.TURNS_PER_YEAR * 40):
+		stood_at.clear()
+		for herd in world.herds():
+			stood_at[herd.id] = herd.coord
+		world.advance_turn()
+		for herd in world.herds():
+			var options := 0
+			var reach := herd.species.sense_range
+			var from: Vector2i = stood_at[herd.id]
+			for dq in range(-reach, reach + 1):
+				for dr in range(maxi(-reach, -dq - reach), mini(reach, -dq + reach) + 1):
+					var coord := from + Vector2i(dq, dr)
+					if not world.grid.has_coord(coord):
+						continue
+					if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE + slack:
+						options += 1
+			if options == 0:
+				assert_gt(options, 0,
+						"herd %d had nowhere to go on turn %d" % [herd.id, world.turn])
+	# One passing assertion for the whole run rather than one per herd per season,
+	# which would bury the report under several thousand identical lines.
+	assert_true(world.herds().size() > 0, "there were herds to ask")
+
+
+func test_the_best_ground_within_reach_keeps_changing_for_every_herd() -> void:
+	# FR-8a, second half. This is the periodicity fix stated locally: if the best
+	# tile at a place never changes, nothing downstream ever has a reason to.
+	#
+	# Tracked per herd, because FR-8a and the done bar say *every* herd — and one
+	# lively region can rack up plenty of changes at an arbitrary watched tile
+	# while some other herd's local choice has settled permanently. Watching one
+	# tile nobody stands on would report a healthy number and prove nothing.
+	var world := _world()
+	var previous := {}
+	var changes := {}
+	var seen := {}
+	for herd in world.herds():
+		previous[herd.id] = Vector2i(-999, -999)
+		changes[herd.id] = 0
+		seen[herd.id] = {}
+
+	for year in range(40):
+		for i in range(Seasons.TURNS_PER_YEAR):
+			world.advance_turn()
+		for herd in world.herds():
+			var best := _best_within(world, herd.coord, herd.species.sense_range)
+			var places: Dictionary = seen[herd.id]
+			places[best] = true
+			if best != previous[herd.id]:
+				changes[herd.id] = int(changes[herd.id]) + 1
+			previous[herd.id] = best
+
+	# Printed whether it passes or fails: these counts are the evidence for whether
+	# the mechanism works at all. The first year always counts as a change, from
+	# the sentinel, so a herd whose best tile never moved reads 1 here.
+	var report: Array[String] = []
+	for herd in world.herds():
+		var places: Dictionary = seen[herd.id]
+		report.append("%d:%d/%d" % [herd.id, int(changes[herd.id]), places.size()])
+	gut.p("best-tile changes/distinct tiles per herd over forty years: %s" % ", ".join(report))
+
+	for herd in world.herds():
+		assert_gt(int(changes[herd.id]), 3,
+				"herd %d's best reachable ground kept changing over forty years" % herd.id)
+		var places: Dictionary = seen[herd.id]
+		assert_gt(places.size(), 2,
+				"herd %d saw more than two distinct best tiles" % herd.id)
+
+
+func _best_within(world: WorldMap, origin: Vector2i, radius: int) -> Vector2i:
+	var best := origin
+	var best_value := -1.0
+	for coord in world.grid.all_coords():
+		if HexGrid.distance(origin, coord) > radius:
+			continue
+		var value := world.forage_for_use(coord, Land.Use.GRAZE)
+		if value > best_value:
+			best_value = value
+			best = coord
+	return best
+
+
+func test_two_worlds_from_one_seed_wear_identically() -> void:
+	var a := _world()
+	var b := _world()
+
+	for i in range(Seasons.TURNS_PER_YEAR * 20):
+		a.advance_turn()
+		b.advance_turn()
+
+	# The premise: twenty years of a generated world actually wore something, or
+	# two untouched rows of 1.0 would agree for the wrong reason.
+	var lowest := Land.MAX_VITALITY
+	for value in a.vitality_data(Land.Use.GRAZE):
+		lowest = minf(lowest, value)
+	assert_lt(lowest, Land.MAX_VITALITY, "the herds wore the ground being compared")
+
+	for use in [Land.Use.GRAZE, Land.Use.CULTIVATE]:
+		assert_eq(a.vitality_data(use), b.vitality_data(use),
+				"twenty years of wear reproduced exactly for use %d" % use)
