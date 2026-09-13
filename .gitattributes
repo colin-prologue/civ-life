@@ -1,0 +1,3 @@
+# This project is shared between macOS and Windows. Keep text LF-terminated so
+# Git Bash can execute shell scripts reliably and Godot resources stay stable.
+* text=auto eol=lf

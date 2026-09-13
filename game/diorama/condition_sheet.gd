@@ -13,6 +13,14 @@ extends Node3D
 
 @export var world_seed: int = 20260829
 
+## Which culture's PALETTE resolves the roles — the palette only, and this scene
+## builds with no massing. The ladder itself is unaffected either way: `need` is
+## drawn during resolution from the node path, which a culture never touches, so
+## switching this re-paints the sheet and changes nothing about which parts
+## survive. Leaving the massing out keeps the geometry identical down a column
+## too, so the only thing that varies as the condition falls is what is missing.
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
+
 ## Which building id each style's row shows, in DioramaStyles.NAMES order.
 ##
 ## The sheet shows ONE building per style, so this choice decides what the
@@ -61,6 +69,10 @@ func _ready() -> void:
 
 func _build() -> void:
 	for child in get_children():
+		# Detach before queuing: queue_free() defers deletion to end of frame,
+		# so a rebuild's same-named replacements would be auto-renamed while the
+		# old nodes linger, breaking name lookups afterwards.
+		remove_child(child)
 		child.queue_free()
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
@@ -140,7 +152,7 @@ func _add_cell(r: int, c: int, at: Vector3, scale: float,
 	var parts := DioramaCompose.build(DioramaStyles.for_name(style),
 			world_seed, _id_for(r))
 	var survivors := DioramaCondition.filter(parts, RUNGS[c])
-	DioramaCompose.apply_culture(survivors, DioramaCulture.lowland())
+	DioramaCompose.apply_roles(survivors, DioramaCultures.palette(culture))
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, survivors, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()

@@ -19,6 +19,17 @@ extends Node3D
 ## a time — the axis it varies is the seed, so mixing styles would confound the
 ## thing it exists to isolate.
 @export_enum("residential", "hero_arch", "civic", "stepped") var style: String = "residential"
+
+## Which culture's PALETTE resolves the roles — the palette only. This scene
+## builds with no massing, so what it shows is the style vocabulary at its
+## authored proportions, with the crowns the shapes their styles drew them as.
+## That is deliberate: the lineup's job is to isolate style, and a culture's
+## proportion levers would vary geometry across a grid whose only variable is
+## supposed to be the building id.
+##
+## The cross-product — styles down, cultures across, massing and all — is
+## culture_sheet.tscn, which is the frame that answers "is culture legible".
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
 @export var world_seed: int = 20260826
 @export var specimen_count: int = 12
 @export var columns: int = 4
@@ -78,7 +89,7 @@ func _build() -> void:
 func _add_specimen(i: int, at: Vector3, mat: StandardMaterial3D) -> float:
 	var tree: Dictionary = DioramaStyles.for_name(style)
 	var parts := DioramaCompose.build(tree, world_seed, i)
-	DioramaCompose.apply_culture(parts, DioramaCulture.lowland())
+	DioramaCompose.apply_roles(parts, DioramaCultures.palette(culture))
 	var b := DioramaMeshKit.new()
 	DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 	var inst := MeshInstance3D.new()

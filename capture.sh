@@ -63,6 +63,8 @@ TURNS="0,4,12"
 NAME=""
 SCENE=""
 LABEL=""
+OVERLAY=""
+STAGE=""
 OUT_ROOT="docs/shots"
 MODE="stills"
 FROM_TURN=0
@@ -71,6 +73,7 @@ HOLD=6
 FPS=10
 GIF_WIDTH=480
 SELF_TEST=0
+REDUCE=""
 LINKS_DIRS=()
 
 usage() {
@@ -81,6 +84,12 @@ Options
   --seed N            world seed to generate (default 20260815)
   --turns a,b,c       turn numbers to photograph, stills mode (default 0,4,12)
   --movie             record a span of turns as a GIF instead of stills
+  --placement         photograph the player's verb instead of the clock: a tile
+                      selected, a farm on it, a route drawn, and the route
+                      running. Three of those happen at the same turn, so the
+                      distinguishing axis is player actions and --turns cannot
+                      state it. Drives main.gd's own click/place/route entry
+                      points. --seed and --turns do not apply.
   --from N --to N     turn span for --movie (default 0..8)
   --hold N            rendered frames held per turn in --movie (default 6)
   --fps N             capture and playback rate for --movie (default 10)
@@ -91,10 +100,19 @@ Options
                       captured as a single verified still; --turns and --movie
                       do not apply to it and --movie is refused rather than
                       recording one frame N times.
-  --label NAME        filename stem for a --scene still (default: the scene's
-                      own basename). Ignored for the game scene, whose stills
-                      are named by seed and turn.
+  --label NAME        filename stem for the stills (default: the scene's own
+                      basename for --scene, the seed for the game scene). For
+                      the game scene the turn number is still appended.
+  --overlay NAME      turn a map overlay on before capturing (e.g. forage)
+  --stage held-up     put a herd on top of a citizen so the frame shows
+                      somebody held up. Say so wherever the frame is used:
+                      the shipped seed does not produce this on its own.
   --resolution WxH    render size (default 1280x720)
+  --reduce MODE       also write a <stem>-reduced.png beside every still, run
+                      through tools/spike_reduce.gd. MODE is 'value' (greyscale)
+                      or 'six' (six value bands) — the intent's reduction test.
+                      A style whose identity survives this reads at gameplay
+                      distance; one that collapses into mud does not.
   --links DIR         print the paste-ready markdown for an existing shots
                       directory and exit — no Godot, no capture. Run this
                       again after committing the frames: the URLs are pinned
@@ -116,6 +134,7 @@ while [ $# -gt 0 ]; do
     --seed) SEED="$2"; shift 2 ;;
     --turns) TURNS="$2"; shift 2 ;;
     --movie) MODE="movie"; shift ;;
+    --placement) MODE="placement"; shift ;;
     --from) FROM_TURN="$2"; shift 2 ;;
     --to) TO_TURN="$2"; shift 2 ;;
     --hold) HOLD="$2"; shift 2 ;;
@@ -124,8 +143,11 @@ while [ $# -gt 0 ]; do
     --name) NAME="$2"; shift 2 ;;
     --scene) SCENE="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
+    --overlay) OVERLAY="$2"; shift 2 ;;
+    --stage) STAGE="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --resolution) WIDTH="${2%x*}"; HEIGHT="${2#*x}"; shift 2 ;;
+    --reduce) REDUCE="$2"; shift 2 ;;
     --links) LINKS_DIRS+=("$2"); shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -212,8 +234,8 @@ explain_failure() {
     echo "A rendering context that never comes up can hang rather than error."
     return
   fi
-  if grep -q "CAPTURE-FAIL" "$log"; then
-    grep "CAPTURE-FAIL" "$log" | sed 's/^/  /'
+  if grep -qE "CAPTURE-FAIL|SHOT-FAIL" "$log"; then
+    grep -E "CAPTURE-FAIL|SHOT-FAIL" "$log" | sed 's/^/  /'
     return
   fi
   if grep -qiE "Unable to (create|initialize)|No such (display|rendering) driver|Could not create an instance of GPU|failed to create" "$log"; then
@@ -244,19 +266,37 @@ capture_stills() {
   # reproducible by the command that made it.
   [ -n "$SCENE" ] && argv+=("--scene=$SCENE")
   [ -n "$LABEL" ] && argv+=("--label=$LABEL")
+  [ -n "$OVERLAY" ] && argv+=("--overlay=$OVERLAY")
+  [ -n "$STAGE" ] && argv+=("--stage=$STAGE")
+  local rc=0
+  run_bounded "$log" "${argv[@]}" || rc=$?
+  return "$rc"
+}
+
+# The placement frames. Same watchdog, same byte cap, same links as everything
+# else here — only the script on the other end differs, because what varies
+# across these frames is what the player did rather than what the clock did.
+capture_placement() {
+  local out="$1" log="$2"
+  local -a argv
+  argv=("$GODOT" --resolution "${WIDTH}x${HEIGHT}"
+    -s tools/placement_shot.gd -- "$out" "--width=$WIDTH" "--height=$HEIGHT")
   local rc=0
   run_bounded "$log" "${argv[@]}" || rc=$?
   return "$rc"
 }
 
 # --- self test ---------------------------------------------------------------
-# The three claims this harness makes that cannot be taken on trust: that the
+# The four claims this harness makes that cannot be taken on trust: that the
 # blank-frame guard actually rejects a blank frame, that the same seed and
-# turn produce the same bytes twice, and that --scene can photograph something
-# that is not the hex game. A guard nobody has watched fail is
-# indistinguishable from a guard that is broken, and a scene option nobody has
-# pointed at a foreign scene is indistinguishable from one that only ever
-# worked on main.tscn.
+# turn produce the same bytes twice, that --scene can photograph something
+# that is not the hex game, and that --placement — which runs a different
+# script with its own copy of the guard — rejects a blank frame too. A guard
+# nobody has watched fail is indistinguishable from a guard that is broken, and
+# a scene option nobody has pointed at a foreign scene is indistinguishable from
+# one that only ever worked on main.tscn. The fourth leg exists because the
+# first three say nothing about a capture path added later: a second guard is a
+# second thing that can be wrong.
 SELF_TEST_TMP=""
 
 self_test() {
@@ -272,7 +312,7 @@ self_test() {
   # non-zero exit, which reads from outside as the capture being broken.
   trap 'rm -rf "$SELF_TEST_TMP"' EXIT
 
-  echo "[self-test] 1/3 — blank-frame guard, running the capture under --headless on purpose"
+  echo "[self-test] 1/4 — blank-frame guard, running the capture under --headless on purpose"
   # Created up front, not left to the capture: if the run dies before it makes
   # its own output directory, `find` on a missing path fails, and under
   # `pipefail` that aborts the self-test with no verdict printed at all — the
@@ -297,7 +337,7 @@ self_test() {
     grep "CAPTURE-FAIL" "$tmp/headless.log" | sed 's/^/    /'
   fi
 
-  echo "[self-test] 2/3 — determinism, capturing seed $SEED turn 0 twice"
+  echo "[self-test] 2/4 — determinism, capturing seed $SEED turn 0 twice"
   local rc_a=0 rc_b=0
   capture_stills "$tmp/a" "$SEED" "0" "$tmp/a.log" || rc_a=$?
   capture_stills "$tmp/b" "$SEED" "0" "$tmp/b.log" || rc_b=$?
@@ -327,7 +367,7 @@ self_test() {
   # harness. The assertion is not "a file appeared" — a blank frame is a file —
   # but that the frame cleared the same blank-frame guard leg 1 just watched
   # fire, which is the only thing that makes a captured spike reviewable.
-  echo "[self-test] 3/3 — --scene captures a scene that is not the hex game"
+  echo "[self-test] 3/4 — --scene captures a scene that is not the hex game"
   local rc_s=0
   mkdir -p "$tmp/scene"
   local -a scene_argv
@@ -350,6 +390,40 @@ self_test() {
   else
     echo "  PASS: one verified frame from a scene with no HexMapView:"
     grep -E "^\[capture\] static\.png" "$tmp/scene.log" | sed 's/^/    /'
+  fi
+
+  # --placement runs a different script with its own copy of the blank-frame
+  # guard, and a guard nobody has watched fail is indistinguishable from a
+  # broken one — the argument leg 1 exists for, applied to the second capture
+  # path rather than assumed to carry over to it. Under --headless the run must
+  # die on the first frame with nothing on disk, which also proves the check
+  # runs *before* the write rather than after it.
+  echo "[self-test] 4/4 — the placement path's blank-frame guard fires too"
+  local rc_p=0
+  mkdir -p "$tmp/placement"
+  local -a placement_argv
+  placement_argv=("$GODOT" --headless --resolution "${WIDTH}x${HEIGHT}"
+    -s tools/placement_shot.gd -- "$tmp/placement" "--width=$WIDTH" "--height=$HEIGHT")
+  run_bounded "$tmp/placement.log" "${placement_argv[@]}" || rc_p=$?
+  local wrote_p
+  wrote_p="$(find "$tmp/placement" -name '*.png' | wc -l | tr -d ' ')"
+  if [ "$rc_p" -eq 0 ]; then
+    echo "  FAIL: the headless placement run exited 0. The guard did not fire."
+    failures=$((failures + 1))
+  elif [ "$wrote_p" != "0" ]; then
+    echo "  FAIL: it wrote $wrote_p file(s) before failing; the check runs too late."
+    failures=$((failures + 1))
+  elif ! grep -q "SHOT-FAIL .*would have been blank" "$tmp/placement.log"; then
+    # The specific verdict, not the generic prefix: placement_shot fails with
+    # SHOT-FAIL for plenty of earlier reasons (no HexMapView, no build site),
+    # and any of those would make this leg claim the guard fired when
+    # FrameCheck.inspect() was never reached.
+    echo "  FAIL: it failed, but not with a blank-frame verdict:"
+    tail -10 "$tmp/placement.log" | sed 's/^/    /'
+    failures=$((failures + 1))
+  else
+    echo "  PASS: exit $rc_p, no files written, guard said:"
+    grep "SHOT-FAIL .*would have been blank" "$tmp/placement.log" | sed 's/^/    /'
   fi
 
   [ "$failures" -eq 0 ] || die "$failures self-test check(s) failed."
@@ -408,7 +482,35 @@ if [ "$MODE" = "stills" ]; then
   GOT="$(find "$ABS_OUT" -name '*.png' | wc -l | tr -d ' ')"
   [ "$GOT" -eq "$EXPECTED" ] \
     || { rm -rf "$ABS_OUT"; die "asked for $EXPECTED frame(s), got $GOT"; }
+elif [ "$MODE" = "placement" ]; then
+  echo "[capture] placement, ${WIDTH}x${HEIGHT} -> $REL_OUT/"
+  RC=0
+  capture_placement "$ABS_OUT" "$LOG" || RC=$?
+  if [ "$RC" -ne 0 ] || ! grep -q "^SHOT-OK" "$LOG"; then
+    rm -rf "$ABS_OUT"
+    echo "ERROR: capture failed and nothing was written." >&2
+    explain_failure "$RC" "$LOG" >&2
+    exit 1
+  fi
+  grep -E "^\[shot\]" "$LOG" || true
+
+  # The script decides how many frames the sequence is, so unlike stills there
+  # is no request to check its count against. What is still worth checking is
+  # that every frame it says it wrote is on disk — the failure this catches is
+  # a reported frame that never landed, which is the one that would put a
+  # missing picture in a pull request that claims four.
+  REPORTED="$(sed -n 's/^SHOT-OK \([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)"
+  GOT="$(find "$ABS_OUT" -name '*.png' | wc -l | tr -d ' ')"
+  [ "$GOT" -eq "${REPORTED:-0}" ] \
+    || { rm -rf "$ABS_OUT"; die "harness reported ${REPORTED:-none} frame(s), got $GOT"; }
 else
+  # Staging is a stills concept: the herd is placed one turn short of a single
+  # photographed frame. A span has no such frame, so accepting --stage here
+  # would record an ordinary movie under a name that promises a held-up
+  # citizen — refused rather than silently ignored. --overlay, by contrast, is
+  # applied before the clock starts and holds for the whole span, so it is
+  # forwarded below like any other view option.
+  [ -z "$STAGE" ] || die "--stage is a stills option; a movie has no single frame to stage against. Capture a staged still instead."
   command -v ffmpeg >/dev/null \
     || die "--movie needs ffmpeg to assemble a GIF (brew install ffmpeg). Godot's own movie output is AVI, which GitHub will not play inline."
   FRAMES_DIR="$(mktemp -d)"
@@ -424,7 +526,7 @@ else
     -s tools/capture.gd -- \
     "--mode=movie" "--seed=$SEED" "--from=$FROM_TURN" "--to=$TO_TURN" \
     "--hold=$HOLD" "--out=$ABS_OUT" "--width=$WIDTH" "--height=$HEIGHT" \
-    ${SCENE:+"--scene=$SCENE"} || RC=$?
+    ${SCENE:+"--scene=$SCENE"} ${OVERLAY:+"--overlay=$OVERLAY"} || RC=$?
   if [ "$RC" -ne 0 ] || ! grep -q "^CAPTURE-OK" "$LOG"; then
     rm -rf "$ABS_OUT"
     echo "ERROR: movie capture failed and nothing was kept." >&2
@@ -491,6 +593,44 @@ else
     -vf "scale=${GIF_WIDTH}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=bayer:bayer_scale=5" \
     -loop 0 "$ABS_OUT/motion.gif" \
     || { rm -rf "$ABS_OUT"; die "ffmpeg could not assemble the GIF"; }
+fi
+
+# --- reduction test ----------------------------------------------------------
+# The intent's rule: "any candidate style must survive as an unlit flat-shaded
+# silhouette in six colours at gameplay distance."
+#
+# Run here rather than by hand so the reduced frame is captured from the SAME
+# still that ships beside it. A separately-invoked reduction is a reduction of
+# whatever was on disk at the time, which after one re-capture is a different
+# picture — and the whole value of the pair is that the reader can trust the
+# right-hand image is the left-hand one with its hue taken away.
+#
+# Before the byte cap on purpose: the reduced frames are frames, they land in
+# the repository forever like every other one, and a run that goes over the cap
+# must be discarded whole rather than keeping half its output.
+if [ -n "$REDUCE" ]; then
+  case "$REDUCE" in
+    value|six) ;;
+    *) rm -rf "$ABS_OUT"; die "--reduce takes 'value' or 'six', not '$REDUCE'" ;;
+  esac
+  REDUCED=0
+  while IFS= read -r png; do
+    case "$png" in *-reduced.png) continue ;; esac
+    OUT_PNG="${png%.png}-reduced.png"
+    RC=0
+    run_bounded "$LOG" "$GODOT" --headless -s tools/spike_reduce.gd -- \
+      "$png" "$OUT_PNG" "$REDUCE" || RC=$?
+    if [ "$RC" -ne 0 ] || ! grep -q "^REDUCE-OK" "$LOG"; then
+      rm -rf "$ABS_OUT"
+      echo "ERROR: reduction failed; the whole run was discarded." >&2
+      explain_failure "$RC" "$LOG" >&2
+      exit 1
+    fi
+    REDUCED=$((REDUCED + 1))
+  done < <(find "$ABS_OUT" -name '*.png' | sort)
+  [ "$REDUCED" -gt 0 ] \
+    || { rm -rf "$ABS_OUT"; die "--reduce found no stills to reduce"; }
+  echo "[capture] $REDUCED frame(s) reduced to '$REDUCE'"
 fi
 
 # --- byte cap ----------------------------------------------------------------

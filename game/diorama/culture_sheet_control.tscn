@@ -1,0 +1,13 @@
+[gd_scene load_steps=2 format=3]
+
+; The culture sheet's control frame: the same script and the same scene graph,
+; with uniform_palette set. It exists as a scene rather than as a flag someone
+; flips before a capture because a committed frame has to be reproducible by a
+; command — ./capture.sh --scene res://game/diorama/culture_sheet_control.tscn
+; — and "edit the export, capture, put it back" is not one.
+
+[ext_resource type="Script" path="res://game/diorama/culture_sheet.gd" id="1"]
+
+[node name="CultureSheetControl" type="Node3D"]
+script = ExtResource("1")
+uniform_palette = true

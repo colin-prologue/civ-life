@@ -49,17 +49,16 @@ static func channel(seed: int, building_id: int, path: String,
 
 
 ## A proportion spec is a scalar (fixed), a two-element array (sampled), or
-## absent (the caller's default). `ctx` carries seed and id rather than
-## threading them as their own arguments — it is also where a culture will
-## live once a style can be modulated by one, and passing ctx instead of a
-## seventh positional argument is what makes that addition free.
+## absent (the caller's default). `ctx` carries seed, id and the culture's
+## massing rather than threading each as its own argument.
 static func sample(spec: Variant, ctx: Dictionary, path: String,
 		purpose: String, dflt: float) -> float:
 	# The culture moves the RANGE. The channel draw below is untouched, so the
 	# same building id under two cultures lands at the same relative position
 	# in each — the same building, differently proportioned, rather than two
-	# unrelated buildings.
-	var m: Variant = DioramaCulture.modulate(spec, ctx["culture"], purpose)
+	# unrelated buildings. Culture must never reach channel(); everything the
+	# design rests on follows from that one line staying true.
+	var m: Variant = DioramaCultures.modulate(spec, ctx["culture"], purpose)
 	if m == null:
 		return dflt
 	if m is float or m is int:
@@ -109,6 +108,11 @@ static func zero_frame(xf: Transform3D) -> Dictionary:
 	return {"xf": xf, "footprint": Vector2.ZERO, "height": 0.0}
 
 
+## `culture` is a culture's MASSING only (see DioramaCultures.massing) — never
+## its palette. Colour is applied afterwards by apply_roles, which is what lets
+## the sheet hold one constant and vary the other. An empty Dictionary is the
+## no-culture case: authored proportions, and every crown the shape its style
+## drew it as.
 static func new_ctx(seed: int, building_id: int,
 		culture: Dictionary = {}) -> Dictionary:
 	return {"seed": seed, "id": building_id, "path": "", "culture": culture,
@@ -216,7 +220,7 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	# becomes a cone or dome still reports the square footprint a round shape
 	# actually occupies.
 	if kind == "crown":
-		kind = DioramaCulture.crown_kind(ctx["culture"], n.get("default", ""))
+		kind = DioramaCultures.crown_kind(ctx["culture"], n.get("default", ""))
 	# A cone, prism or dome is emitted as a circle of radius w/2 — `d` never
 	# reaches the renderer. Reporting (w, d) would describe geometry that does
 	# not exist, and everything stacking on this frame inherits the lie.
@@ -229,7 +233,7 @@ static func _mass(n: Dictionary, ctx: Dictionary) -> Dictionary:
 	var need := _draw_need(ctx, path)
 	var part := {"kind": kind, "xf": xf, "params": params,
 			"color": Color.MAGENTA, "need": need, "y": 0.0,
-			"role": n.get("role", "plaster")}
+			"role": _role_of(n, path)}
 	return {"parts": [part], "need": need,
 			"frame": {"xf": xf, "footprint": Vector2(w, d), "height": h}}
 
@@ -247,11 +251,26 @@ static func _params_for(kind: String, n: Dictionary, w: float, d: float,
 		"prism", "cone":
 			return {"radius": w * 0.5, "height": h}
 		"dome":
-			# squash is a PROPORTION of the radius, so it is unmodulated by
-			# culture for the same reason `taper` is — scaling it would
-			# compound with the thickness already applied to `w`.
-			return {"radius": w * 0.5,
-					"squash": sample(n.get("squash"), ctx, path, "squash", 0.85)}
+			# DERIVED from `h`, never sampled. add_dome puts its apex at
+			# `radius * squash`, so squash is the ratio that makes the emitted
+			# geometry exactly `h` tall — which is the height _mass reports as
+			# this node's frame, and the height part_height reads back.
+			#
+			# It was authored as its own proportion once, defaulting to 0.85,
+			# and that was a real bug rather than a style choice. A dome's
+			# height was then `w * 0.5 * squash`: it ignored `h` entirely, so a
+			# dome crown took nothing from `verticality` (which scales `h`) and
+			# grew with `thickness` (which scales `w`) instead — the one lever
+			# that should not touch a roofline. Worse, `_mass` went on
+			# reporting `h` as the frame height, so anything stacked on a dome
+			# overlapped it or floated above it by the difference.
+			#
+			# The remaining guard is against a zero radius: a crowning mass can
+			# inherit a footprint of zero from a parent that emitted nothing,
+			# and squash is a division by it.
+			var radius := w * 0.5
+			return {"radius": radius,
+					"squash": 0.0 if radius <= EPS else h / radius}
 	assert(false, "unknown mass kind '%s' on '%s'" % [kind, path])
 	return {}
 
@@ -584,7 +603,7 @@ static func _ring(n: Dictionary, ctx: Dictionary) -> Dictionary:
 		parts.append({"kind": kind, "xf": xf,
 				"params": params, "color": Color.MAGENTA,
 				"need": need, "y": 0.0,
-				"role": body.get("role", "plaster")})
+				"role": _role_of(body, child_path)})
 		# A ring's frame must describe what it EMITTED, not the circle it was
 		# described by: tangent boxes stick out past the arc by half their
 		# thickness, so 2*radius under-reports the real width by ~14% on a
@@ -654,7 +673,7 @@ static func _finish(parts: Array) -> void:
 ## `y`, which the parts contract retains for the assembly tween to read), in
 ## culture_sheet.gd and condition_sheet.gd's own `_top_of` helpers, and inline
 ## in lineup.gd's `_add_specimen`. The dome case was added to this one and to
-## culture_sheet's when `delta`'s dome crown first rendered, and condition_sheet's
+## culture_sheet's when a dome-crowned culture first rendered, and condition_sheet's
 ## copy — never exercised by a dome-crowned style at the time — was left behind
 ## with the old two-way box/height split. `y` said as much for every dome part
 ## built by `_finish` in the meantime: origin.y + 0, a wrong centre height
@@ -683,14 +702,64 @@ static func part_height(p: Dictionary) -> float:
 	return 0.0
 
 
-## Resolve each part's role into a concrete colour through a culture's palette.
-## Kept separate from build() so one tree can be rendered in several palettes —
-## which is what makes culture a mapping rather than a fork of the geometry.
-static func apply_culture(parts: Array, culture: Dictionary) -> void:
-	var palette: Dictionary = culture.get("palette", {})
+## A mass's role, which is REQUIRED rather than defaulted. The old default —
+## fall back to the wall colour — meant a style that forgot a role rendered
+## perfectly and looked deliberate, which is the failure mode the closed role
+## set exists to remove. An empty string here reaches apply_roles(), resolves
+## against nothing, and comes out magenta.
+static func _role_of(n: Dictionary, path: String) -> String:
+	assert(n.has("role"), "mass '%s' names no role — every part has a purpose"
+			% path)
+	return String(n.get("role", ""))
+
+
+## Every role a style tree references, in first-seen order. Walks the tree
+## rather than the built parts on purpose: a mass whose sampled height comes
+## out at zero emits nothing for that id, so building specimens and reading
+## their roles back would let a role be "unreferenced" for some seeds and
+## referenced for others. The vocabulary is a property of the tree.
+static func roles_in(node: Dictionary) -> Array:
+	var found: Array = []
+	_collect_roles(node, found)
+	return found
+
+
+static func _collect_roles(node: Dictionary, into: Array) -> void:
+	for type_key: String in node:
+		var body: Variant = node[type_key]
+		if not (body is Dictionary):
+			continue
+		if type_key == "mass":
+			var role: String = String(body.get("role", ""))
+			if role != "" and not into.has(role):
+				into.append(role)
+			continue
+		if body.has("of"):
+			_collect_roles(body["of"], into)
+		for child in body.get("children", []):
+			_collect_roles(child, into)
+
+
+## Resolve each part's role into a concrete colour through one culture's
+## mapping. Kept separate from build() so one tree can be rendered in several
+## palettes — which is what makes culture a mapping rather than a fork of the
+## geometry, and what keeps it out of the seeded channels entirely: nothing
+## here touches `need`, `xf` or `params`, so the same style, seed and id under
+## two cultures differ in exactly one field per part.
+##
+## An unresolvable role is loud twice over. The assert stops a debug build
+## where the bad style is, and the magenta fallback covers release builds,
+## where `assert` is compiled out — without it the missing key would yield
+## null, and a part painted null is a part painted BLACK, which is
+## indistinguishable from a deliberately dark culture.
+static func apply_roles(parts: Array, palette: Dictionary) -> void:
 	for p: Dictionary in parts:
 		var role: String = p.get("role", "")
 		assert(palette.has(role),
-				"culture '%s' has no colour for role '%s'"
-				% [culture.get("name", "none"), role])
+				"no colour for role '%s' in this culture" % role)
+		if not palette.has(role):
+			push_error("DioramaCompose: role '%s' resolves in no culture palette"
+					% role)
+			p["color"] = Color.MAGENTA
+			continue
 		p["color"] = palette[role]

@@ -121,7 +121,7 @@ func add_cone(xf: Transform3D, radius: float, height: float, col: Color,
 ## every normal inward and wound every face as a back face. Culling-disabled
 ## scenes hid that completely (the renderer flips a back face's normal, so the
 ## two inversions cancelled); the culture sheet keeps default culling, dropped
-## the near half of every delta dome, and showed the far half's inside instead.
+## the near half of every dome, and showed the far half's inside instead.
 func add_dome(xf: Transform3D, radius: float, squash: float, col: Color,
 		segments: int = 10, rings: int = 4) -> void:
 	for ri in range(rings):

@@ -43,6 +43,17 @@ extends Node3D
 @export var building_scale: float = 0.72
 @export var hero_scale: float = 1.5
 
+## Which culture built this valley. One settlement, one culture — the whole
+## valley shares a palette, because two palettes in one town would be two towns.
+##
+## The palette only, for now: this scene builds with no massing, so the valley
+## stands at the vocabulary's authored proportions whichever culture is
+## selected. That is a gap rather than a decision — a settlement really should
+## be built the way its people build, not merely painted that way — and closing
+## it means re-judging the S0 valley's composition against three different
+## silhouettes, which is a slice of its own.
+@export_enum("sunlit", "basalt", "marl") var culture: String = "sunlit"
+
 @export var rebuild: bool = false:
 	set(_v):
 		_build()
@@ -328,7 +339,7 @@ func _build_settlement(valley: SynthValley, mat: StandardMaterial3D) -> void:
 			_:
 				tree = DioramaStyles.residential()
 		var parts := DioramaCompose.build(tree, world_seed, i)
-		DioramaCompose.apply_culture(parts, DioramaCulture.lowland())
+		DioramaCompose.apply_roles(parts, DioramaCultures.palette(culture))
 		# Scale belongs to PLACEMENT, not to a style: the same style should be
 		# able to stand at village and at city size, so the diorama says how big
 		# its buildings are rather than every style restating it.
@@ -340,7 +351,7 @@ func _build_settlement(valley: SynthValley, mat: StandardMaterial3D) -> void:
 	# huge valley, small town, thin road, one enormous civic structure
 	var hs := valley.hero_site
 	var hero := DioramaCompose.build(DioramaStyles.hero_arch(), world_seed, 0)
-	DioramaCompose.apply_culture(hero, DioramaCulture.lowland())
+	DioramaCompose.apply_roles(hero, DioramaCultures.palette(culture))
 	var hero_world := Transform3D(
 			Basis(Vector3.UP, hs.z).scaled(Vector3.ONE * hero_scale),
 			Vector3(hs.x, _height(valley, hs.x, hs.y), hs.y))

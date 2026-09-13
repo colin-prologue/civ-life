@@ -18,6 +18,17 @@ extends Node2D
 ##
 ## It is still the same single path: the timer calls `advance_turn()` and
 ## nothing else, so there is no second way for the clock to move.
+##
+## **What placement adds here, and what it does not.** This file now holds what
+## the player has selected and what they are part-way through doing — a tile, and
+## optionally a structure a route is being drawn from. That is session state, not
+## world state: it is not saved, not seeded, and nothing in `sim/` can see it.
+##
+## Every decision about whether an action is allowed is `CityGen`'s. This file
+## works out which tile a click landed on, asks, and shows whichever sentence
+## comes back. It does not know what water is. The refusal is displayed rather
+## than dropped, because a first verb that silently does nothing is
+## indistinguishable from a broken one.
 
 ## Fixed for now. A seed picker is a later concern; what matters at this point is
 ## that relaunching shows the same world, so a visual change is attributable to
@@ -46,15 +57,32 @@ var playing := false
 
 var speed_index := 1
 
+## The tile the player has clicked, if any. `Vector2i` has no null, so the flag
+## is separate rather than encoded as a sentinel coordinate — (0, 0) is a real
+## tile on this map.
+var selected_coord := Vector2i.ZERO
+var has_selection := false
+
+## The structure a route is being drawn from, once `R` has been pressed on one.
+## Null the rest of the time, which is most of the time.
+var route_origin: CityNode = null
+
+## What just happened, in the words `sim/` used. Cleared by nothing — it stands
+## until the next action replaces it, so a refusal does not vanish before it has
+## been read.
+var message := ""
+
 var _accumulator := 0.0
 
 @onready var _view: HexMapView = $HexMapView
 @onready var _status: Label = $Status
+@onready var _prompt: Label = $Prompt
 
 
 func _ready() -> void:
 	world = WorldGen.generate(WORLD_SEED)
 	_view.show_world(world, get_viewport_rect().size)
+	_show_selection()
 	_update_status()
 	get_viewport().size_changed.connect(_on_viewport_resized)
 
@@ -124,7 +152,125 @@ func slower() -> void:
 	_update_status()
 
 
+## A click at a point in viewport pixels. The whole of "what was clicked" lives
+## here; everything past this line is coordinates.
+##
+## Public and taking a point rather than an event, so the verb can be driven from
+## a test or from the capture harness without synthesising input.
+func click_at(point: Vector2) -> void:
+	var coord := _view.coord_at_point(point)
+	if not world.grid.has_coord(coord):
+		# The margin, the legend, or off the edge. Clicking away from the map
+		# clears the selection, which is the other half of AC1.
+		clear_selection("")
+		return
+	if route_origin != null:
+		_finish_route(coord)
+		return
+	select(coord)
+
+
+## Select a tile. Says what is on it, because the answer decides which of the
+## verbs below will work.
+func select(coord: Vector2i) -> void:
+	selected_coord = coord
+	has_selection = true
+	var standing := world.node_at(coord)
+	message = "selected %s" % ("a " + standing.kind_name() if standing != null else "an empty tile")
+	_show_selection()
+
+
+func clear_selection(reason: String) -> void:
+	has_selection = false
+	route_origin = null
+	message = reason
+	_show_selection()
+
+
+## Put a structure on the selected tile, or say why not.
+func place(kind: int) -> void:
+	if not has_selection:
+		message = "click a tile first"
+		_show_selection()
+		return
+	var refusal := CityGen.node_refusal(world, selected_coord)
+	if not refusal.is_empty():
+		message = "no %s here: %s" % [CityNode.KIND_NAMES[kind], refusal]
+		_show_selection()
+		return
+	# Only the world changes; the selection stays where it was, so the tile just
+	# built on is also the tile a route can be started from.
+	CityGen.place_node(world, selected_coord, kind)
+	route_origin = null
+	message = "%s placed" % CityNode.KIND_NAMES[kind]
+	_view.refresh()
+	_show_selection()
+	_update_status()
+
+
+## Start a route from the selected structure. The next click picks the other end.
+func arm_route() -> void:
+	if not has_selection:
+		message = "click a structure first"
+		_show_selection()
+		return
+	var from := world.node_at(selected_coord)
+	if from == null:
+		message = "a route starts at a structure"
+		_show_selection()
+		return
+	route_origin = from
+	message = "route from the %s — click the other end" % from.kind_name()
+	_show_selection()
+
+
+## The second click of a route. Lands the road or says why it cannot.
+##
+## A miss disarms rather than staying armed, so an errant click leaves the game
+## in the state the player can see rather than in a mode they have forgotten
+## they are in.
+func _finish_route(coord: Vector2i) -> void:
+	var from := route_origin
+	route_origin = null
+	var to := world.node_at(coord)
+	if to == null:
+		selected_coord = coord
+		has_selection = true
+		message = "no route: nothing there to connect to"
+		_show_selection()
+		return
+	var refusal := CityGen.route_refusal(world, from, to)
+	if not refusal.is_empty():
+		select(coord)
+		message = "no route: %s" % refusal
+		_show_selection()
+		return
+	CityGen.connect_nodes(world, from, to)
+	select(coord)
+	message = "route laid — %d carriers on it" % CityGen.CITIZENS_PER_ROUTE
+	_view.refresh()
+	_show_selection()
+	_update_status()
+
+
+func _show_selection() -> void:
+	_view.set_selection(has_selection, selected_coord, route_origin != null)
+	_update_prompt()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var click := event as InputEventMouseButton
+		if click.pressed and click.button_index == MOUSE_BUTTON_LEFT:
+			click_at(click.position)
+			get_viewport().set_input_as_handled()
+		return
+
+	if event.is_action_pressed("ui_cancel", false, true):
+		clear_selection("")
+		get_viewport().set_input_as_handled()
+		return
+
 	if event.is_action_pressed("ui_accept", false, true):
 		# A single step still works while playing; it just adds a turn.
 		advance_turn()
@@ -141,6 +287,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			faster()
 		KEY_BRACKETLEFT:
 			slower()
+		KEY_F:
+			place(CityNode.Kind.FARM)
+		KEY_G:
+			place(CityNode.Kind.GRANARY)
+		KEY_R:
+			arm_route()
+		KEY_O:
+			# The overlay is a property of the view, not of the world, so this
+			# forwards and decides nothing — the same shape as every other key
+			# here, and it still moves no part of the simulation.
+			_view.cycle_overlay()
 		_:
 			return
 	get_viewport().set_input_as_handled()
@@ -150,18 +307,80 @@ func _on_viewport_resized() -> void:
 	_view.resize_to(get_viewport_rect().size)
 
 
+## What the status area says when the turn crossed no threshold at all.
+##
+## Said out loud rather than left blank. An empty report is a real answer — the
+## world ran a turn and nothing in it was worth pointing at — and a blank space
+## is indistinguishable from an instrument that has stopped working.
+const QUIET_TURN := "nothing crossed a threshold this turn"
+
+
 func _update_status() -> void:
-	# The herd total is here because the thing this world is trying to show is
-	# change over time, and a number that moves every turn is the cheapest way to
-	# tell whether what is on screen is going anywhere.
-	_status.text = "Turn %d — %s, year %d — %d animals in %d herds — %d grain in store — seed %d — %s  [space] step  [P] play/pause  [ ] speed %0.1f/s" % [
+	# The totals line, and underneath it the same turn said as events rather than
+	# as totals. A total that moves tells you something happened somewhere; the
+	# lines below say what and where, and the number on each one is the number
+	# ringed on the map.
+	_status.text = _totals_line() + "\n" + _report_text()
+
+
+## The report in words, or the quiet-turn line. Rebuilt from `world.report` every
+## time, holding nothing between calls — the view keeps no memory of a turn the
+## world has finished with.
+func _report_text() -> String:
+	var report := world.report
+	if report == null or report.is_empty():
+		return QUIET_TURN
+	return "\n".join(report.lines())
+
+
+## The totals, including what the player has built. The counts of farms,
+## granaries and routes belong on this line rather than in the report below it:
+## the report says what *changed* this turn, and a structure the player placed
+## three turns ago is not news — but "how much of this is mine" is exactly the
+## question a first verb makes worth answering every turn. The stocks that used
+## to sit here — animals, grain in store — live in the view's panel now, where
+## each has a rate and a direction beside it; two places quoting the same number
+## is two places that can disagree. The herd *count* stays: it is a count of
+## things on the map rather than a stock the panel is tracking.
+##
+## The key hints live on the prompt line instead, so this one stays a reading of
+## the world rather than half a control legend.
+func _totals_line() -> String:
+	return "Turn %d — %s, year %d — %d herds — %d farms, %d granaries, %d routes — seed %d — %s %0.1f/s" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
-		roundi(world.total_herd_population()),
 		world.herds().size(),
-		roundi(world.total_granary_store()),
+		_node_count(CityNode.Kind.FARM),
+		_node_count(CityNode.Kind.GRANARY),
+		world.routes.size(),
 		world.world_seed,
 		"playing" if playing else "paused",
 		float(TURNS_PER_SECOND[speed_index]),
+	]
+
+
+func _node_count(kind: int) -> int:
+	var total := 0
+	for node in world.nodes:
+		if node.kind == kind:
+			total += 1
+	return total
+
+
+## The second line: what is selected, what just happened, and what the keys do.
+##
+## Split from the status line because the two answer different questions and the
+## status line was already the width of the window. This one is the only channel
+## a refusal has, so it comes first in the string — the keys are a reminder and
+## can be truncated by a narrow window without losing anything the player needs.
+func _update_prompt() -> void:
+	var where := "nothing selected"
+	if has_selection:
+		var off := HexGrid.to_offset(selected_coord)
+		where = "tile %d,%d" % [off.x, off.y]
+	var said := "" if message.is_empty() else " — %s" % message
+	_prompt.text = "%s%s     [click] select  [F] farm  [G] granary  [R] route  [Esc] clear  [space] step  [P] play  [ ] speed  [O] overlay" % [
+		where,
+		said,
 	]

@@ -59,10 +59,17 @@ static func _fingerprint(world_seed: int) -> int:
 	var b := DioramaMeshKit.new()
 	var needs := 0
 	for style in [DioramaStyles.residential(), DioramaStyles.hero_arch()]:
-		for culture in [DioramaCulture.lowland(), DioramaCulture.delta()]:
+		# Every culture, not one. A culture moves the sampled RANGE and
+		# substitutes the crown primitive, so a divergence that only shows up
+		# under a modulated range — or only on the dome branch of the crown
+		# substitution — is invisible to a single-culture fold. Iterating
+		# NAMES rather than naming two keeps that true when a fourth is added.
+		for culture_name: String in DioramaCultures.NAMES:
+			var levers := DioramaCultures.massing(culture_name)
 			for id in IDS:
-				var parts := DioramaCompose.build(style, world_seed, id, culture)
-				DioramaCompose.apply_culture(parts, culture)
+				var parts := DioramaCompose.build(style, world_seed, id, levers)
+				DioramaCompose.apply_roles(parts,
+						DioramaCultures.palette(culture_name))
 				DioramaGrammar.emit(b, parts, Transform3D.IDENTITY)
 				for p: Dictionary in parts:
 					# Quantised, because a float printed through two processes must

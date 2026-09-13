@@ -28,6 +28,12 @@ extends RefCounted
 ## the same seed advanced the same number of turns still produces the same
 ## herds, in the same places, with the same numbers — but a save is now a state
 ## rather than two integers.
+##
+## The `chronicle` is the second thing here that is not a rule. It records a
+## season's worth of per-turn readings so that something drawing this world can
+## say whether a number is rising or falling; nothing in the turn loop reads it
+## back, and removing it would change no outcome. It is here because a trend
+## needs history and the renderer is forbidden to keep any.
 
 var grid: HexGrid
 var world_seed: int
@@ -40,6 +46,13 @@ var turn: int
 ## reaching for the same tile must resolve the same way on every run, and this
 ## is what decides it.
 var agents: Array[Agent] = []
+
+## What the turn just run actually changed, as an ordered list of notable
+## changes. Rebuilt from scratch by every `advance_turn()`, empty on a world that
+## has not been advanced, and read by nobody the simulation knows about — the
+## world produces it whether or not there is a renderer to consume it. See
+## `sim/turn_report.gd`.
+var report: TurnReport
 
 var _terrain: PackedInt32Array
 var _forage: PackedFloat32Array
@@ -59,6 +72,16 @@ var _vitality: Array = []
 var nodes: Array[CityNode] = []
 var routes: Array[Route] = []
 
+## The last season's worth of per-turn readings, written at the end of every
+## turn and read by nobody inside the turn loop.
+##
+## It is here rather than in the renderer because a trend needs history, the
+## renderer is not allowed to keep any, and — agents being what they are — most
+## of these numbers cannot be recomputed from `(seed, turn)`. See
+## `sim/chronicle.gd`, which argues the whole case; the short version is that
+## this is a ledger of what happened, not a rule about what happens.
+var chronicle := Chronicle.new()
+
 ## How much of each tile's forage is spoken for, by grid index — the sum of
 ## every agent's `forage_demand()` on that tile. A cache, maintained by the
 ## mutators below rather than recomputed, because the movement code asks for it
@@ -72,6 +95,30 @@ var routes: Array[Route] = []
 ## Read for *decisions*, never for reporting: repeated add-and-subtract on
 ## floats drifts, so anything quoting a total sums the agents themselves.
 var _forage_demand: PackedFloat32Array
+
+## The per-tile forage census as it stood at the start of this turn, before any
+## agent grazed or moved.
+##
+## `Herd.step()` grazes and then migrates, so the live census changes underneath
+## the agents still to be stepped. A herd dividing a tile's forage by the live
+## demand would see earlier herds vanish and claim their share as well, and the
+## tile would be charged for more than it grew. Sharing is settled against the
+## world as it was when the turn began.
+##
+## A copy per turn rather than a second running total: one `duplicate()` of an
+## array the map already keeps, against a bookkeeping path that would have to
+## stay correct through every future mutator.
+var _forage_demand_at_turn_start: PackedFloat32Array = PackedFloat32Array()
+
+## The grazing vitality of every tile as it stood when the turn began — the
+## other half of what a co-located herd divides. Freezing the census alone was
+## not enough: a herd stepped first wears the tile in `Herd._graze()`, and the
+## next one reading live vitality would be dividing forage an earlier herd had
+## already eaten. Frozen for the same reason as the census and at the same moment.
+##
+## Only the grazing row, because only herds share a tile: a farm is the only
+## structure on its ground and is the only thing that wears it for cultivation.
+var _grazing_vitality_at_turn_start: PackedFloat32Array = PackedFloat32Array()
 
 
 func _init(p_grid: HexGrid, p_seed: int) -> void:
@@ -90,6 +137,7 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 		row.resize(p_grid.tile_count())
 		row.fill(Land.MAX_VITALITY)
 		_vitality[use] = row
+	report = TurnReport.new(turn)
 
 
 ## Move the world forward one turn. Returns the turn just entered.
@@ -98,14 +146,34 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 ## turn against the season it is actually standing in, never against last
 ## turn's, and a carrier standing at a farm leaves with this turn's harvest
 ## rather than last turn's.
+## Every node's flow counters are zeroed before anything moves grain, so what
+## they hold afterwards is this turn's arrivals and departures and not a running
+## total. The reading at the end is the last thing the turn does and the only
+## thing in here nothing else depends on.
+##
+## The report is taken around the outside of all of it: a snapshot before
+## anything runs, a comparison after everything has. Nothing between those two
+## lines knows the report exists, and nothing in it asks whether anybody is going
+## to read the answer — a world with no renderer attached does exactly the same
+## work as one being watched. The chronicle reading and the report are the two
+## derived things here and they do not look at each other: one is this world's
+## own memory of its rates, the other is a comparison against a snapshot taken
+## before the turn ran.
 func advance_turn() -> int:
+	var before := TurnReport.snapshot(self)
 	turn += 1
 	_recompute_forage()
+	_forage_demand_at_turn_start = _forage_demand.duplicate()
+	_grazing_vitality_at_turn_start = (_vitality[Land.Use.GRAZE] as PackedFloat32Array).duplicate()
+	for node in nodes:
+		node.begin_turn()
 	for node in nodes:
 		node.produce(self)
 	for agent in agents:
 		agent.step(self)
 	_recover_vitality()
+	_record_turn()
+	report = TurnReport.since(self, before)
 	return turn
 
 
@@ -141,6 +209,22 @@ func add_route(route: Route) -> void:
 	routes.append(route)
 
 
+## The structure standing on this tile, or null if the tile is free.
+##
+## Linear over `nodes`, for the reason `Route.index_of()` is linear: a city is a
+## handful of chunky structures (`AgDR-002`), and an index keyed by coordinate
+## would be a cache that can disagree with the array it summarises.
+##
+## This is a *query*, and the one placement asks before it is allowed to build.
+## Keeping it here rather than in whatever is doing the placing is what lets the
+## rule "a tile holds one structure" be asserted without a scene tree.
+func node_at(coord: Vector2i) -> CityNode:
+	for node in nodes:
+		if node.coord == coord:
+			return node
+	return null
+
+
 ## Set a herd's population. The only way it changes, for the same reason.
 func set_herd_population(herd: Herd, value: float) -> void:
 	_forage_demand[grid.index_of(herd.coord)] += value - herd.population
@@ -153,6 +237,89 @@ func forage_demand_at(coord: Vector2i) -> float:
 	var i := grid.index_of(coord)
 	assert(i >= 0, "cannot read forage demand off the map")
 	return _forage_demand[i]
+
+
+## What this tile's total forage demand was before anything moved this turn.
+##
+## The figure to divide a tile's forage by when deciding who gets what share of
+## it, so that the shares taken by everything standing there sum to at most one
+## whole tile however the step order falls. `forage_demand_at()` is the live
+## number and is the right read for a *hypothetical* tile — somewhere a herd is
+## considering going, where arrivals this turn genuinely count.
+##
+## Falls back to the live census on a world that has never been advanced, where
+## no snapshot has been taken yet and the two are the same thing anyway.
+func forage_demand_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read demand off the map")
+	if i >= _forage_demand_at_turn_start.size():
+		return _forage_demand[i]
+	return _forage_demand_at_turn_start[i]
+
+
+## The grazing forage this tile had when the turn began, before any herd ate it.
+##
+## What a herd divides by `forage_demand_at_turn_start()`: the forage and the
+## mouths sharing it have to be read at the same moment, or two identical herds
+## on one tile end the turn different purely because of the order they are
+## stepped in. `forage_for_use()` is the live number and stays the right read for
+## migration, which is decided after the herd has eaten: where to be next should
+## see the ground as it is now, this turn's wear included.
+##
+## Falls back to the live value on a world that has never been advanced.
+func grazing_forage_at_turn_start(coord: Vector2i) -> float:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot read forage off the map")
+	if i >= _grazing_vitality_at_turn_start.size():
+		return forage_for_use_by_index(i, Land.Use.GRAZE)
+	return _forage[i] * _grazing_vitality_at_turn_start[i]
+
+
+## The same total over every tile within `radius` of `coord`, the centre tile
+## included. Tiles off the map contribute nothing rather than being an error, so
+## a structure near the coast is not a special case.
+##
+## This is the widening that lets something standing still notice the world
+## moving past it. A citizen reads one tile because it only cares what is
+## underfoot; a gathering node reads a disc because what it cares about is
+## whether anything is *around*. Neither can find out what kind of thing is
+## producing the number, which is the whole of `AgDR-013` and the reason this is
+## a second read of the same census rather than a scan of `agents`.
+##
+## Summed on demand rather than cached per radius: a handful of nodes read
+## nineteen tiles once a turn, against a cache that would have to be invalidated
+## on every one of the world's agent movements.
+func forage_demand_within(coord: Vector2i, radius: int) -> float:
+	assert(radius >= 0, "a radius is not negative")
+	var total := 0.0
+	# Axial disc, enumerated in the same fixed order `Herd._best_ground()` uses,
+	# so a float sum over it is identical run to run.
+	for dq in range(-radius, radius + 1):
+		for dr in range(maxi(-radius, -dq - radius), mini(radius, -dq + radius) + 1):
+			var i := grid.index_of(coord + Vector2i(dq, dr))
+			if i >= 0:
+				total += _forage_demand[i]
+	return total
+
+
+## The same figure, summed from the agents actually standing there rather than
+## read off the cache — the version anything *quoting* the number has to use.
+##
+## `_forage_demand` above is maintained by adding and subtracting floats as
+## agents move, which is exact enough to decide by and not exact enough to say
+## out loud after a thousand turns of it. Same split as `total_herd_population()`
+## against the per-tile forage cache, and for the same reason.
+##
+## Walks `agents` in array order, so the sum is bit-for-bit the same on two runs
+## of one seed (`AgDR-001`). Linear in the world's agents, which is why the
+## movement code does not call it: this runs once per held-up carrier per turn,
+## not seven times per herd.
+func forage_demand_summed_at(coord: Vector2i) -> float:
+	var total := 0.0
+	for agent in agents:
+		if agent.coord == coord:
+			total += agent.forage_demand()
+	return total
 
 
 ## The same three fields by grid index rather than by coordinate.
@@ -216,6 +383,57 @@ func total_granary_store() -> float:
 		if node.kind == CityNode.Kind.GRANARY:
 			total += node.store
 	return total
+
+
+## Grain that arrived in granaries this turn, and grain that left them.
+##
+## Two flows, reported separately and never as one signed number. While nothing
+## consumes (that is #29) the outflow is zero, and a display that showed only the
+## net would say "nothing is leaving" and "the two cancelled out" in exactly the
+## same way — which is the confusion this ticket exists to remove.
+func granary_intake() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			total += node.took_in
+	return total
+
+
+func granary_outflow() -> float:
+	var total := 0.0
+	for node in nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			total += node.gave_out
+	return total
+
+
+## What every farm in the world would grow if it harvested right now, at the
+## tiles they stand on.
+##
+## Live rather than remembered, which is what a display wants: asked at any point
+## it answers for the fields as they stand. It is **not** a record of the turn
+## that ran — since `AgDR-014` a farm's yield depends on how worn its field is,
+## and the field is worn by the harvest itself, so asked after `produce()` this
+## already describes next turn's harvest. `farm_harvest()` is the one that says
+## what actually came off the fields, and the chronicle records that.
+func farm_yield_rate() -> float:
+	var total := 0.0
+	for node in nodes:
+		total += node.yield_rate(self)
+	return total
+
+
+## How many people there are, and how many of them are stuck rather than moving.
+func citizen_count() -> int:
+	return citizens().size()
+
+
+func held_up_count() -> int:
+	var stuck := 0
+	for citizen in citizens():
+		if citizen.is_held_up():
+			stuck += 1
+	return stuck
 
 
 ## Total heads alive in the world. Summed from the herds rather than from the
@@ -326,6 +544,20 @@ func set_vitality(coord: Vector2i, use: int, value: float) -> void:
 	_vitality[use] = row
 
 
+## Report that this tile was worked, for this use, at `intensity` in 0..1.
+##
+## The world does not ask who is calling. A herd knows that it grazes and a farm
+## knows that it cultivates; `WorldMap` is told a use and a quantity and applies
+## them, which is `AgDR-013`'s rule — agents report quantities, and nothing here
+## branches on what kind of thing reported.
+func draw_vitality(coord: Vector2i, use: int, intensity: float) -> void:
+	var i := grid.index_of(coord)
+	assert(i >= 0, "cannot wear ground off the map")
+	var row: PackedFloat32Array = _vitality[use]
+	row[i] = Land.depleted(row[i], intensity)
+	_vitality[use] = row
+
+
 ## Forage summed over the whole map. The map-scale quantity seasons are supposed
 ## to move, so it is worth being able to read it in one call.
 func total_forage() -> float:
@@ -356,6 +588,39 @@ func _recompute_forage() -> void:
 func _recover_vitality() -> void:
 	for use in range(Land.USE_COUNT):
 		_vitality[use] = Land.recovered_row(_vitality[use])
+
+
+## Write this turn's readings into the ledger.
+##
+## Last in the turn and read by nothing before the next one starts, which is what
+## keeps this a record rather than a rule. If anything in `sim/` ever branches on
+## a chronicle value, that is the moment this stopped being a query and the
+## boundary in `AgDR-001` has been crossed.
+func _record_turn() -> void:
+	chronicle.record(Chronicle.GRANARY_STORE, total_granary_store())
+	chronicle.record(Chronicle.GRANARY_IN, granary_intake())
+	chronicle.record(Chronicle.GRANARY_OUT, granary_outflow())
+	chronicle.record(Chronicle.FARM_YIELD, farm_harvest())
+	chronicle.record(Chronicle.HERD_POPULATION, total_herd_population())
+
+
+## Grain the farms actually took off their fields this turn.
+##
+## Not `farm_yield_rate()`, which is forward-looking — what the fields would give
+## *now* — and is what the map quotes. By the time a turn is recorded the fields
+## have been worked and have partly recovered (`AgDR-014`), so the forward rate is
+## already next turn's harvest rather than this one's. The chronicle is history,
+## and history is what was grown: each farm's `harvest()`, set before the wear.
+## Found by codex review on PR #51.
+##
+## Asked of the node rather than filtered here. `CityNode.harvest()` is farm-only
+## on its own account, exactly as `yield_rate()` is, so this sums without asking
+## what any node is — the same restraint `AgDR-013` asks of the agent loop.
+func farm_harvest() -> float:
+	var total := 0.0
+	for node in nodes:
+		total += node.harvest()
+	return total
 
 
 ## How many tiles differ from another map of the same size.

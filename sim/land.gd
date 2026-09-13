@@ -78,6 +78,34 @@ static func continuous_use_equilibrium() -> float:
 	return MIN_VITALITY + recovery_rate() * (MAX_VITALITY - MIN_VITALITY)
 
 
+## How many turns of unbroken maximum use it takes to halve a full tile, with
+## recovery pushing back the whole time.
+##
+## This is the wear clock stated in the same units as `RECOVERY_HALF_LIFE_TURNS`,
+## which is the only way to say whether the two are in proportion — and being in
+## proportion is what `AgDR-014` is actually asking for. Land that wears far
+## faster than it recovers reads as decline; land that recovers far faster than it
+## wears reads as nothing happening at all. Rotation is what happens when the two
+## clocks are within about a season of each other, and `test_land.gd` asserts
+## exactly that, so `DEPLETION_PER_UNIT` cannot be retuned on its own.
+##
+## Measured against the real turn order — deplete, then recover — rather than
+## against depletion alone, because that is the sequence a worked tile actually
+## experiences. Returns -1 if recovery outpaces maximum use so the tile never
+## halves at all, which is a statement that the constants are out of proportion
+## rather than a number.
+static func wear_half_life_turns() -> int:
+	var vitality := MAX_VITALITY
+	var turns := 0
+	while vitality > MAX_VITALITY * 0.5:
+		var next := recovered(depleted(vitality, 1.0))
+		if next >= vitality:
+			return -1
+		vitality = next
+		turns += 1
+	return turns
+
+
 ## One turn of nobody working this tile, for this use.
 ##
 ## Exponential approach to the ceiling, so it cannot overshoot and there is no
@@ -99,10 +127,35 @@ static func recovered(vitality: float) -> float:
 ## Same trade `Seasons.forage_row()` already makes for the same reason: fetch the
 ## rate once, index per tile. `test_land.gd` asserts this agrees with
 ## `recovered()` element by element, so the two cannot drift apart.
+##
+## Land already at the ceiling is skipped, at two levels, because recovery runs
+## over every tile of every use every turn while only the handful of tiles
+## somebody is standing on or farming are ever below full. `v + r * (1 - v)` at
+## `v == MAX_VITALITY` is exactly `MAX_VITALITY`, so a full row is a fixed point
+## and a full tile is its own answer: neither skip changes a value.
+##
+## The row-level skip asks `count()`, which scans in native code, rather than
+## looking for a value below full in a GDScript loop — the loop is the entire
+## cost being avoided, so the test for whether to run it must not itself be one.
+## Deliberately stateless: a "somebody wore this" flag would be faster still, but
+## it would have to be set by every future path that lowers a value, and a path
+## that forgot would silently stop that use recovering. Recomputing the answer
+## cannot go stale.
+##
+## Measured on a 1200-tile world over 500 turns, against `test_seasons.gd`'s
+## 2,000 ms budget: the turn loop costs 887 ms with this pass removed entirely,
+## 2,646 ms with it unconditional, 1,637 ms with only the per-tile skip, and
+## 1,201 ms with both. The budget is wall-clock and this machine was carrying
+## other work, so read the four as a ratio rather than as absolute times.
 static func recovered_row(row: PackedFloat32Array) -> PackedFloat32Array:
+	if row.count(MAX_VITALITY) == row.size():
+		return row
 	var rate := recovery_rate()
 	for i in range(row.size()):
-		row[i] += rate * (MAX_VITALITY - row[i])
+		var value := row[i]
+		if value >= MAX_VITALITY:
+			continue
+		row[i] = value + rate * (MAX_VITALITY - value)
 	return row
 
 
