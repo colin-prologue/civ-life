@@ -440,6 +440,27 @@ func test_identical_herds_sharing_a_tile_fare_identically() -> void:
 ## that options never vanish, not that they stay good.
 const VIABLE := 0.10
 
+## How much of a turn's recovery a reading taken after the turn can be hiding.
+##
+## The moment FR-8a is about is when a herd *chooses*, inside `_migrate()`. A test
+## can only read the world between turns, by which time `_recover_vitality()` has
+## already lifted every tile — so a tile that was under `VIABLE` when the herd
+## looked at it can read as viable a moment later.
+##
+## The gap is bounded rather than guessed. Recovery closes a fixed fraction of
+## the distance to full each turn, at most `(1 - MIN_VITALITY)` of it, and forage
+## is that vitality times a seasonal curve that never exceeds
+## `Seasons.MAX_FORAGE`. Requiring this much margin above `VIABLE` therefore
+## proves the tile cleared `VIABLE` before the recovery step as well.
+##
+## Found by codex review on PR #58, which caught that checking every turn still
+## reads the state *after* grazing, movement and recovery.
+##
+## A function rather than a `const` because it is derived from `Land`'s own
+## recovery rate rather than restated as a number that could drift from it.
+func _recovery_slack() -> float:
+	return (1.0 - Land.MIN_VITALITY) * Seasons.MAX_FORAGE * Land.recovery_rate()
+
 
 func test_a_herd_always_has_somewhere_worth_going() -> void:
 	# FR-8a, first half, and the one that is not negotiable. Depletion may move
@@ -456,17 +477,35 @@ func test_a_herd_always_has_somewhere_worth_going() -> void:
 	# the herd's own reachable disc rather than all twelve hundred tiles: about
 	# sixty tiles at a sense range of four, against a full-map sweep that threw
 	# away 95% of what it touched.
+	#
+	# Two things stand between a reading taken between turns and the moment the
+	# claim is about, and codex review on PR #58 caught both:
+	#
+	# The herd has *moved* by the time this reads it, so the disc around where it
+	# ended up is not the disc it chose from. Positions are recorded before the
+	# turn, and the scan is around those.
+	#
+	# The world has *recovered* by then, so a tile under the bar when the herd
+	# looked can read as viable afterwards. `_recovery_slack()` is how much one
+	# recovery step can add, so clearing `VIABLE` plus that margin here proves the
+	# tile cleared `VIABLE` before it.
+	var slack := _recovery_slack()
+	var stood_at := {}
 	for turn in range(Seasons.TURNS_PER_YEAR * 40):
+		stood_at.clear()
+		for herd in world.herds():
+			stood_at[herd.id] = herd.coord
 		world.advance_turn()
 		for herd in world.herds():
 			var options := 0
 			var reach := herd.species.sense_range
+			var from: Vector2i = stood_at[herd.id]
 			for dq in range(-reach, reach + 1):
 				for dr in range(maxi(-reach, -dq - reach), mini(reach, -dq + reach) + 1):
-					var coord := herd.coord + Vector2i(dq, dr)
+					var coord := from + Vector2i(dq, dr)
 					if not world.grid.has_coord(coord):
 						continue
-					if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE:
+					if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE + slack:
 						options += 1
 			if options == 0:
 				assert_gt(options, 0,
