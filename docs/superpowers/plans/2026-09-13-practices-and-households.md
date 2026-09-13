@@ -20,7 +20,7 @@ What plan 1 already settled, and what this inherits rather than re-decides:
 
 - Vitality is per use, floored above zero, recovering unconditionally toward the terrain ceiling (`sim/land.gd`).
 - Sharing a tile is settled against **forage and census frozen at the start of the turn**, so no agent's outcome depends on where it sits in the agents array. Any new agent that divides a tile's yield must do the same — `Herd._graze()` is the worked example, and it took four review rounds to get right.
-- Herds now travel 10–32 tiles over 500 turns and all 14 leave a camp's reach, which discharges the spec's "migration may not be a real escape route" risk. Follow has somewhere to follow to.
+- Herds now travel 10–32 tiles over 500 turns and all 14 leave a camp's reach, against 0–8 before. **That does not discharge the spec's "migration may not be a real escape route" risk, and an earlier version of this plan wrongly said it did.** Those numbers come from a healthy world, where better ground is within sight. Measured in a *collapsed* region, #64 found 3 of 9 probes stuck and 2 herds that never moved at all: a herd at the centre of ground wider than its sense range sees nothing better anywhere and stays. The risk is live, it has its own ticket (#69), and Follow's assumption that there is somewhere to follow to depends on it.
 
 ## Global Constraints
 
@@ -235,4 +235,4 @@ Three tickets, mirroring the split that worked for land vitality (#38 / #41 / #4
 - **"Near" is an invisible difficulty setting.** How near, and for how much of an interval, decides whether ideas cross the map or stay in one valley. Surface it as a named constant with its reasoning, and report what it does.
 - **Drift may be emotionally flat.** If a household changing practice cannot be felt, the readout (#46, merged) has to carry it — and `AgDR-020` names this as its own refutation.
 - **The probes' scoring functions were invented.** Probe A says the world has variance structure enough for three practices; it does not say these three, implemented properly, land the same way. Task 7 is where that gets tested for real.
-- **Migration is no longer a risk.** Plan 1 measured herds travelling 10–32 tiles with all 14 leaving a camp's reach, against 0–8 before.
+- **Migration is still a risk, and worse than the spec supposed — #69.** Plan 1 measured herds travelling 10–32 tiles with all 14 leaving a camp's reach, against 0–8 before, and an earlier version of this plan read that as the risk being discharged. It is not. Those numbers come from a healthy world, where better ground is within sight. Measured *inside* a collapsed region, #64 found 3 of 9 probes stuck and 2 herds that never moved at all: a herd at the centre of ground wider than its sense range sees nothing better in any direction and stays. **Follow is the practice that depends on this**, and #62's claim that every emptied region refills is the one it could falsify.
