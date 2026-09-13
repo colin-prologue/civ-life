@@ -32,6 +32,25 @@ extends GutTest
 # `move_range` 1 and `sense_range` 4 are asserted as preconditions, so this test
 # measures the migration that exists rather than a retuned one. If it fails, the
 # finding is that migration needs its own ticket — not that this bar should move.
+#
+# MEASURED ON FIRST RUN (2026-09-13): 6 of 9 probed herds escaped, 3 did not.
+#
+#   seed 20260815   block (1,0)  STUCK  furthest 2 hexes from start, 14.7 heads
+#   seed 20260815   block (1,1)  STUCK  furthest 0 hexes — never moved
+#   seed 20260815   block (2,1)  escaped turn 6, 6 hexes out
+#   seed 987654321  block (1,0)  escaped turn 6, 6 hexes out
+#   seed 987654321  block (2,0)  STUCK  furthest 0 hexes — never moved
+#   seed 987654321  block (1,1)  escaped turn 6, 6 hexes out
+#   seed 987654321  block (2,1)  escaped turn 8, 8 hexes out
+#   seed 987654321  block (3,1)  escaped turn 5, 5 hexes out
+#   seed 987654321  block (1,2)  escaped turn 17, 6 hexes out
+#
+# Every escape happened in the first season or just after it; no herd that was
+# still inside at turn 17 got out in the remaining 31. The stuck herds sat at the
+# level the collapsed ground supports rather than at the population floor — the
+# crash is sat in, not died of. This is the failure the ticket predicted, and it
+# is why issue #39 carries no predator: migration out of a region wider than a
+# herd can see is its own ticket, ahead of predators.
 
 const SEEDS := [20260815, 987654321]
 const BLOCK := 10
