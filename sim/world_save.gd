@@ -5,7 +5,7 @@ extends RefCounted
 ##
 ## **What a world's state is.** `AgDR-009` once said a save was two numbers, seed
 ## and turn. That stopped being true the moment a herd's position carried from
-## one turn to the next, and `AgDR-021` states what replaced it: the `WorldMap`
+## one turn to the next, and `AgDR-022` states what replaced it: the `WorldMap`
 ## and everything hanging off it, minus the handful of things that are provably
 ## a function of the rest. `SAVED` below is that answer written as a list, one
 ## entry per class, and `NOT_SAVED` is the short list of exceptions with the

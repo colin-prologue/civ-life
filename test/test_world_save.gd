@@ -1,7 +1,7 @@
 extends GutTest
 
 # A world written out and read back is the same world, and stays the same world
-# as it runs on. See `sim/world_save.gd` and `AgDR-021`.
+# as it runs on. See `sim/world_save.gd` and `AgDR-022`.
 #
 # The comparison here is deliberately not hand-written. `_differences()` walks
 # every script variable of every object reachable from the world, so a field the
