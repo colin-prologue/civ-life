@@ -133,6 +133,194 @@ func test_no_absorbing_states_a_flattened_region_comes_all_the_way_back() -> voi
 			assert_gt(value, 0.9, "ten years of rest restores every tile toward full")
 
 
+func test_a_grazing_herd_wears_the_ground_it_stands_on() -> void:
+	var world := _world()
+	var herds := world.herds()
+	assert_gt(herds.size(), 0, "the world placed herds — otherwise this asserts nothing")
+	var watched: Herd = herds[0]
+	var where := watched.coord
+
+	for i in range(Seasons.TURNS_PER_SEASON):
+		world.advance_turn()
+
+	assert_lt(world.vitality_at(where, Land.Use.GRAZE), Land.MAX_VITALITY,
+			"a season of grazing shows on the tile")
+
+	# And it shows by an amount worth reading, somewhere. `< MAX_VITALITY` alone
+	# is satisfied by a float that moved in its last decimal place; the lowest
+	# value on the map says the herds are actually eating. Measured at 0.928
+	# after a year, 0.927 after the one season this waits.
+	var lowest := Land.MAX_VITALITY
+	for value in world.vitality_data(Land.Use.GRAZE):
+		lowest = minf(lowest, value)
+	assert_lt(lowest, 0.99, "and somewhere on the map the ground is visibly eaten down")
+
+
+func test_standing_on_barren_ground_costs_nothing() -> void:
+	# The bug this guards against: wear computed from how hungry the herd was
+	# rather than from what it ate would floor every tile in the world each
+	# winter, when nothing grows and every ration is bad.
+	#
+	# Built on an empty grid rather than a generated world, with a herd that
+	# cannot move or sense. A generated world already holds fourteen herds that
+	# would wander across the watched tile during the eighteen turns this waits
+	# for winter, and a mobile subject would wander off it — either way the
+	# assertion would be measuring something other than what it claims. The
+	# species is pinned immobile so the scenario is forced rather than hoped for.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	var land := Vector2i.ZERO
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.MOUNTAIN)
+
+	# name, consumption/head, growth, decline, move_range, sense_range, min, start
+	var rooted := Species.new("rooted", 0.006, 0.070, 0.110, 0, 0, 2.0, 40.0)
+	var herd := Herd.new(1, land, rooted, 40.0)
+	world.add_agent(herd)
+
+	# Winter on a mountain is the least forage the table offers.
+	while world.season() != Seasons.Season.WINTER:
+		world.advance_turn()
+	assert_eq(herd.coord, land, "the subject stayed on the watched tile")
+	var before := world.vitality_at(land, Land.Use.GRAZE)
+	for i in range(Seasons.TURNS_PER_SEASON):
+		world.advance_turn()
+
+	assert_eq(herd.coord, land, "and stayed there for the measurement")
+	assert_gt(world.vitality_at(land, Land.Use.GRAZE), before - 0.05,
+			"a herd on ground that fed it nothing barely wore it")
+
+
+func test_two_herds_sharing_a_tile_do_not_overcharge_it() -> void:
+	# The share each herd draws is settled against the census as it stood before
+	# anything moved. Without that, a herd stepped after one that has already
+	# grazed and left divides by a smaller denominator and claims a share the
+	# tile was charged for a moment earlier — so a shared tile wears faster than
+	# a tile carrying the same total number of animals in one herd.
+	# The populations are sized so the tile CANNOT feed them, and that is the
+	# whole point. Grass in spring is 0.95 forage against 0.006 consumption per
+	# head, so one tile supports about 158 animals. With 40 the herds always want
+	# less than their share, `minf(my_share, my_want)` always picks `my_want`,
+	# the denominator never enters the calculation, and this test passes happily
+	# with the sharing bug put back. 300 animals forces the proportional branch.
+	var shared := _bare_world()
+	var solo := _bare_world()
+	var where := Vector2i.ZERO
+	shared.add_agent(Herd.new(1, where, Species.grazer(), 150.0))
+	shared.add_agent(Herd.new(2, where, Species.grazer(), 150.0))
+	solo.add_agent(Herd.new(1, where, Species.grazer(), 300.0))
+
+	# Assert the premise rather than trusting it: if a later change to the forage
+	# table makes this tile generous enough to feed them, the comparison below
+	# stops testing anything and this is what says so. Read from the season curve
+	# rather than the world — a world that has never been advanced has no forage
+	# computed yet, and a ration of zero would satisfy this for the wrong reason.
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	assert_lt(Species.grazer().heads_supported_by(available), 300.0,
+			"the tile is forage-limited, so the proportional-share branch runs")
+
+	for i in range(Seasons.TURNS_PER_SEASON):
+		shared.advance_turn()
+		solo.advance_turn()
+
+	assert_almost_eq(
+		shared.vitality_at(where, Land.Use.GRAZE),
+		solo.vitality_at(where, Land.Use.GRAZE),
+		0.02,
+		"three hundred animals wear a tile the same whether they came as one herd or two"
+	)
+
+
+func test_grazing_does_not_wear_the_ground_for_cultivation() -> void:
+	# The per-use split, which is the entire point of AgDR-014. Ground eaten
+	# down by animals is still good ground to farm.
+	#
+	# On a bare world with an immobile herd, because the *magnitude* half of this
+	# claim needs ground that is grazed for the whole year. Measured on a
+	# generated world instead: a herd's starting tile reads 0.974 a year later
+	# and the most-eaten tile anywhere on the map reads 0.928, because herds
+	# rotate off worn ground — which is the mechanism working, not failing. A
+	# magnitude asserted at a snapshotted coordinate would be asserting where a
+	# herd happened to wander.
+	#
+	# Held ground settles far lower: 0.817 after one year, 0.73 after three.
+	var world := _bare_world()
+	var rooted := Species.new("rooted", 0.006, 0.070, 0.110, 0, 0, 2.0, 40.0)
+	world.add_agent(Herd.new(1, Vector2i.ZERO, rooted, 40.0))
+
+	for i in range(Seasons.TURNS_PER_YEAR):
+		world.advance_turn()
+
+	assert_lt(world.vitality_at(Vector2i.ZERO, Land.Use.GRAZE), 0.85,
+			"a year of being eaten wore the grazing")
+	# Every tile, not just the one underfoot: nothing in this world cultivates
+	# anything, so the whole cultivation row must still be untouched.
+	for value in world.vitality_data(Land.Use.CULTIVATE):
+		assert_eq(value, Land.MAX_VITALITY, "and left cultivation untouched")
+
+
+func test_a_farm_wears_the_ground_it_works() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var farm := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(farm)
+
+	for i in range(Seasons.TURNS_PER_YEAR):
+		world.advance_turn()
+
+	assert_lt(world.vitality_at(land, Land.Use.CULTIVATE), 0.95,
+			"a year of farming shows on the field")
+	assert_almost_eq(world.vitality_at(land, Land.Use.GRAZE), Land.MAX_VITALITY, 0.0001,
+			"and leaves the grazing untouched")
+
+
+func test_a_worn_field_yields_less() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var fresh := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(fresh)
+	world.advance_turn()
+	var first_year := fresh.store
+
+	world.set_vitality(land, Land.Use.CULTIVATE, Land.MIN_VITALITY)
+	fresh.store = 0.0
+	world.advance_turn()
+
+	assert_lt(fresh.store, first_year, "exhausted ground gives less than fresh ground")
+	assert_gt(fresh.store, 0.0, "but never nothing — the floor is above zero")
+
+
+func test_the_field_a_farm_advertises_is_the_field_it_actually_works() -> void:
+	# `yield_rate()` exists so a display can quote a farm's output without
+	# re-deriving it, and `produce()` deposits exactly what it returns. Wear had
+	# to go into the same expression rather than beside it: a `produce()` that
+	# read the worn field while `yield_rate()` still read the unworn curve would
+	# put a number on the map that the granary never sees.
+	var world := _world()
+	var land := _first_land_coord(world)
+	var farm := CityNode.new(1, land, CityNode.Kind.FARM)
+	world.add_node(farm)
+	world.set_vitality(land, Land.Use.CULTIVATE, 0.5)
+
+	var advertised := farm.yield_rate(world)
+	assert_almost_eq(advertised, CityNode.FARM_YIELD_PER_TURN * world.forage_at(land) * 0.5,
+			0.0001, "the quoted rate is the curve scaled by how worn the field is")
+
+	farm.begin_turn()
+	farm.produce(world)
+	assert_almost_eq(farm.took_in, advertised, 0.0001,
+			"and it is what the farm actually put in the barn")
+
+
+func test_a_herd_on_worn_ground_gets_less_from_it() -> void:
+	var world := _world()
+	var land := _first_land_coord(world)
+	var full := world.forage_for_use(land, Land.Use.GRAZE)
+	world.set_vitality(land, Land.Use.GRAZE, 0.5)
+	assert_almost_eq(world.forage_for_use(land, Land.Use.GRAZE), full * 0.5, 0.0001,
+			"half-worn ground is worth half as much to a grazer")
+
+
 ## The largest value in a vitality row. Used to assert that a test's setup
 ## actually took effect — a silently failed setup leaves every tile at 1.0,
 ## which satisfies most of the assertions in this file for the wrong reason.
@@ -141,3 +329,108 @@ func _highest(row: PackedFloat32Array) -> float:
 	for value in row:
 		top = maxf(top, value)
 	return top
+
+
+func test_a_herd_is_charged_for_the_animals_that_actually_grazed() -> void:
+	# Codex review on PR #51: `_graze()` updates the population before charging
+	# wear, so the share's numerator was this turn's *new* population while its
+	# denominator is the census frozen at the start of the turn. On ground that
+	# cannot feed the herd it shrinks first and is then under-charged; on rich
+	# ground it grows and is charged for animals that were not there to eat.
+	#
+	# A solo herd makes the arithmetic exact: the frozen census is its own
+	# pre-turn population, so its share is the whole tile's grazing, and the wear
+	# it causes can be written down before the turn is taken. The two-herd
+	# sharing test cannot see this — every herd shrinks by the same fraction and
+	# the error cancels.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.GRASS)
+	var where := Vector2i.ZERO
+	var herd := Herd.new(1, where, Species.grazer(), 300.0)
+	world.add_agent(herd)
+
+	# Read from the season curve rather than the world: forage on a world that
+	# has never been advanced may not be computed yet, and a zero here would
+	# make every assertion below pass for the wrong reason.
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	var before := herd.population
+	var per_head := herd.species.consumption_per_head
+
+	# The premise the bug needs: ground too poor to feed the herd, so it shrinks
+	# during the turn. If the forage table ever makes this tile generous, the
+	# comparison below stops testing anything, and this is what says so.
+	assert_lt(herd.species.heads_supported_by(available), before,
+			"the tile cannot feed all %d animals" % int(before))
+
+	var eaten := minf(available, before * per_head)
+	var expected := Land.recovered(Land.depleted(Land.MAX_VITALITY, eaten / Seasons.MAX_FORAGE))
+
+	world.advance_turn()
+
+	assert_lt(herd.population, before, "and it did shrink, so a post-graze count would differ")
+	assert_almost_eq(world.vitality_at(where, Land.Use.GRAZE), expected, 0.00001,
+			"the tile is worn by what the herd that stood on it ate, counted before it shrank")
+
+
+func test_the_chronicle_records_what_the_farm_actually_grew() -> void:
+	# Codex review on PR #51: `_record_turn()` runs after `produce()` has worn the
+	# field and after recovery has moved it again, so sampling
+	# `farm_yield_rate()` there records next turn's hypothetical harvest rather
+	# than this turn's. The chronicle is history; what was grown is `last_yield`,
+	# set before the wear.
+	var grid := HexGrid.new(8, 8)
+	var world := WorldMap.new(grid, 99)
+	for coord in grid.all_coords():
+		world.set_terrain(coord, WorldGen.Terrain.GRASS)
+	var farm := CityNode.new(1, Vector2i.ZERO, CityNode.Kind.FARM)
+	world.add_node(farm)
+
+	world.advance_turn()
+
+	# The premise: working the field moved its forward rate away from what it
+	# grew. Without wear these are the same number and the assertion below would
+	# hold whichever of them the chronicle recorded.
+	assert_gt(farm.last_yield - farm.yield_rate(world), 0.01,
+			"the field is worth less now than it was when it was harvested")
+	assert_almost_eq(world.chronicle.latest(Chronicle.FARM_YIELD), farm.last_yield, 0.00001,
+			"the chronicle records the harvest the farm actually took")
+
+
+func test_identical_herds_sharing_a_tile_fare_identically() -> void:
+	# Codex review on PR #51, third round: the frozen census settled who divides
+	# the forage, but the forage being divided was still read live. The herd
+	# stepped first wears the tile in `_graze()`, so the next reads a smaller
+	# `forage_for_use()` and gets a smaller ration and a smaller share of the
+	# wear — two identical herds on one tile ending the turn different purely
+	# because of where they sit in the agents array.
+	#
+	# Identical herds make any difference between them an ordering effect by
+	# construction. The sharing test above compares against a solo herd at a
+	# tolerance far looser than this effect, so it cannot see it.
+	var world := _bare_world()
+	var where := Vector2i.ZERO
+	var first := Herd.new(1, where, Species.grazer(), 150.0)
+	var second := Herd.new(2, where, Species.grazer(), 150.0)
+	world.add_agent(first)
+	world.add_agent(second)
+
+	var available := Seasons.forage_for(WorldGen.Terrain.GRASS, Seasons.season_for_turn(1))
+	# The premise: ground too poor to feed both, so each herd's ration and its
+	# share of the wear both depend on the forage it reads.
+	assert_lt(first.species.heads_supported_by(available), 300.0,
+			"the tile cannot feed both herds")
+
+	# Depletion is linear, so two half-shares wear the tile exactly as one whole
+	# share does, and the expected wear is one herd of 300 eating everything.
+	var eaten := minf(available, 300.0 * first.species.consumption_per_head)
+	var expected := Land.recovered(Land.depleted(Land.MAX_VITALITY, eaten / Seasons.MAX_FORAGE))
+
+	world.advance_turn()
+
+	assert_lt(first.population, 150.0, "the herds did thin, so the ration reached their numbers")
+	assert_almost_eq(second.population, first.population, 0.000001,
+			"two identical herds on one tile end the turn identical, whichever stepped first")
+	assert_almost_eq(world.vitality_at(where, Land.Use.GRAZE), expected, 0.00001,
+			"and between them they wear the tile exactly as one herd of the same size would")

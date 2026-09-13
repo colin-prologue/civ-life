@@ -63,7 +63,17 @@ const FARM_YIELD_PER_TURN := 1.0
 ## anything, and widening this number closes it — measured, at twelve the same
 ## obstruction cost eight percent of deliveries instead of most of them, because
 ## the barn simply absorbed the delay.
-const FARM_CAPACITY := 3.0
+##
+## **Re-derived when fields started wearing out (`AgDR-014`).** The rule above did
+## not change; the harvest it is stated in terms of did. A farm now holds its own
+## field at about two thirds of the seasonal curve — measured at 0.66 after ten
+## years — so a good harvest fell from 0.95 to roughly 0.63 a turn and three turns
+## of one fell with it. Left at 3.0 the barn had become six turns deep instead of
+## three, and a held-up carrier no longer cost the city anything much: the
+## obstruction test's share of throughput went from 54% to 71% against a 60%
+## ceiling. This is that ratio put back where its own sizing rule says it belongs,
+## not a number chosen to clear a red suite.
+const FARM_CAPACITY := 2.0
 
 ## What a granary holds. Large enough that nothing in a normal run meets it —
 ## `world-growth-tone` is abundance-baseline, and a granary that fills up and
@@ -135,11 +145,19 @@ const GATHERING_HALF_AT := 40.0
 ## mouths a real herd reports, so nothing real is ever rounded away.
 const GATHERING_DEMAND_FLOOR := 0.001
 
-## What a gathering node holds between carriers. The same barn as a farm, and
-## for the same reason: a store that could absorb a whole quiet season would make
-## the carriers decorative, and here it would also hide the thing this kind
-## exists to show — that the flow stops when the animals leave.
-const GATHERING_CAPACITY := FARM_CAPACITY
+## What a gathering node holds between carriers: about three turns of its best
+## harvest, the sizing rule the farm's barn states and for the same reason — a
+## store that could absorb a whole quiet season would make the carriers
+## decorative, and here it would also hide the thing this kind exists to show,
+## that the flow stops when the animals leave.
+##
+## Its own number rather than `FARM_CAPACITY`, which it was until the farm's
+## barn was re-derived for worn fields (`AgDR-014`). That reason does not reach a
+## camp: what it gathers is set by the mouths in range and nothing it draws on
+## wears out, so three turns of its best harvest is still 3.0. Sharing the
+## constant had shrunk the camp's barn as a side effect of a farm change. Found
+## by codex review on PR #51.
+const GATHERING_CAPACITY := 3.0
 
 const KIND_NAMES := {
 	Kind.FARM: "farm",
@@ -213,6 +231,26 @@ func kind_name() -> String:
 func produce(world: WorldMap) -> void:
 	last_yield = yield_of(world)
 	deposit(last_yield)
+	if kind != Kind.FARM:
+		return
+	# Working the field wears it, for cultivation and for nothing else
+	# (`AgDR-014`). A herd can eat this same tile down to the floor and the farm
+	# will not notice, which is the whole content of that record.
+	#
+	# Charged against what the field actually grew rather than against the fact
+	# that a farm stands here — the same correction `Herd._graze()` carries. Wear
+	# proportional to how badly a farm wanted a harvest would floor every field
+	# in the world each winter, when the ground gives least and the want is
+	# largest. A field that grew nothing was barely worked.
+	#
+	# `last_yield` is charged rather than what `deposit()` accepted. A full barn
+	# is a harvest with nowhere to go, not a harvest that never happened, and the
+	# ground was turned either way.
+	#
+	# Charged here rather than inside `yield_of()` because that expression is also
+	# what a display quotes: wear belongs to the turn being taken, not to the act
+	# of asking what the field is worth.
+	world.draw_vitality(coord, Land.Use.CULTIVATE, last_yield / FARM_YIELD_PER_TURN)
 
 
 ## What this node grows this turn, before storage is considered.
@@ -231,10 +269,17 @@ func produce(world: WorldMap) -> void:
 ## gatherable reports a number rather than announcing a type.
 ##
 ## A granary grows nothing and waits to be filled.
+##
+## The farm branch reads the *cultivation* share of its tile rather than the bare
+## seasonal curve (`AgDR-014`): a field that has been worked hard gives less, and
+## a field a herd has eaten down gives exactly as much as it always did. Reading
+## the worn field here rather than beside the `deposit()` in `produce()` is what
+## keeps the number a display quotes and the number the granary receives the same
+## number — the drift this single expression exists to prevent.
 func yield_of(world: WorldMap) -> float:
 	match kind:
 		Kind.FARM:
-			return FARM_YIELD_PER_TURN * world.forage_at(coord)
+			return FARM_YIELD_PER_TURN * world.forage_for_use(coord, Land.Use.CULTIVATE)
 		Kind.GATHERING:
 			return GATHERING_YIELD_PER_TURN * gathering_share(
 				world.forage_demand_within(coord, GATHERING_RADIUS)
@@ -288,6 +333,23 @@ func yield_rate(world: WorldMap) -> float:
 	if kind != Kind.FARM:
 		return 0.0
 	return yield_of(world)
+
+
+## What this farm actually took off its field on the last turn it produced.
+##
+## The remembered twin of `yield_rate()`, and farm-only for the same reason: the
+## chronicle's `FARM_YIELD` series quotes the fields, while a camp's flow is told
+## through `yield_share()`. `last_yield` itself is set for every producing kind,
+## so summing it across `nodes` would quietly fold a camp's gathering into the
+## fields' harvest.
+##
+## The kind test lives here rather than in `WorldMap.farm_harvest()` because a
+## node knows what it is and the world does not ask (`AgDR-013`) — the same split
+## `yield_rate()` above already makes.
+func harvest() -> float:
+	if kind != Kind.FARM:
+		return 0.0
+	return last_yield
 
 
 ## Start a turn with both flow counters at zero. Called by the world before
