@@ -27,7 +27,9 @@ extends RefCounted
 ## longer reconstructible from `(seed, turn)` alone. Determinism is unaffected —
 ## the same seed advanced the same number of turns still produces the same
 ## herds, in the same places, with the same numbers — but a save is now a state
-## rather than two integers.
+## rather than two integers. `sim/world_save.gd` writes that state out, and
+## `AgDR-021` says what is in it. A variable added here must be added to that
+## file's field lists too, and a test fails until it is.
 ##
 ## The `chronicle` is the second thing here that is not a rule. It records a
 ## season's worth of per-turn readings so that something drawing this world can

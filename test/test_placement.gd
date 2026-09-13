@@ -170,7 +170,10 @@ func test_only_the_one_builder_constructs_a_city() -> void:
 	var constructors := ["CityNode.new(", "Route.new(", "Citizen.new("]
 	var offenders: Array[String] = []
 	for path in _gd_files("res://sim") + _gd_files("res://game"):
-		if path == "res://sim/city_gen.gd":
+		# The loader is the one other exemption, and it is not a second builder:
+		# it reconstructs a city that was already built through `CityGen`, field
+		# for field, and decides nothing about where anything goes.
+		if path == "res://sim/city_gen.gd" or path == "res://sim/world_save.gd":
 			continue
 		var text := FileAccess.get_file_as_string(path)
 		assert_ne(text, "", "could read %s" % path)

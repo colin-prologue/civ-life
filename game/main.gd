@@ -30,10 +30,17 @@ extends Node2D
 ## than dropped, because a first verb that silently does nothing is
 ## indistinguishable from a broken one.
 
-## Fixed for now. A seed picker is a later concern; what matters at this point is
-## that relaunching shows the same world, so a visual change is attributable to
-## the change and not to a new map.
-const WORLD_SEED := 20260815
+## The seed a launch uses when nobody names one. Relaunching with no argument
+## shows the same world, so a visual change is attributable to the change and not
+## to a new map — and every committed capture was taken on this seed.
+##
+## Choose another with `-- --seed=N` on the command line, by typing one into the
+## seed field, or with `N` for the next one along.
+const DEFAULT_SEED := 20260815
+
+## The one save. Choosing this path is the whole of what `game/` does about
+## saving; what a save *is* belongs to `sim/world_save.gd`.
+const SAVE_PATH := "user://world.save.json"
 
 ## Turns per second at each speed setting. The top end is chosen so that a human
 ## lifetime of world time is minutes rather than an afternoon: at 16 turns per
@@ -77,14 +84,81 @@ var _accumulator := 0.0
 @onready var _view: HexMapView = $HexMapView
 @onready var _status: Label = $Status
 @onready var _prompt: Label = $Prompt
+@onready var _seed_field: LineEdit = $SeedField
 
 
 func _ready() -> void:
-	world = WorldGen.generate(WORLD_SEED)
+	var args := OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	_seed_field.text_submitted.connect(_on_seed_submitted)
+	_replace_world(WorldGen.generate(seed_from_args(args, DEFAULT_SEED)))
+	get_viewport().size_changed.connect(_on_viewport_resized)
+
+
+## The seed named by `--seed=N` or `--seed N`, or `fallback` if there is none or
+## it is not a whole number. Static so it can be asserted without a launch.
+static func seed_from_args(args: PackedStringArray, fallback: int) -> int:
+	for i in range(args.size()):
+		var value := ""
+		if args[i].begins_with("--seed="):
+			value = args[i].trim_prefix("--seed=")
+		elif args[i] == "--seed" and i + 1 < args.size():
+			value = args[i + 1]
+		else:
+			continue
+		return value.to_int() if value.is_valid_int() else fallback
+	return fallback
+
+
+## Throw the current world away and generate a fresh one from `world_seed`.
+func choose_seed(world_seed: int) -> void:
+	_replace_world(WorldGen.generate(world_seed))
+	message = "new world from seed %d" % world_seed
+	_show_selection()
+
+
+## Write the world to `path`. The filename is chosen here; everything else is
+## `WorldSave`'s.
+func save_world(path := SAVE_PATH) -> void:
+	var refusal := WorldSave.write_file(world, path)
+	message = "saved turn %d to %s" % [world.turn, path] if refusal.is_empty() else "not saved: %s" % refusal
+	_show_selection()
+
+
+## Replace the world with the one saved at `path`, or say why not and leave the
+## current world where it is.
+func load_world(path := SAVE_PATH) -> void:
+	var loaded := WorldSave.read_file(path)
+	if loaded["world"] == null:
+		message = "not loaded: %s" % loaded["refusal"]
+		_show_selection()
+		return
+	_replace_world(loaded["world"])
+	message = "loaded turn %d from %s" % [world.turn, path]
+	_show_selection()
+
+
+## Point everything at a different world. The selection and a half-drawn route
+## refer to structures in the old one, so both go.
+func _replace_world(next: WorldMap) -> void:
+	world = next
+	has_selection = false
+	route_origin = null
+	_seed_field.text = str(world.world_seed)
+	_seed_field.release_focus()
 	_view.show_world(world, get_viewport_rect().size)
 	_show_selection()
 	_update_status()
-	get_viewport().size_changed.connect(_on_viewport_resized)
+
+
+func _on_seed_submitted(text: String) -> void:
+	if text.strip_edges().is_valid_int():
+		choose_seed(text.strip_edges().to_int())
+		return
+	message = "a seed is a whole number"
+	_seed_field.text = str(world.world_seed)
+	_seed_field.release_focus()
+	_show_selection()
 
 
 ## How many whole turns a given accumulation of fractional turns owes, and what
@@ -262,6 +336,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var click := event as InputEventMouseButton
 		if click.pressed and click.button_index == MOUSE_BUTTON_LEFT:
+			# A click on the map takes focus back from the seed field, or the
+			# next key pressed would be typed into it instead of building.
+			_seed_field.release_focus()
 			click_at(click.position)
 			get_viewport().set_input_as_handled()
 		return
@@ -298,6 +375,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			# forwards and decides nothing — the same shape as every other key
 			# here, and it still moves no part of the simulation.
 			_view.cycle_overlay()
+		KEY_N:
+			choose_seed(world.world_seed + 1)
+		KEY_S:
+			save_world()
+		KEY_L:
+			load_world()
 		_:
 			return
 	get_viewport().set_input_as_handled()
@@ -380,7 +463,7 @@ func _update_prompt() -> void:
 		var off := HexGrid.to_offset(selected_coord)
 		where = "tile %d,%d" % [off.x, off.y]
 	var said := "" if message.is_empty() else " — %s" % message
-	_prompt.text = "%s%s     [click] select  [F] farm  [G] granary  [R] route  [Esc] clear  [space] step  [P] play  [ ] speed  [O] overlay" % [
+	_prompt.text = "%s%s     [click] select  [F] farm  [G] granary  [R] route  [Esc] clear  [space] step  [P] play  [ ] speed  [O] overlay  [N] next seed  [S] save  [L] load" % [
 		where,
 		said,
 	]

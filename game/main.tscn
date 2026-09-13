@@ -24,3 +24,11 @@ offset_right = 1100.0
 offset_bottom = 212.0
 mouse_filter = 2
 text = "nothing selected"
+
+[node name="SeedField" type="LineEdit" parent="."]
+offset_left = 12.0
+offset_top = 216.0
+offset_right = 212.0
+offset_bottom = 246.0
+placeholder_text = "seed, then Enter"
+tooltip_text = "Type a seed and press Enter to generate that world"
