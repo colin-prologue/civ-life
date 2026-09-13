@@ -1,4 +1,4 @@
-# AgDR-020 — Population is the walkers, and the granary grows it
+# AgDR-021 — Population is the walkers, and the granary grows it
 
 **Status:** accepted
 **Date:** 2026-09-13
