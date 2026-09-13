@@ -1,11 +1,12 @@
 # AgDR-020 — A lineage is its practice, standing is derived, and people have bodies without interiors
 
-**Status:** proposed
+**Status:** accepted
+**Ratified:** 2026-09-13 by the owner
 **Date:** 2026-09-13
 **Parent intent:** `world-growth-tone`
 **Amends:** `AgDR-003`, which anticipated standing as a quantity of its own
 **Spec:** `docs/superpowers/specs/2026-08-29-early-game-practices-design.md`
-**Ticket:** to be filed with the slice 1 plan
+**Tickets:** #60, #61, #62
 
 > Number taken from `main` at `cf9b24c`, where `AgDR-019` is the highest. Parallel
 > branches can collide on this (civ-life #52); if another record claims 020 first,
