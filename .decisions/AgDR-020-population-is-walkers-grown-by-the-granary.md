@@ -13,17 +13,23 @@ person the city has is on a road, carrying.
 growth.** Each turn a citizen asks its route's sink for `Citizen.APPETITE`. The
 node counts mouths and unmet appetite; it cannot tell who asked. After agents
 step, a node that fed somebody and held above `GROWTH_FRACTION` of capacity for
-`GROWTH_TURNS` gains one carrier on its thinnest road. A node that ends a year
-(`LEAN_TURNS`) with more than `LEAN_SHARE` (a third) of its people's appetite
-unmet loses the newest carrier on its busiest road. It never goes below the
-`CITIZENS_PER_ROUTE` the road was laid with. A season is a quarter of a year, so
-one bad season can't cross the line.
+`GROWTH_TURNS` gains one carrier on its thinnest road. A node that closes two
+years of books (`LEAN_TURNS`) with more than `LEAN_SHARE` (a sixth) of its
+people's appetite unmet loses the newest carrier on its busiest road. It never
+goes below the `CITIZENS_PER_ROUTE` the road was laid with. One empty season is
+at most an eighth of a two-year book, so it can't cross the line.
 
-Hunger is judged as a share of the year, not as a run of hungry turns. The run
-version was tried first. A city eating more than its land grows still gets a
-few fed turns after each delivery, and each one restarted the count. A city
-that grew on a fresh field then stayed above what the worn field fed, forever,
-with an empty granary.
+The loss rule was tuned by measurement, and it went wrong twice first.
+- **A run of hungry turns.** A city eating more than its land grows still gets
+  a few fed turns after each delivery, and each one restarted the count. A city
+  that grew on a fresh field stayed above what the worn field fed, forever.
+- **A third of one year.** This left a dead band. On the standard seed, 9 people
+  were a quarter short and stayed at 9. 6 people couldn't fill the granary to
+  half and stayed at 6. A city knocked from 9 to 6 never came back.
+
+A sixth of two years closes that band. It needs two years because one year
+can't tell a single empty season (a quarter of the year) from a city that is a
+quarter short.
 
 **The bound is the land, not a cap.** Nothing in `sim/` knows a maximum
 population. Farms and camps set what arrives and appetite sets what leaves, so

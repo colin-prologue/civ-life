@@ -110,25 +110,35 @@ const GROWTH_FRACTION := 0.5
 ## stops the loop overshooting badly before the extra mouths show up in the store.
 const GROWTH_TURNS := Seasons.TURNS_PER_SEASON
 
-## How long a granary keeps its books on hunger before judging them. A year.
-const LEAN_TURNS := Seasons.TURNS_PER_YEAR
+## How long a granary keeps its books on hunger before judging them. Two years.
+##
+## Two because of what `LEAN_SHARE` has to do, below: be low enough to notice a
+## city eating a quarter more than its land grows, and still be out of reach of
+## one empty season. Over one year no share does both — a whole empty season is a
+## quarter of a year, which is the same size as the overpopulation it has to
+## catch. Over two years that season is an eighth, and it stays at most an eighth
+## however it straddles the boundary between two sets of books.
+const LEAN_TURNS := Seasons.TURNS_PER_YEAR * 2
 
-## The share of a year's appetite a granary has to leave unmet before one of the
-## people it feeds is lost. A third.
+## The share of the books' appetite a granary has to leave unmet before one of
+## the people it feeds is lost. A sixth.
 ##
 ## `world-growth-tone` rule 2: soft fail only, and only from sustained
-## mismanagement — never a single bad season. A season is a quarter of the year,
-## so a granary emptied for a whole season in an otherwise fed year leaves a
-## quarter unmet and costs nobody. Losing a person takes more than a season's
-## worth of hunger spread across the year, and then costs one person a year.
+## mismanagement — never a single bad season. A granary emptied for a whole season
+## inside otherwise fed books leaves an eighth unmet and costs nobody. Losing a
+## person takes a city short by more than that across two years, and then costs
+## one person per two years.
 ##
-## Judged as a share of the year rather than as a run of consecutive hungry
-## turns, which was the first version and was wrong in a measured way: a city
-## that eats more than its land grows still gets a few fed turns a year, right
-## after each good delivery, and each one restarted the run. Populations grown on
-## a fresh field then sat forever above what the worn field fed, with an empty
-## granary — no restoring force from above, which is the one rule 3 asks for.
-const LEAN_SHARE := 1.0 / 3.0
+## Measured into place rather than chosen, in two wrong steps worth recording.
+## The first version counted *consecutive* hungry turns, and a city eating more
+## than its land grows still gets a fed turn after each good delivery, which
+## restarted the count — a city grown on a fresh field sat above what the worn
+## field fed indefinitely. The second judged a year against a third, and left a
+## dead band: on the standard seed a city of nine was a quarter short and stayed
+## nine, a city of six could not fill its granary and stayed six, and a city
+## knocked from one to the other never came back. At a sixth of two years the
+## nine sheds people until it is fed, which is where the growth line already was.
+const LEAN_SHARE := 1.0 / 6.0
 
 ## What a gathering node produces in one turn when the ground around it is
 ## thick with animals. The same number as a farm at full forage, so "a good year

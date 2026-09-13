@@ -26,10 +26,11 @@ const SETTLE_TURNS := 500
 ## of what "bounded" means for one farm and one camp.
 const RUNAWAY_BOUND := 40
 
-## Turns of enforced hunger in the restoring-force and deprivation tests.
-## Two years: long enough that `CityNode.LEAN_TURNS` fires, so the city actually
-## loses people and "returns" has something to return from.
-const DEPRIVATION_TURNS := Seasons.TURNS_PER_YEAR * 2
+## Turns of enforced hunger in the restoring-force test. Three years: long
+## enough to fill at least one whole set of hunger books (`CityNode.LEAN_TURNS`)
+## wherever they happen to start, so the city actually loses people and
+## "returns" has something to return from.
+const DEPRIVATION_TURNS := Seasons.TURNS_PER_YEAR * 3
 
 ## Turns the city is left alone afterwards to find its level again.
 const RECOVERY_TURNS := Seasons.TURNS_PER_YEAR * 20
@@ -129,27 +130,53 @@ func test_a_hungry_city_returns_toward_the_level_it_was_at() -> void:
 	# AC4, rule 3: perturb, run forward, observe return. The perturbation is the
 	# store taken away every turn for two years — long enough that people are
 	# actually lost, so the return has somewhere to return from.
+	#
+	# "Its previous level" is read off an untouched twin rather than off the
+	# perturbed city's own count before the hunger. The level is not a constant:
+	# a city grows fastest while its field is fresh and gives some of that back
+	# as the field wears (`AgDR-014`), so a snapshot taken at one turn and
+	# compared against a turn twenty years later would be measuring the field as
+	# much as the restoring force. The twin is the same seed, the same turns,
+	# minus the perturbation — the only difference between the two is the thing
+	# being tested.
 	var world := WorldGen.generate(SEED_A)
+	var twin := WorldGen.generate(SEED_A)
 	for i in range(SETTLE_TURNS):
 		world.advance_turn()
+		twin.advance_turn()
 	var level := world.citizen_count()
 
 	_deprive(world, DEPRIVATION_TURNS)
+	for i in range(DEPRIVATION_TURNS):
+		twin.advance_turn()
 	var knocked := world.citizen_count()
+	var twin_then := twin.citizen_count()
 
 	var counts := PackedInt32Array()
+	var twin_counts := PackedInt32Array()
 	for i in range(RECOVERY_TURNS):
 		world.advance_turn()
+		twin.advance_turn()
 		counts.append(world.citizen_count())
-	var recovered := _band(counts, RECOVERY_TURNS - Seasons.TURNS_PER_YEAR * 5, RECOVERY_TURNS)
+		twin_counts.append(twin.citizen_count())
+	var tail := RECOVERY_TURNS - Seasons.TURNS_PER_YEAR * 5
+	var recovered := _band(counts, tail, RECOVERY_TURNS)
+	var untouched := _band(twin_counts, tail, RECOVERY_TURNS)
 
-	gut.p("settled at %d, knocked down to %d, back to %d..%d over the last five years of twenty" % [
-		level, knocked, recovered[0], recovered[1],
+	gut.p("settled at %d; two hungry years took it to %d against the twin's %d; over the last five years of twenty it held %d..%d against the twin's %d..%d" % [
+		level, knocked, twin_then, recovered[0], recovered[1], untouched[0], untouched[1],
 	])
-	assert_lt(knocked, level, "two years of hunger did cost people — the perturbation was real")
+	assert_lt(
+		knocked, twin_then,
+		"two years of hunger did cost people — the perturbation was real"
+	)
 	assert_gte(
-		recovered[1], level - 1,
-		"and fed again, the city climbed back to within one person of where it was"
+		recovered[1], untouched[0] - 1,
+		"and fed again, the city climbed back to within one person of the city that was never hungry"
+	)
+	assert_lte(
+		recovered[0], untouched[1] + 1,
+		"without overshooting it either"
 	)
 
 
@@ -188,23 +215,38 @@ func test_sustained_hunger_costs_people_and_never_a_road_or_the_city() -> void:
 
 func test_one_bad_season_costs_nobody() -> void:
 	# Rule 2's "never a single unlucky season", for the sharpest season there is:
-	# the store emptied every turn for a whole season, inside a year that was
-	# otherwise fed. Run across several years so the season lands at every point
-	# in the hunger books, and a year's judgement is always included.
+	# the store emptied every turn for a whole season, inside books that were
+	# otherwise fed. Two sets of books, one bad season in each — the second placed
+	# straddling the boundary between them, which is the worst place for it.
 	var world := _flat_world()
 	var route := _built_city(world)
 	var granary := route.sink
-	var lowest := world.citizen_count()
-	var highest := lowest
-	for t in range(Seasons.TURNS_PER_YEAR * 4):
-		# One bad season in every year, and a different one each year.
-		var year := t / Seasons.TURNS_PER_YEAR
-		var bad := (t % Seasons.TURNS_PER_YEAR) / Seasons.TURNS_PER_SEASON == year % 4
-		granary.store = 0.0 if bad else granary.capacity * 0.5
+
+	# A city with people to lose first. At the founding crew the floor would
+	# make this pass whatever the rule said.
+	var growing := CityNode.GROWTH_TURNS * 3
+	for t in range(growing):
+		granary.store = granary.capacity
 		world.advance_turn()
-		assert_gte(world.citizen_count(), highest, "turn %d: nobody was lost" % t)
-		highest = maxi(highest, world.citizen_count())
-	gut.p("four years with one empty season each: %d people throughout" % highest)
+	var grown := world.citizen_count()
+	assert_gt(grown, CityGen.CITIZENS_PER_ROUTE, "the city grew above its floor before the test")
+
+	var books := CityNode.LEAN_TURNS
+	var first_bad := growing + Seasons.TURNS_PER_SEASON * 2
+	var second_bad := growing + books * 2 - Seasons.TURNS_PER_SEASON / 2
+	var lowest := grown
+	for t in range(growing, growing + books * 2 + Seasons.TURNS_PER_SEASON):
+		var bad := (t >= first_bad and t < first_bad + Seasons.TURNS_PER_SEASON) \
+			or (t >= second_bad and t < second_bad + Seasons.TURNS_PER_SEASON)
+		# Otherwise held just at the growth line rather than above it, so the
+		# city is fed and not growing, and what is measured is the loss rule alone.
+		granary.store = 0.0 if bad else granary.capacity * CityNode.GROWTH_FRACTION
+		world.advance_turn()
+		lowest = mini(lowest, world.citizen_count())
+	gut.p("grown to %d; two sets of books with an empty season in each: lowest %d" % [
+		grown, lowest,
+	])
+	assert_gte(lowest, grown, "an empty season, wherever it fell in the books, cost nobody")
 
 
 # --- 5. the rule it is held to, and determinism ------------------------------

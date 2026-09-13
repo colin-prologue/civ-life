@@ -338,8 +338,9 @@ static func _next_agent_id(world: WorldMap) -> int:
 ## capacity for `CityNode.GROWTH_TURNS` gains a person, who appears at its door
 ## and walks out along whichever of its roads has the fewest carriers.
 ##
-## **Loss.** A granary that ends a year (`CityNode.LEAN_TURNS`) having left more
-## than `CityNode.LEAN_SHARE` of its people's appetite unmet loses one — the
+## **Loss.** A granary that closes two years of books (`CityNode.LEAN_TURNS`)
+## having left more than `CityNode.LEAN_SHARE` of its people's appetite unmet
+## loses one — the
 ## newest carrier on its busiest road — but never takes a road
 ## below the `CITIZENS_PER_ROUTE` it was laid with. That floor is the guarantee
 ## rather than a tuning: no road is ever left unwalked, no amount of hunger reaches
