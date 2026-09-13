@@ -169,6 +169,11 @@ const _TREND_STEADY := Color(0.62, 0.64, 0.68)
 const _NODE_SCALE := 0.52
 const _CITIZEN_SCALE := 0.20
 
+## How far from a tile's centre people sharing it stand, as a fraction of the hex
+## radius. Enough that a dot does not overlap its neighbour at the size above, and
+## inside the hex so nobody appears to stand on the next tile.
+const _CITIZEN_SPREAD := 0.45
+
 ## Road width as a fraction of the hex radius, floored in pixels so the road does
 ## not vanish when the whole map is squeezed into a small window.
 const _ROAD_WIDTH_SCALE := 0.18
@@ -707,10 +712,26 @@ func _draw_flow_stubs(box: Rect2, took_in: float, gave_out: float) -> void:
 ## place in the whole simulation where the wild world touches the built one
 ## (`Citizen.MAX_HELD_UP`), and until now a stalled dot and a walking dot were
 ## the same picture.
+##
+## People sharing a tile are spread around its centre rather than drawn on top of
+## each other. Since #29 a fed city grows, and its roads are three tiles long, so
+## ten people stand on three tiles — drawn at the centre they read as three dots,
+## and a city filling up would look like one that stayed the same size. The
+## spread is counted afresh inside this call, in step order, and kept nowhere.
 func _draw_citizens() -> void:
 	var radius := maxf(2.0, _radius * _CITIZEN_SCALE)
+	var sharing := {}
+	for citizen in _world.citizens():
+		sharing[citizen.coord] = int(sharing.get(citizen.coord, 0)) + 1
+	var placed := {}
 	for citizen in _world.citizens():
 		var centre := center_of(citizen.coord)
+		var here := int(sharing[citizen.coord])
+		if here > 1:
+			var nth := int(placed.get(citizen.coord, 0))
+			placed[citizen.coord] = nth + 1
+			centre += Vector2.from_angle(TAU * float(nth) / float(here) - PI / 2.0) \
+				* _radius * _CITIZEN_SPREAD
 		var fill := _CITIZEN_LOADED if citizen.carrying > 0.0 else _CITIZEN_FILL
 		if citizen.is_held_up():
 			draw_arc(centre, radius * _HELD_RING_SCALE, 0.0, TAU, 20, _CITIZEN_HELD,

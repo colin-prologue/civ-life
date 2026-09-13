@@ -71,7 +71,9 @@ func test_a_granary_held_above_the_line_for_a_season_gains_a_person() -> void:
 
 	assert_eq(world.citizen_count(), before + 1, "a season of plenty added one person")
 	assert_eq(route.carriers.size(), before + 1, "who joined the road the granary serves")
-	assert_eq(route.carriers[-1].coord, granary.coord, "and set out from the granary's door")
+	var newest: Agent = world.agents[-1]
+	assert_eq(route.carriers[-1], newest.id, "the newest agent in the world is that person")
+	assert_eq(newest.coord, granary.coord, "and set out from the granary's door")
 
 
 func test_a_new_person_joins_the_thinnest_road_into_the_granary() -> void:
@@ -258,7 +260,9 @@ func test_the_granary_cannot_find_out_who_is_eating() -> void:
 	var source := FileAccess.get_file_as_string("res://sim/city_gen.gd")
 	var start := source.find("static func tend_population")
 	assert_gt(start, -1, "found the growth rule")
-	var end := source.find("\nstatic func _lose_carrier", start)
+	# To the first blank pair of lines — the end of the function, before the next
+	# function's docstring, whose prose is free to say "is".
+	var end := source.find("\n\n\n", start)
 	var body := source.substr(start, end - start)
 	for pattern in ["citizens(", "herds(", ".agents", " is "]:
 		assert_false(body.contains(pattern), "the growth rule does not use `%s`" % pattern)

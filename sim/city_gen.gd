@@ -320,7 +320,7 @@ static func _lay_route(world: WorldMap, source: CityNode, sink: CityNode) -> Rou
 static func _add_carrier(world: WorldMap, route: Route, index: int) -> Citizen:
 	var citizen := Citizen.new(_next_agent_id(world), route, index)
 	world.add_agent(citizen)
-	route.carriers.append(citizen)
+	route.carriers.append(citizen.id)
 	return citizen
 
 
@@ -388,8 +388,15 @@ static func _served_route(world: WorldMap, node: CityNode, fewest: bool) -> Rout
 
 ## The newest person on a road stops working it. Whatever they were carrying is
 ## put down in the granary rather than lost with them.
+##
+## Found by id, which is unique for as long as the world runs (`_next_agent_id`).
 static func _lose_carrier(world: WorldMap, route: Route) -> void:
-	var citizen: Citizen = route.carriers.pop_back()
-	route.sink.deposit(citizen.carrying)
-	citizen.carrying = 0.0
-	world.remove_agent(citizen)
+	var leaving := route.carriers.pop_back() as int
+	for agent in world.agents:
+		if agent.id != leaving:
+			continue
+		var citizen: Citizen = agent
+		route.sink.deposit(citizen.carrying)
+		citizen.carrying = 0.0
+		world.remove_agent(citizen)
+		return
