@@ -75,12 +75,70 @@ const FARM_YIELD_PER_TURN := 1.0
 ## not a number chosen to clear a red suite.
 const FARM_CAPACITY := 2.0
 
-## What a granary holds. Large enough that nothing in a normal run meets it —
-## `world-growth-tone` is abundance-baseline, and a granary that fills up and
-## starts refusing deliveries is a scarcity mechanic arriving by the back door.
-## It exists so "with a capacity" is a real property rather than an unbounded
-## float.
-const GRANARY_CAPACITY := 5000.0
+## What a granary holds.
+##
+## **Re-derived when people started eating (#29).** This was 5000 — "large enough
+## that nothing in a normal run meets it" — because a granary that fills and
+## refuses deliveries is a scarcity mechanic arriving by the back door. That
+## reasoning assumed grain had nowhere to go but the store. It now does: a store
+## that sits well above `GROWTH_FRACTION` of this for `GROWTH_TURNS` turns becomes
+## another person, and that person eats. A granary at this size is therefore
+## turned into people long before it is full, and the size is what makes "a fraction
+## of capacity" a reachable bar rather than a number no city ever sees.
+##
+## Forty grain is about two seasons of what the starting city eats, and about a
+## winter of what a grown one eats — deep enough to carry a city through the lean
+## half of the year, shallow enough that a good summer visibly fills it.
+const GRANARY_CAPACITY := 40.0
+
+## The share of its capacity a granary has to hold, turn after turn, before the
+## people it feeds count as having a surplus.
+##
+## Half. A granary at half is one that has carried the city through the turns
+## since the last harvest and still has a winter's worth in hand — that is what
+## plenty looks like here, as opposed to "not empty". Lower than half and an
+## ordinary summer grows a city it cannot feed in winter; higher and growth waits
+## on a store so full that deliveries start being refused first.
+const GROWTH_FRACTION := 0.5
+
+## Consecutive turns a granary has to hold above `GROWTH_FRACTION` before a new
+## person appears. One season.
+##
+## A season because it is the unit the world is legible in: a single good turn is
+## a delivery landing, and a season held is a surplus. It is also the cap on how
+## fast a city grows — at most one person per granary per season — which is what
+## stops the loop overshooting badly before the extra mouths show up in the store.
+const GROWTH_TURNS := Seasons.TURNS_PER_SEASON
+
+## How long a granary keeps its books on hunger before judging them. Two years.
+##
+## Two because of what `LEAN_SHARE` has to do, below: be low enough to notice a
+## city eating a quarter more than its land grows, and still be out of reach of
+## one empty season. Over one year no share does both — a whole empty season is a
+## quarter of a year, which is the same size as the overpopulation it has to
+## catch. Over two years that season is an eighth, and it stays at most an eighth
+## however it straddles the boundary between two sets of books.
+const LEAN_TURNS := Seasons.TURNS_PER_YEAR * 2
+
+## The share of the books' appetite a granary has to leave unmet before one of
+## the people it feeds is lost. A sixth.
+##
+## `world-growth-tone` rule 2: soft fail only, and only from sustained
+## mismanagement — never a single bad season. A granary emptied for a whole season
+## inside otherwise fed books leaves an eighth unmet and costs nobody. Losing a
+## person takes a city short by more than that across two years, and then costs
+## one person per two years.
+##
+## Measured into place rather than chosen, in two wrong steps worth recording.
+## The first version counted *consecutive* hungry turns, and a city eating more
+## than its land grows still gets a fed turn after each good delivery, which
+## restarted the count — a city grown on a fresh field sat above what the worn
+## field fed indefinitely. The second judged a year against a third, and left a
+## dead band: on the standard seed a city of nine was a quarter short and stayed
+## nine, a city of six could not fill its granary and stayed six, and a city
+## knocked from one to the other never came back. At a sixth of two years the
+## nine sheds people until it is fed, which is where the growth line already was.
+const LEAN_SHARE := 1.0 / 6.0
 
 ## What a gathering node produces in one turn when the ground around it is
 ## thick with animals. The same number as a farm at full forage, so "a good year
@@ -202,6 +260,32 @@ var last_yield: float
 var took_in: float
 var gave_out: float
 
+## Mouths that asked this node for food this turn, and how much of what they
+## asked for it could not give. Cleared with the flows at the top of the turn.
+##
+## Counted by the node rather than by walking the agents, for `AgDR-013`'s reason
+## seen from the store's side: whoever eats reports a quantity to the thing they
+## eat from, and nothing here can find out what they are. A node nobody ate from
+## this turn has `mouths == 0`, and that — not its kind — is why a farm never
+## grows a population.
+var mouths: int
+var unmet: float
+
+## Consecutive turns this node has fed somebody while holding above
+## `GROWTH_FRACTION` of its capacity — what growth reads.
+##
+## And the hunger books for the year in progress: turns into it, appetite asked,
+## appetite unmet — what loss reads, once `year_turns` reaches `LEAN_TURNS`.
+##
+## State carried between turns, which the other fields here are not — the reason
+## `AgDR-019` gave for keeping one class holds anyway: every kind carries these,
+## they mean the same thing on every kind, and they stay at zero on any node
+## nobody eats from.
+var plentiful_turns: int
+var year_turns: int
+var year_asked: float
+var year_unmet: float
+
 
 func _init(p_id: int, p_coord: Vector2i, p_kind: int, p_capacity := -1.0) -> void:
 	id = p_id
@@ -212,6 +296,10 @@ func _init(p_id: int, p_coord: Vector2i, p_kind: int, p_capacity := -1.0) -> voi
 	capacity = p_capacity if p_capacity >= 0.0 else default_capacity(p_kind)
 	took_in = 0.0
 	gave_out = 0.0
+	mouths = 0
+	unmet = 0.0
+	plentiful_turns = 0
+	end_year()
 
 
 static func default_capacity(kind_: int) -> float:
@@ -357,6 +445,71 @@ func harvest() -> float:
 func begin_turn() -> void:
 	took_in = 0.0
 	gave_out = 0.0
+	mouths = 0
+	unmet = 0.0
+
+
+## Give one mouth what it asks for, or as much of it as is here. Returns what was
+## eaten.
+##
+## A withdrawal that also counts who asked and what went unmet — the only
+## difference between a carrier filling a sack and a person eating, and the reason
+## both go through `withdraw()` so the outflow a display quotes includes both.
+func feed(appetite: float) -> float:
+	mouths += 1
+	var asked := maxf(appetite, 0.0)
+	var eaten := withdraw(asked)
+	unmet += asked - eaten
+	year_asked += asked
+	year_unmet += asked - eaten
+	return eaten
+
+
+## Close the turn's books: extend or reset the plenty run, and move the hunger
+## year on. Called by the world after every agent has stepped, so what it reads is
+## the store as the turn left it and every mouth that ate during it.
+##
+## A node nobody ate from resets everything. That is a farm on every turn, and a
+## granary whose last road was somehow never walked — neither has people to grow
+## or lose.
+func end_turn() -> void:
+	if mouths == 0:
+		plentiful_turns = 0
+		end_year()
+		return
+	plentiful_turns = plentiful_turns + 1 if store > GROWTH_FRACTION * capacity else 0
+	year_turns += 1
+
+
+## Whether the people this node feeds have had a surplus long enough to be joined
+## by another. Asked after `end_turn()`.
+func has_surplus() -> bool:
+	return plentiful_turns >= GROWTH_TURNS
+
+
+## Whether the year just finished left more than `LEAN_SHARE` of its appetite
+## unmet. Only ever true on the turn a year's books close.
+func has_shortage() -> bool:
+	return year_turns >= LEAN_TURNS and year_unmet > LEAN_SHARE * year_asked
+
+
+## Whether this turn finished a year of hunger books, lean or not.
+func year_is_over() -> bool:
+	return year_turns >= LEAN_TURNS
+
+
+## Start the plenty run again. Called when a person was added, so a granary grows
+## by at most one person per `GROWTH_TURNS` rather than once a turn for as long as
+## the store stays high.
+func reset_plenty() -> void:
+	plentiful_turns = 0
+
+
+## Open a fresh year of hunger books.
+func end_year() -> void:
+	year_turns = 0
+	year_asked = 0.0
+	year_unmet = 0.0
 
 
 ## Put grain in. Returns how much was actually accepted, which is less than was

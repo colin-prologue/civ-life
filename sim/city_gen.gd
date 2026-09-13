@@ -309,5 +309,94 @@ static func _lay_route(world: WorldMap, source: CityNode, sink: CityNode) -> Rou
 	world.add_route(route)
 	for i in range(CITIZENS_PER_ROUTE):
 		var start := (i * (path.size() - 1)) / maxi(1, CITIZENS_PER_ROUTE - 1)
-		world.add_agent(Citizen.new(world.agents.size(), route, start))
+		_add_carrier(world, route, start)
 	return route
+
+
+## One more person on a road, standing at `index` along it.
+##
+## Ids come from a counter that only rises rather than from `agents.size()`, which
+## stops being unique the first time anybody is lost.
+static func _add_carrier(world: WorldMap, route: Route, index: int) -> Citizen:
+	var citizen := Citizen.new(_next_agent_id(world), route, index)
+	world.add_agent(citizen)
+	route.carriers.append(citizen.id)
+	return citizen
+
+
+static func _next_agent_id(world: WorldMap) -> int:
+	var highest := -1
+	for agent in world.agents:
+		highest = maxi(highest, agent.id)
+	return highest + 1
+
+
+## The city's people, grown and lost by what their granaries hold. Run by the
+## world once a turn, after everyone has eaten.
+##
+## **Growth.** A granary that has held above `CityNode.GROWTH_FRACTION` of its
+## capacity for `CityNode.GROWTH_TURNS` gains a person, who appears at its door
+## and walks out along whichever of its roads has the fewest carriers.
+##
+## **Loss.** A granary that closes two years of books (`CityNode.LEAN_TURNS`)
+## having left more than `CityNode.LEAN_SHARE` of its people's appetite unmet
+## loses one — the
+## newest carrier on its busiest road — but never takes a road
+## below the `CITIZENS_PER_ROUTE` it was laid with. That floor is the guarantee
+## rather than a tuning: no road is ever left unwalked, no amount of hunger reaches
+## zero people, and a city fed again recovers from the crew it kept
+## (`world-growth-tone` rules 1 and 2).
+##
+## **What bounds it.** Nothing here caps the count. More people eat more, and
+## what comes in is set by what the farms and camps grow — the land. A city past
+## what its land feeds cannot hold its granary above the growth line, so it stops
+## growing; a city far enough past it cannot feed everyone even in summer, so it
+## slowly shrinks. Population settles in the band between those two.
+##
+## Nodes in array order and roads in array order, so which road a person joins is
+## the same on every run (`AgDR-001`).
+static func tend_population(world: WorldMap) -> void:
+	for node in world.nodes:
+		if node.has_shortage():
+			var busiest := _served_route(world, node, false)
+			if busiest != null and busiest.carriers.size() > CITIZENS_PER_ROUTE:
+				_lose_carrier(world, busiest)
+		elif node.has_surplus():
+			var thinnest := _served_route(world, node, true)
+			if thinnest != null:
+				_add_carrier(world, thinnest, thinnest.path.size() - 1)
+			node.reset_plenty()
+		if node.year_is_over():
+			node.end_year()
+
+
+## Of the roads delivering to `node`, the one with the fewest carriers or the
+## most. Ties go to the earlier road.
+static func _served_route(world: WorldMap, node: CityNode, fewest: bool) -> Route:
+	var best: Route = null
+	for route in world.routes:
+		if route.sink != node:
+			continue
+		if best == null:
+			best = route
+		elif fewest and route.carriers.size() < best.carriers.size():
+			best = route
+		elif not fewest and route.carriers.size() > best.carriers.size():
+			best = route
+	return best
+
+
+## The newest person on a road stops working it. Whatever they were carrying is
+## put down in the granary rather than lost with them.
+##
+## Found by id, which is unique for as long as the world runs (`_next_agent_id`).
+static func _lose_carrier(world: WorldMap, route: Route) -> void:
+	var leaving := route.carriers.pop_back() as int
+	for agent in world.agents:
+		if agent.id != leaving:
+			continue
+		var citizen: Citizen = agent
+		route.sink.deposit(citizen.carrying)
+		citizen.carrying = 0.0
+		world.remove_agent(citizen)
+		return
