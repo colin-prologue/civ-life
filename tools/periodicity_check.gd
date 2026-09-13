@@ -78,6 +78,15 @@ func _init() -> void:
 ## how the finding this record exists for gets lost.
 ##
 ## A candidate period is only accepted if every remaining sample repeats it.
+##
+## The cost of that caution, stated so it is not mistaken for coverage: requiring
+## a period to repeat twice more means **no cycle longer than about a third of
+## `YEARS` can be reported at all**, and a cycle beginning in the last stretch of
+## the run is invisible for the same reason. At 200 years that is roughly 66. The
+## baseline this gate exists to beat settled by year 17 on the worst seed, so the
+## blind spot sits far outside the behaviour being guarded — but a world that
+## settles into a century-long loop would pass this gate, and the honest reading
+## of a pass is "no short cycle", not "no cycle".
 static func _confirms(prints: Array, start: int, period: int) -> bool:
 	var checked := 0
 	for k in range(start + period, prints.size()):

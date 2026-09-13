@@ -447,17 +447,27 @@ func test_a_herd_always_has_somewhere_worth_going() -> void:
 	# are wrong — do not lower VIABLE to make it pass.
 	var world := _world()
 
+	# Every turn, not every season. An earlier version sampled one turn in six and
+	# still said "never": a herd could have been stranded on any of the five
+	# skipped turns — grazing wears ground and herds move on all of them — and this
+	# would have stayed green. Found by codex review on PR #58.
+	#
+	# Checking six times as often is *cheaper* than before, because the scan is now
+	# the herd's own reachable disc rather than all twelve hundred tiles: about
+	# sixty tiles at a sense range of four, against a full-map sweep that threw
+	# away 95% of what it touched.
 	for turn in range(Seasons.TURNS_PER_YEAR * 40):
 		world.advance_turn()
-		if turn % Seasons.TURNS_PER_SEASON != 0:
-			continue
 		for herd in world.herds():
 			var options := 0
-			for coord in world.grid.all_coords():
-				if HexGrid.distance(herd.coord, coord) > herd.species.sense_range:
-					continue
-				if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE:
-					options += 1
+			var reach := herd.species.sense_range
+			for dq in range(-reach, reach + 1):
+				for dr in range(maxi(-reach, -dq - reach), mini(reach, -dq + reach) + 1):
+					var coord := herd.coord + Vector2i(dq, dr)
+					if not world.grid.has_coord(coord):
+						continue
+					if world.forage_for_use(coord, Land.Use.GRAZE) >= VIABLE:
+						options += 1
 			if options == 0:
 				assert_gt(options, 0,
 						"herd %d had nowhere to go on turn %d" % [herd.id, world.turn])

@@ -53,9 +53,14 @@ func _init() -> void:
 		print("camp seed %d: typical camp won %d of %d years; busy camp best/worst %s"
 				% [world_seed, flips, MEASURED_YEARS, _format(swing)])
 
+	# The upper of the two middle values on an even count, which is the convention
+	# every published table of these numbers uses — #42's body, this file's table
+	# above, and the retirement note in `test_gathering.gd`. Stated because it is
+	# not the only convention and the choice is visible: averaging the two middles
+	# reports 2.13 where those tables say 2.32, and a gate whose own docstring
+	# disagrees with its output is worse than either number.
 	swings.sort()
-	var mid := swings.size() / 2
-	var median := (swings[mid - 1] + swings[mid]) / 2.0 if swings.size() % 2 == 0 else swings[mid]
+	var median: float = swings[swings.size() / 2]
 	var verdict := "ok  " if seeds_with_flip >= MIN_SEEDS_WITH_A_FLIP else "FAIL"
 	print("%s camp attention: %d of %d seeds had a year the typical camp won (bar %d); median busy-camp swing %s"
 			% [verdict, seeds_with_flip, SEEDS.size(), MIN_SEEDS_WITH_A_FLIP, _format(median)])

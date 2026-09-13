@@ -273,6 +273,12 @@ done
 # Both tools print a verdict line starting "ok" or "FAIL". The lines are checked
 # as well as the exit code, so a tool that crashed before reaching its verdict
 # cannot pass by exiting 0.
+#
+# What they cost, measured 2026-09-13 on an idle machine: periodicity 63 s, camp
+# attention 10 s. That is the largest single cost in this script, and it is paid
+# on every run. If it has to come down, cut the periodicity gate's YEARS — never
+# its SEEDS, since all four settled in the baseline and a subset could pass while
+# a documented converging seed still settles.
 gate="$(mktemp)"
 trap 'rm -f "$out" "$fp1" "$fp2" "$gate"' EXIT
 for check in tools/periodicity_check.gd tools/camp_attention_check.gd; do
@@ -305,7 +311,7 @@ done
 # exit code alone is not the check.
 echo "[test] launching the main scene headless"
 launch="$(mktemp)"
-trap 'rm -f "$out" "$fp1" "$fp2" "$launch"' EXIT
+trap 'rm -f "$out" "$fp1" "$fp2" "$gate" "$launch"' EXIT
 
 set +e
 "$GODOT" --headless --quit-after 120 >"$launch" 2>&1
