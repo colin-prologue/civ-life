@@ -31,6 +31,15 @@ var sink: CityNode
 ## carrier walks it by stepping the index.
 var path: Array[Vector2i]
 
+## The people who work this road, oldest first. Kept by `CityGen`, the one place
+## carriers are made and the one place they are lost.
+##
+## A list on the road rather than a search of the world's agents for citizens
+## whose route is this one: the growth rule runs inside the turn loop, and
+## `AgDR-013` keeps kind-checks out of the turn loop. The road knowing who walks
+## it is composition, not a question about type.
+var carriers: Array[Agent] = []
+
 
 func _init(p_id: int, p_source: CityNode, p_sink: CityNode, p_path: Array[Vector2i]) -> void:
 	assert(p_path.size() >= 2, "a route connects two tiles or more")

@@ -171,6 +171,9 @@ func advance_turn() -> int:
 		node.produce(self)
 	for agent in agents:
 		agent.step(self)
+	for node in nodes:
+		node.end_turn()
+	CityGen.tend_population(self)
 	_recover_vitality()
 	_record_turn()
 	report = TurnReport.since(self, before)
@@ -183,6 +186,19 @@ func add_agent(agent: Agent) -> void:
 	assert(grid.has_coord(agent.coord), "an agent cannot stand off the map")
 	agents.append(agent)
 	_forage_demand[grid.index_of(agent.coord)] += agent.forage_demand()
+
+
+## Take an agent out of the world. The census is told, for the reason `add_agent`
+## tells it.
+##
+## Exists for one caller: a granary that has fed its people short for a whole
+## year loses one of them (`CityGen.tend_population`). Structures have no
+## equivalent and are not getting one — `world-growth-tone` rule 1.
+func remove_agent(agent: Agent) -> void:
+	var at := agents.find(agent)
+	assert(at >= 0, "an agent not in the world cannot leave it")
+	_forage_demand[grid.index_of(agent.coord)] -= agent.forage_demand()
+	agents.remove_at(at)
 
 
 ## Move an agent one or more tiles. The only way an agent's position changes.
@@ -387,10 +403,9 @@ func total_granary_store() -> float:
 
 ## Grain that arrived in granaries this turn, and grain that left them.
 ##
-## Two flows, reported separately and never as one signed number. While nothing
-## consumes (that is #29) the outflow is zero, and a display that showed only the
-## net would say "nothing is leaving" and "the two cancelled out" in exactly the
-## same way — which is the confusion this ticket exists to remove.
+## Two flows, reported separately and never as one signed number. The outflow is
+## what the city's people ate (#29), and a display that showed only the net would
+## say "nothing is leaving" and "the two cancelled out" in exactly the same way.
 func granary_intake() -> float:
 	var total := 0.0
 	for node in nodes:

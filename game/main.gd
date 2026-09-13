@@ -346,11 +346,14 @@ func _report_text() -> String:
 ## The key hints live on the prompt line instead, so this one stays a reading of
 ## the world rather than half a control legend.
 func _totals_line() -> String:
-	return "Turn %d — %s, year %d — %d herds — %d farms, %d granaries, %d routes — seed %d — %s %0.1f/s" % [
+	# The city's people lead the city's half of the line (#29): they are the one
+	# count on it that the world changes on its own.
+	return "Turn %d — %s, year %d — %d herds — %d people, %d farms, %d granaries, %d routes — seed %d — %s %0.1f/s" % [
 		world.turn,
 		Seasons.season_name(world.season()),
 		world.year(),
 		world.herds().size(),
+		world.citizen_count(),
 		_node_count(CityNode.Kind.FARM),
 		_node_count(CityNode.Kind.GRANARY),
 		world.routes.size(),
