@@ -257,6 +257,42 @@ for gen in tools/world_fingerprint.gd tools/diorama_fingerprint.gd tools/diorama
   echo "[test] $gen: $(wc -l < "$fp1" | tr -d ' ') seeds reproduced identically across processes"
 done
 
+# --- 4b. the world must not settle, and the best camp must move --------------
+# The primary acceptance criterion of AgDR-014. Before land had any memory every
+# seed converged to a fixed annual cycle within 5 to 17 years, three of the four
+# doing precisely the same thing every year thereafter. The periodicity check is
+# the one that says that stopped being true. The camp check beside it is the
+# same claim seen from a player's side: the best place to camp is not the same
+# ground every year.
+#
+# A failure here is a finding, not a flake. AgDR-014 carries its own refutation
+# clause: if land memory stops breaking the cycle, the honest next move is
+# exogenous variation via terrain change, not adjusting Land's constants until
+# this goes green — and not lowering the camp check's bar either.
+#
+# Both tools print a verdict line starting "ok" or "FAIL". The lines are checked
+# as well as the exit code, so a tool that crashed before reaching its verdict
+# cannot pass by exiting 0.
+gate="$(mktemp)"
+trap 'rm -f "$out" "$fp1" "$fp2" "$gate"' EXIT
+for check in tools/periodicity_check.gd tools/camp_attention_check.gd; do
+  echo "[test] $check"
+  set +e
+  "$GODOT" --headless -s "$check" >"$gate" 2>&1
+  check_status=$?
+  set -e
+  grep -E "^(ok|FAIL|camp seed)" "$gate" || true
+
+  if [ "$check_status" -ne 0 ] || grep -q "^FAIL" "$gate" || ! grep -q "^ok" "$gate" \
+      || grep -qE "^(SCRIPT ERROR|ERROR)" "$gate"; then
+    grep -E "^(SCRIPT ERROR|ERROR)" "$gate" >&2 || true
+    echo "ERROR: $check did not pass (exit $check_status)." >&2
+    echo "       AgDR-014 exists to prevent a world that settles; read its refutation" >&2
+    echo "       clause before tuning anything in sim/land.gd or lowering a bar." >&2
+    exit 1
+  fi
+done
+
 # --- 5. the main scene actually launches ------------------------------------
 # The suite instantiates the scene itself, which proves the nodes wire up — but
 # it runs under GUT, not under the project's own startup path. A broken
