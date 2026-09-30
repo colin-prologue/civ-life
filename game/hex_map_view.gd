@@ -234,29 +234,49 @@ const _DORMANCY_MAX := 0.70
 ## normalise against, and the two ends of a colour ramp. Drawing one is a single
 ## function that knows none of those things specifically.
 ##
-## That shape is the point of the entry rather than an accident of it. Vitality
-## (#38) is `{"row": "vitality_data", "args": [Land.Use.GRAZE], ...}` — an
-## element in this array and nothing else. `test_hex_map_view.gd` proves the
-## claim by building exactly that entry and drawing it, so this cannot quietly
-## become a system with one hard-coded scalar in it.
+## Forage is written out. Vitality is one entry per `Land.Use`, generated from the
+## enum, so a use added later (#60) gets its overlay without anyone touching this
+## file. `test_hex_map_view.gd` holds that to account.
 ##
 ## Reading a whole row in one call, rather than a value per tile, is why this
 ## stays inside the redraw budget: `forage_data()` is one array copy for the
 ## entire map.
 const OVERLAY_FORAGE := 0
 
-const OVERLAYS: Array[Dictionary] = [
-	{
-		"name": "forage",
-		"caption": "forage — feed for herds",
-		"row": "forage_data",
-		"args": [],
-		"min": Seasons.MIN_FORAGE,
-		"max": Seasons.MAX_FORAGE,
-		"low": Color(0.62, 0.16, 0.18),
-		"high": Color(0.30, 0.80, 0.36),
-	},
-]
+## Worn ground is bare earth, fresh ground is green. Not forage's red-to-green:
+## two overlays on the same ramp would differ only by their caption.
+const _WORN := Color(0.58, 0.34, 0.12)
+const _FRESH := Color(0.22, 0.72, 0.30)
+
+static var OVERLAYS: Array[Dictionary] = _build_overlays()
+
+
+static func _build_overlays() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = [
+		{
+			"name": "forage",
+			"caption": "forage — feed for herds",
+			"row": "forage_data",
+			"args": [],
+			"min": Seasons.MIN_FORAGE,
+			"max": Seasons.MAX_FORAGE,
+			"low": Color(0.62, 0.16, 0.18),
+			"high": Color(0.30, 0.80, 0.36),
+		},
+	]
+	for use_name: String in Land.Use.keys():
+		var label := use_name.to_lower()
+		entries.append({
+			"name": "vitality-%s" % label,
+			"caption": "%s — how worn" % label,
+			"row": "vitality_data",
+			"args": [Land.Use[use_name]],
+			"min": Land.MIN_VITALITY,
+			"max": Land.MAX_VITALITY,
+			"low": _WORN,
+			"high": _FRESH,
+		})
+	return entries
 
 ## Left edge of the season indicator and the legend below it, measured in from
 ## the right of the viewport. Shared so the two line up, and wide enough that
