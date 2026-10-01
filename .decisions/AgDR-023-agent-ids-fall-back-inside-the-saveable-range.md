@@ -33,6 +33,19 @@ for their own size, not for their sum.
 - A population or store cap chosen for play: it would be a product limit invented
   in the decoder.
 
+## Two more places the same rule applies (Codex, head bbd838f)
+
+- **Turn.** `turn` is a plain JSON number and `advance_turn()` adds one, so a save
+  at 2^53 could not be read back after one advance. A save now refuses a turn past
+  `WorldSave.MAX_TURN` (2^52), which leaves the loaded world as many turns again
+  as it would ever be played. The file format is unchanged.
+- **Aggregate demand.** The reports sum what stands on a tile and round it to a
+  64-bit integer, so two herds each at `MAX_MAGNITUDE` overflow it together, and
+  herds can walk onto one tile after the load. A save is refused when the demand
+  of all its agents together exceeds `MAX_MAGNITUDE`, which bounds every tile's
+  sum. Stores and capacities keep the per-value ceiling: nothing sums them
+  against it.
+
 ## What would make this the wrong call
 
 A second system that assumes ids rise with age (the fallback id is lower than

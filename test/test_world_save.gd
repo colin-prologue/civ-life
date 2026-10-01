@@ -406,6 +406,9 @@ func test_quantities_the_reports_cannot_digest_are_refused() -> void:
 			for granary in granaries.slice(0, 2):
 				granary.capacity = 3e38
 				granary.store = 3e38,
+		"two herds each at the single-value limit, whose demand together is past it": func(w: WorldMap):
+			w.set_herd_population(w.herds()[0], WorldSave.MAX_MAGNITUDE)
+			w.set_herd_population(w.herds()[1], WorldSave.MAX_MAGNITUDE),
 		"a carrier holding 1e30": func(w: WorldMap):
 			var walker: Citizen = w.citizens()[0]
 			walker.capacity = 1e30
@@ -425,9 +428,9 @@ func test_the_largest_accepted_quantities_still_load_and_run() -> void:
 	var granary := _granary_of(world)
 	granary.capacity = WorldSave.MAX_MAGNITUDE
 	granary.store = WorldSave.MAX_MAGNITUDE
-	world.set_herd_population(world.herds()[0], WorldSave.MAX_MAGNITUDE)
+	world.set_herd_population(world.herds()[0], WorldSave.MAX_MAGNITUDE / 2.0)
 	var loaded := _round_trip(world)
-	assert_not_null(loaded, "the limit itself is accepted")
+	assert_not_null(loaded, "the limit itself is accepted for stores, half of it for what the agents ask in all")
 	assert_eq(_differences(world, loaded), PackedStringArray(), "and comes back unchanged")
 	for i in range(3):
 		loaded.advance_turn()
@@ -435,6 +438,28 @@ func test_the_largest_accepted_quantities_still_load_and_run() -> void:
 		for value in loaded.chronicle._series[key]:
 			assert_true(is_finite(value), "the chronicle stays finite beside a limit-sized quantity")
 	assert_gt(loaded.herds()[0].head_count(), 0, "a limit-sized herd can be counted")
+
+
+## A loaded turn must survive being advanced and saved again: the file holds it as
+## a JSON number, exact only to 2^53.
+func test_a_loaded_turn_can_advance_and_still_round_trip() -> void:
+	var good := WorldSave.encode(_populated_world())
+	for turn in [float(WorldSave.MAX_TURN), 0.0]:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		copy["turn"] = turn
+		var loaded: WorldMap = WorldSave.decode(copy)["world"]
+		assert_not_null(loaded, "turn %d loads" % int(turn))
+		loaded.advance_turn()
+		var again := _round_trip(loaded)
+		assert_not_null(again, "and after one more turn it saves and loads")
+		assert_eq(again.turn, int(turn) + 1, "with the same turn it was saved at")
+		assert_eq(_differences(loaded, again), PackedStringArray(), "and nothing else moved")
+	for turn in [float(WorldSave.MAX_TURN) + 1.0, 9007199254740992.0]:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		copy["turn"] = turn
+		var result := WorldSave.decode(copy)
+		assert_null(result["world"], "turn %d is refused" % int(turn))
+		assert_string_contains(result["refusal"], "out of range", "for the right reason")
 
 
 ## The ceiling on agent ids is a place the game itself can reach from a loaded

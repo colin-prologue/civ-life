@@ -73,6 +73,13 @@ const MAX_AGENT_ID := CityGen.MAX_AGENT_ID
 ## float32's ceiling unless the world holds some 10^20 agents.
 const MAX_MAGNITUDE := 4611686018427387904.0
 
+## The largest turn a save accepts. `turn` is written as a plain JSON number, exact
+## only to 2^53, and the game adds one each turn, so a save at 2^53 would write a
+## turn it cannot read back after a single advance. 2^52 leaves the loaded world
+## as many turns again before the clock could leave the exact range: not a limit
+## anyone can play to, a margin that keeps "load, advance, save, load" exact.
+const MAX_TURN := 4503599627370496
+
 ## Every script variable of every class in a world's object graph that is written
 ## to the file. Base-class variables are listed under each subclass, because an
 ## instance reports them as its own.
@@ -445,7 +452,7 @@ class _Reader extends RefCounted:
 		if not refusal.is_empty():
 			return null
 		if width_n != floorf(width_n) or height_n != floorf(height_n) \
-				or width_n < 1.0 or height_n < 1.0 or turn < 0 \
+				or width_n < 1.0 or height_n < 1.0 or turn < 0 or turn > WorldSave.MAX_TURN \
 				or width_n * height_n > float(WorldSave.MAX_TILES):
 			_fail("the map size or turn is out of range (at most %d tiles)" % WorldSave.MAX_TILES)
 			return null
@@ -720,6 +727,16 @@ class _Reader extends RefCounted:
 		census.resize(tiles)
 		for agent in world.agents:
 			census[world.grid.index_of(agent.coord)] += agent.forage_demand()
+		# The reports round a tile's summed demand to a 64-bit integer, and herds
+		# move onto each other's tiles, so it is the whole world's demand that has to
+		# stay under the single-value ceiling, not each tile's: any tile's sum is then
+		# too. Two herds each at `MAX_MAGNITUDE` are individually fine and together not.
+		var total_demand := 0.0
+		for amount in census:
+			total_demand += amount
+		if total_demand > WorldSave.MAX_MAGNITUDE:
+			_fail("the agents together ask for %s, too large for the reports that sum what stands on a tile" % total_demand)
+			return null
 		for i in range(tiles):
 			if absf(world._forage_demand[i] - census[i]) > DEMAND_TOLERANCE * maxf(1.0, census[i]):
 				_fail("the saved forage demand on tile %d is %s but the agents standing there ask for %s" % [i, world._forage_demand[i], census[i]])
