@@ -887,7 +887,7 @@ func test_a_normal_advance_leaves_the_prompt_free_of_a_refusal() -> void:
 	await wait_frames(2)
 	main.advance_turn()
 	assert_eq(main.world.turn, 1, "it advanced")
-	assert_string_does_not_contain(main.get_node("Prompt").text, "last turn")
+	assert_false("last turn" in main.get_node("Prompt").text, "no refusal shown")
 
 
 # --- helpers ----------------------------------------------------------------
