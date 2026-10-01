@@ -144,6 +144,7 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 		"a carrier listed twice": func(d): d["routes"][0]["carriers"].append(d["routes"][0]["carriers"][0]),
 		"a citizen dropped from the carrier list": func(d): d["routes"][0]["carriers"].pop_back(),
 		"a herd taking a citizen's id": _give_a_herd_a_citizens_id,
+		"a citizen moved off its route step": _move_a_citizen_along_its_road,
 	}
 	for what in damage:
 		var result: Dictionary
@@ -159,6 +160,8 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 			assert_string_contains(result["refusal"], "carrier", "%s is refused for the crew list" % what)
 		if what.contains("id"):
 			assert_string_contains(result["refusal"], "share the id", "%s is refused for the shared id" % what)
+		if what.contains("route step"):
+			assert_string_contains(result["refusal"], "somewhere other than", "%s is refused for the coordinate" % what)
 
 
 func test_an_agent_the_format_does_not_know_is_refused_at_save_time() -> void:
@@ -322,6 +325,17 @@ static func _give_a_herd_a_citizens_id(data: Dictionary) -> void:
 		if agent["kind"] == "herd":
 			agent["id"] = data["routes"][0]["carriers"][0]
 			return
+
+
+# Another coordinate off the same road's path: in bounds, but not where the
+# citizen's route index says it stands.
+static func _move_a_citizen_along_its_road(data: Dictionary) -> void:
+	for agent in data["agents"]:
+		if agent["kind"] == "citizen":
+			for step in data["routes"][int(agent["route"])]["path"]:
+				if step != agent["coord"]:
+					agent["coord"] = step
+					return
 
 
 static func _strand_the_citizens(data: Dictionary) -> void:

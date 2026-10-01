@@ -488,7 +488,13 @@ class _Reader extends RefCounted:
 						_fail("a citizen stands off the end of its route")
 						return null
 					var citizen := Citizen.new(_int(entry, "id"), route, index, _float(entry, "capacity"))
-					citizen.coord = _coord(entry, "coord", world)
+					var stands_at := _coord(entry, "coord", world)
+					if not refusal.is_empty():
+						return null
+					if stands_at != route.path[index]:
+						_fail("a citizen stands somewhere other than its route's step %d" % index)
+						return null
+					citizen.coord = stands_at
 					citizen.carrying = _float(entry, "carrying")
 					citizen.held_up = _int(entry, "held_up")
 					world.agents.append(citizen)
