@@ -397,7 +397,8 @@ static func _refused(why: String) -> Dictionary:
 ## `String.to_int()` to saturate. Used by both save decoding and player entry.
 static func signed_int64_decimal(text: String) -> Dictionary:
 	var negative := text.begins_with("-")
-	var digits := text.substr(1) if negative else text
+	var signed := negative or text.begins_with("+")
+	var digits := text.substr(1) if signed else text
 	if digits.is_empty():
 		return {"valid": false, "value": 0}
 	for c in digits:
