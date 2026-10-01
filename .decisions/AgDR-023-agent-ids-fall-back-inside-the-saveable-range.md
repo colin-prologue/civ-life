@@ -62,3 +62,17 @@ A second system that assumes ids rise with age (the fallback id is lower than
 older agents'). Today `route.carriers` order, not id order, decides who is newest.
 A reader of stored quantities that needs a tighter bound than 2^62 moves
 `MAX_MAGNITUDE`.
+
+## Clarification — representation scope (2026-10-01)
+
+The save boundary promises lossless continuation for supported runtime state,
+safe finite/resource construction, and structural/reference integrity. It does
+not promise to reject every value that a reviewer can characterize as
+historically unusual. A reachable shortage boundary, for example, can close a
+hunger year while leaving a completed plenty run intact because shortage takes
+precedence over growth.
+
+Semantic invariants that do not threaten construction, representation, or
+lossless continuation are separate product decisions. They require an explicit
+rule and regression before becoming decoder refusals; the existing malformed
+format/version and structural refusals remain mandatory.

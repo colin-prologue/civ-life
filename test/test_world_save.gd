@@ -437,6 +437,35 @@ func test_the_largest_accepted_quantities_still_load_and_run() -> void:
 	assert_gt(loaded.herds()[0].head_count(), 0, "a limit-sized herd can be counted")
 
 
+func test_a_shortage_year_can_preserve_a_completed_plenty_run_and_round_trip() -> void:
+	# A shortage takes precedence over growth. It closes the hunger year but does
+	# not reset the already-complete plenty run, so `plentiful_turns ==
+	# GROWTH_TURNS` is a reachable between-turn state, not damaged history.
+	var world := WorldGen.generate(SEED)
+	var granary := _granary_of(world)
+	granary.store = 0.0
+	for i in range(CityNode.LEAN_TURNS - CityNode.GROWTH_TURNS):
+		granary.begin_turn()
+		granary.feed(0.05)
+		granary.feed(0.05)
+		granary.end_turn()
+		CityGen.tend_population(world)
+	for i in range(CityNode.GROWTH_TURNS):
+		granary.begin_turn()
+		granary.deposit(granary.capacity)
+		granary.feed(0.05)
+		granary.feed(0.05)
+		granary.end_turn()
+		CityGen.tend_population(world)
+	assert_eq(granary.year_turns, 0, "the shortage closed its hunger year")
+	assert_eq(granary.plentiful_turns, CityNode.GROWTH_TURNS,
+		"shortage precedence leaves the completed plenty run intact")
+	assert_gt(granary.year_asked, 0.0, "the next year begins with ordinary hunger books")
+	var loaded := _round_trip(world)
+	assert_eq(_differences(world, loaded), PackedStringArray(),
+		"the valid threshold crossing survives a save and load")
+
+
 ## The clock is written as a decimal string so it is exact over the whole int64
 ## range, not only to 2^53 where a JSON number stops being exact.
 func _with_turn(good: Dictionary, turn) -> Dictionary:
