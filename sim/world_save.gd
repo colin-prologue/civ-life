@@ -226,12 +226,30 @@ static func unsaveable(world: WorldMap) -> String:
 	for agent in world.agents:
 		if not (agent is Herd or agent is Citizen):
 			return "agent %d is a kind this save format does not know how to write" % agent.id
+		if agent is Herd and not is_supported_species((agent as Herd).species):
+			return "herd %d is a species this build cannot load back" % agent.id
 		if agent is Citizen and not world.routes.has((agent as Citizen).route):
 			return "citizen %d walks a route that is not in the world" % agent.id
 	for route in world.routes:
 		if not (world.nodes.has(route.source) and world.nodes.has(route.sink)):
 			return "route %d joins a structure that is not in the world" % route.id
 	return ""
+
+
+## The one species this build plays with is `Species.grazer()`, and a save is only
+## loadable if its herds are of it: the numbers drive `Herd._best_ground()`'s
+## search radius and every herd's feeding, so a decoded species is held to the
+## preset rather than to an invented range. A second preset is the day this changes.
+static func is_supported_species(kind: Species) -> bool:
+	var preset := Species.grazer()
+	return kind.name == preset.name \
+			and kind.consumption_per_head == preset.consumption_per_head \
+			and kind.growth_rate == preset.growth_rate \
+			and kind.decline_rate == preset.decline_rate \
+			and kind.move_range == preset.move_range \
+			and kind.sense_range == preset.sense_range \
+			and kind.minimum_population == preset.minimum_population \
+			and kind.starting_population == preset.starting_population
 
 
 ## The world as inspectable JSON text, or an empty string if it cannot be written.
@@ -431,6 +449,8 @@ class _Reader extends RefCounted:
 		var species: Array[Species] = []
 		for entry in _array(_data, "species", -1):
 			species.append(_species(entry))
+			if not refusal.is_empty():
+				return null
 
 		for entry in _array(_data, "nodes", -1):
 			if not refusal.is_empty():
@@ -440,7 +460,23 @@ class _Reader extends RefCounted:
 			if not CityNode.KIND_NAMES.has(kind):
 				_fail("a structure is of kind %d, which is not a kind" % kind)
 				return null
-			var node := CityNode.new(_int(entry, "id"), coord, kind, _float(entry, "capacity"))
+			# What `CityGen.node_refusal()` would say to the same placement.
+			if world.terrain_at(coord) == WorldGen.Terrain.WATER:
+				_fail("a structure stands on water at %s" % coord)
+				return null
+			if world.node_at(coord) != null:
+				_fail("two structures stand on %s" % coord)
+				return null
+			var node_id := _int(entry, "id")
+			for earlier in world.nodes:
+				if earlier.id == node_id:
+					_fail("two structures share the id %d" % node_id)
+					return null
+			var capacity := _float(entry, "capacity")
+			if capacity < 0.0:
+				_fail("a structure has a negative capacity")
+				return null
+			var node := CityNode.new(node_id, coord, kind, capacity)
 			node.store = _float(entry, "store")
 			node.last_yield = _float(entry, "last_yield")
 			node.took_in = _float(entry, "took_in")
@@ -471,7 +507,27 @@ class _Reader extends RefCounted:
 					or path[0] != world.nodes[source].coord or path[-1] != world.nodes[sink].coord:
 				_fail("a route's path does not run between its two structures")
 				return null
-			var route := Route.new(_int(entry, "id"), world.nodes[source], world.nodes[sink], path)
+			# The orientation `CityGen.connect_nodes()` gives every road: a farm or
+			# a camp feeding a granary, along the straight run between them, one
+			# road to a pair.
+			var from_node := world.nodes[source]
+			var to_node := world.nodes[sink]
+			if not (from_node.kind in [CityNode.Kind.FARM, CityNode.Kind.GATHERING] \
+					and to_node.kind == CityNode.Kind.GRANARY):
+				_fail("a road does not run from a farm or camp to a granary")
+				return null
+			if path != HexGrid.line(from_node.coord, to_node.coord):
+				_fail("a road does not follow the straight run between its structures")
+				return null
+			var route_id := _int(entry, "id")
+			for earlier in world.routes:
+				if earlier.id == route_id:
+					_fail("two roads share the id %d" % route_id)
+					return null
+				if earlier.source == from_node and earlier.sink == to_node:
+					_fail("two roads join the same pair of structures")
+					return null
+			var route := Route.new(route_id, from_node, to_node, path)
 			# Checked rather than trusted, like every other value here: a carrier
 			# id is a whole number, and a file saying otherwise is refused instead
 			# of producing a road whose crew list is nonsense.
@@ -570,7 +626,9 @@ class _Reader extends RefCounted:
 		if typeof(entry) != TYPE_DICTIONARY or typeof(entry.get("name")) != TYPE_STRING:
 			_fail("a species is malformed")
 			return null
-		return Species.new(
+		# Every number is read and judged before a `Species` is handed to a herd, so
+		# a hostile `sense_range` is refused rather than left for `_best_ground()`.
+		var kind := Species.new(
 			entry["name"],
 			_float(entry, "consumption_per_head"),
 			_float(entry, "growth_rate"),
@@ -580,6 +638,12 @@ class _Reader extends RefCounted:
 			_float(entry, "minimum_population"),
 			_float(entry, "starting_population")
 		)
+		if not refusal.is_empty():
+			return null
+		if not WorldSave.is_supported_species(kind):
+			_fail("a species is not the one this build plays ('%s')" % Species.grazer().name)
+			return null
+		return kind
 
 	func _fail(why: String) -> void:
 		if refusal.is_empty():
@@ -609,6 +673,9 @@ class _Reader extends RefCounted:
 		var readable := _number(entry, "value")
 		var bytes := (entry["bits"] as String).hex_decode()
 		var value := bytes.decode_double(0)
+		if is_nan(value) or is_inf(value):
+			_fail("'%s' is not a finite number" % key)
+			return 0.0
 		if not is_equal_approx(value, readable):
 			_fail("'%s' reads %s but its exact bits say %s — edited by hand?" % [key, readable, value])
 			return 0.0

@@ -176,6 +176,48 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 			assert_string_contains(result["refusal"], "water", "%s is refused for the terrain" % what)
 
 
+## Each payload breaks one rule the constructors, `CityGen` or the one species
+## preset rely on; decoding must refuse it, with a refusal naming the rule.
+func test_a_save_that_breaks_a_gameplay_invariant_is_refused() -> void:
+	var good := WorldSave.encode(_populated_world())
+	var damage := {
+		"a sense range wide enough to hang the herd's search": [
+			func(d): d["species"][0]["sense_range"] = 1000000000, "species"],
+		"a species that eats nothing": [
+			func(d): d["species"][0]["consumption_per_head"] = WorldSave._exact(0.0), "species"],
+		"a species that moves further than the preset": [
+			func(d): d["species"][0]["move_range"] = 50, "species"],
+		"a non-finite number": [
+			func(d): d["nodes"][0]["store"] = {"value": 0.0, "bits": "000000000000f87f"}, "finite"],
+		"a structure standing on the sea": [_put_a_structure_in_the_sea, "water"],
+		"two structures on one tile": [
+			func(d): d["nodes"][1]["coord"] = d["nodes"][0]["coord"], "stand on"],
+		"two structures with one number": [
+			func(d): d["nodes"][1]["id"] = d["nodes"][0]["id"], "structures share"],
+		"a structure with negative room": [
+			func(d): d["nodes"][0]["capacity"] = WorldSave._exact(-1.0), "negative capacity"],
+		"a road that ends at a farm": [_end_a_road_at_a_farm, "granary"],
+		"a road that starts at a granary": [_start_a_road_at_a_granary, "granary"],
+		"a road that is not the straight run": [_bend_a_road, "straight run"],
+		"a second road between the same two structures": [_double_a_road, "same pair"],
+		"two roads with one number": [
+			func(d): d["routes"][1]["id"] = d["routes"][0]["id"], "roads share"],
+	}
+	for what in damage:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		damage[what][0].call(copy)
+		var result := WorldSave.decode(copy)
+		assert_null(result["world"], "%s gives no world" % what)
+		assert_string_contains(result["refusal"], damage[what][1], "%s is refused for the right reason" % what)
+
+
+func test_a_world_with_another_species_is_refused_at_save_time() -> void:
+	var world := WorldGen.generate(SEED)
+	world.add_agent(Herd.new(8001, world.agents[0].coord, Species.new("odd", 0.006, 0.07, 0.11, 1, 400, 2.0, 40.0), 10.0))
+	assert_string_contains(WorldSave.unsaveable(world), "species")
+	assert_eq(WorldSave.to_text(world), "")
+
+
 func test_land_at_its_floor_and_ceiling_still_loads() -> void:
 	var world := WorldGen.generate(SEED)
 	world._vitality[0][0] = Land.MIN_VITALITY
@@ -367,6 +409,57 @@ static func _lay_a_road_through_water(data: Dictionary) -> void:
 	var grid := HexGrid.new(int(data["width"]), int(data["height"]))
 	var step: Array = data["routes"][0]["path"][1]
 	data["terrain"][grid.index_of(Vector2i(int(step[0]), int(step[1])))] = WorldGen.Terrain.WATER
+
+
+static func _tile_of(data: Dictionary, at: Array) -> int:
+	return HexGrid.new(int(data["width"]), int(data["height"])).index_of(Vector2i(int(at[0]), int(at[1])))
+
+
+static func _put_a_structure_in_the_sea(data: Dictionary) -> void:
+	data["terrain"][_tile_of(data, data["nodes"][0]["coord"])] = WorldGen.Terrain.WATER
+
+
+static func _end_a_road_at_a_farm(data: Dictionary) -> void:
+	data["nodes"][int(data["routes"][0]["sink"])]["kind"] = CityNode.Kind.FARM
+
+
+static func _start_a_road_at_a_granary(data: Dictionary) -> void:
+	data["nodes"][int(data["routes"][0]["source"])]["kind"] = CityNode.Kind.GRANARY
+
+
+# A contiguous four-tile detour over land between the same two structures, so
+# only "not the straight run" is wrong with it.
+static func _bend_a_road(data: Dictionary) -> void:
+	for route in data["routes"]:
+		var path: Array = route["path"]
+		var a := Vector2i(int(path[0][0]), int(path[0][1]))
+		var b := Vector2i(int(path[-1][0]), int(path[-1][1]))
+		for x in HexGrid.neighbors(a):
+			for y in HexGrid.neighbors(x):
+				var detour: Array[Vector2i] = [a, x, y, b]
+				if y == a or HexGrid.distance(y, b) != 1 or not Route.is_contiguous(detour) \
+						or not _all_land(data, detour):
+					continue
+				var out := []
+				for coord in detour:
+					out.append([coord.x, coord.y])
+				route["path"] = out
+				return
+
+
+static func _all_land(data: Dictionary, path: Array[Vector2i]) -> bool:
+	var grid := HexGrid.new(int(data["width"]), int(data["height"]))
+	for coord in path:
+		if not grid.has_coord(coord) or data["terrain"][grid.index_of(coord)] == WorldGen.Terrain.WATER:
+			return false
+	return true
+
+
+static func _double_a_road(data: Dictionary) -> void:
+	var copy: Dictionary = data["routes"][0].duplicate(true)
+	copy["id"] = 999
+	copy["carriers"] = []
+	data["routes"].append(copy)
 
 
 static func _strand_the_citizens(data: Dictionary) -> void:
