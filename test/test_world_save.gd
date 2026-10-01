@@ -100,7 +100,7 @@ func test_a_big_seed_survives() -> void:
 
 func test_seed_decimal_strings_cover_the_signed_int64_range_without_float_conversion() -> void:
 	var good := WorldSave.encode(_populated_world())
-	for seed in ["9223372036854775807", "-9223372036854775808", "9007199254740993", "-9007199254740993"]:
+	for seed in ["9223372036854775807", "-9223372036854775808", "9007199254740993", "-9007199254740993", "000000000000000000000000000000001", "-000000000000000000000000000000001", "000000000000000000000000000000000", "-000000000000000000000000000000000", "000000000000000000009223372036854775807", "-000000000000000000009223372036854775808"]:
 		var result := WorldSave.decode(_with_seed(good, seed))
 		assert_eq(result["refusal"], "", "seed %s loads" % seed)
 		assert_eq(result["world"].world_seed, seed.to_int(), "seed %s stays exact" % seed)
@@ -108,7 +108,7 @@ func test_seed_decimal_strings_cover_the_signed_int64_range_without_float_conver
 
 func test_out_of_range_or_nonintegral_seed_strings_are_refused_without_saturation() -> void:
 	var good := WorldSave.encode(_populated_world())
-	for seed in ["9223372036854775808", "-9223372036854775809", "999999999999999999999999999999999999999999999999999999", "1.5", "-1.5", "", "12a", " 5", "+5", "-"]:
+	for seed in ["9223372036854775808", "-9223372036854775809", "000000000000000000009223372036854775808", "-000000000000000000009223372036854775809", "999999999999999999999999999999999999999999999999999999", "1.5", "-1.5", "", "12a", " 5", "+5", "-"]:
 		var result := WorldSave.decode(_with_seed(good, seed))
 		assert_null(result["world"], "seed %s gives no saturated world" % seed)
 		assert_string_contains(result["refusal"], "seed", "seed %s says why" % seed)
@@ -904,6 +904,10 @@ func test_the_seed_comes_from_the_command_line_or_the_default() -> void:
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=9223372036854775807"]), 5), WorldMap.LAST_TURN, "CLI accepts int64 max")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed", "-9223372036854775808"]), 5), -WorldMap.LAST_TURN - 1, "CLI accepts int64 min")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=9223372036854775808"]), 5), 5, "one above max falls back")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=000000000000000000000000000000001"]), 5), 1, "CLI accepts padded positive")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed", "-000000000000000000000000000000001"]), 5), -1, "CLI accepts padded negative")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=000000000000000000009223372036854775807"]), 5), WorldMap.LAST_TURN, "CLI accepts padded max")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=-000000000000000000009223372036854775809"]), 5), 5, "padded overflow falls back")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=-9223372036854775809"]), 5), 5, "one below min falls back")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=abc"]), 5), 5, "malformed falls back")
 	assert_eq(Main.DEFAULT_SEED, 20260815, "the shipped default is the seed captures were taken on")
@@ -949,6 +953,10 @@ func test_seed_submission_has_the_same_int64_bounds_without_replacing_on_refusal
 	main._on_seed_submitted("-9223372036854775808")
 	assert_eq(main.world.world_seed, -WorldMap.LAST_TURN - 1, "UI accepts int64 min")
 	main.choose_seed(42)
+	main._on_seed_submitted("000000000000000000000000000000001")
+	assert_eq(main.world.world_seed, 1, "UI accepts padded positive")
+	main._on_seed_submitted("-000000000000000000000000000000001")
+	assert_eq(main.world.world_seed, -1, "UI accepts padded negative")
 	var before := main.world
 	main._on_seed_submitted("9223372036854775808")
 	assert_same(main.world, before, "an out-of-range UI seed keeps the current world")

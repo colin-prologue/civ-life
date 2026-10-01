@@ -403,12 +403,22 @@ static func signed_int64_decimal(text: String) -> Dictionary:
 	for c in digits:
 		if c < "0" or c > "9":
 			return {"valid": false, "value": 0}
+	var first := 0
+	while first < digits.length() - 1 and digits[first] == "0":
+		first += 1
 	var limit := str(-WorldMap.LAST_TURN - 1) if negative else str(WorldMap.LAST_TURN)
 	var magnitude := limit.substr(1) if negative else limit
-	if digits.length() > magnitude.length() \
-			or (digits.length() == magnitude.length() and digits > magnitude):
+	var significant_length := digits.length() - first
+	if significant_length > magnitude.length():
 		return {"valid": false, "value": 0}
-	return {"valid": true, "value": text.to_int()}
+	if significant_length == magnitude.length():
+		for i in range(magnitude.length()):
+			if digits[first + i] > magnitude[i]:
+				return {"valid": false, "value": 0}
+			if digits[first + i] < magnitude[i]:
+				break
+	var canonical := ("-" if negative else "") + digits.substr(first)
+	return {"valid": true, "value": canonical.to_int()}
 
 
 
