@@ -322,8 +322,8 @@ func test_a_save_that_would_wrap_overflow_or_collide_is_refused() -> void:
 		"a turn-start vitality of NaN": [func(d): d["grazing_vitality_at_turn_start"][0] = NAN, "finite"],
 		"a chronicle reading of 1e100": [func(d): d["chronicle"][d["chronicle"].keys()[0]][0] = 1e100, "finite"],
 		"a chronicle reading of -infinity": [func(d): d["chronicle"][d["chronicle"].keys()[0]][0] = -INF, "finite"],
-		"a store too large for the reports": [func(d): d["nodes"][0]["capacity"] = WorldSave._exact(1e300); d["nodes"][0]["store"] = WorldSave._exact(1e300), "32-bit"],
-		"a herd too large for the reports": [func(d): _first_of(d, "herd")["population"] = WorldSave._exact(1e300), "32-bit"],
+		"a store too large for the reports": [func(d): d["nodes"][0]["capacity"] = WorldSave._exact(1e300); d["nodes"][0]["store"] = WorldSave._exact(1e300), "too large"],
+		"a herd too large for the reports": [func(d): _first_of(d, "herd")["population"] = WorldSave._exact(1e300), "too large"],
 		"a node tile a whole lap of 2^32 away": [func(d): d["nodes"][0]["coord"][0] = d["nodes"][0]["coord"][0] + 4294967296.0, "whole"],
 		"a herd tile a lap away": [func(d): _first_of(d, "herd")["coord"][1] = _first_of(d, "herd")["coord"][1] - 4294967296.0, "whole"],
 		"a citizen tile a lap away": [func(d): _first_of(d, "citizen")["coord"][0] = _first_of(d, "citizen")["coord"][0] + 4294967296.0, "whole"],
@@ -369,6 +369,132 @@ func test_the_boundaries_of_the_new_checks_still_load() -> void:
 		assert_eq(result["refusal"], "", "%s still loads" % what)
 		assert_not_null(result["world"], "%s gives a world" % what)
 	assert_eq(WorldSave.decode(fresh)["refusal"], "", "a fresh world, with empty chronicle rows, loads")
+
+
+func _granary_of(world: WorldMap) -> CityNode:
+	for node in world.nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			return node
+	return null
+
+
+## A quantity can be finite as a 32-bit float and still break what reads it: the
+## report's `floori(value / step)` and a herd's `roundi` are undefined past a
+## 64-bit integer, and two finite float32 readings can sum to infinity in the
+## chronicle. Each case is made on the world itself (so the demand census stays
+## coherent), written, and must be refused on the way back.
+func test_quantities_the_reports_cannot_digest_are_refused() -> void:
+	assert_true(is_finite(PackedFloat32Array([1e30])[0]), "1e30 is a finite float32, so narrowing alone lets it through")
+	assert_true(is_finite(PackedFloat32Array([3e38])[0]), "so is 3e38, near the float32 ceiling, though two of them sum past it")
+	var damage := {
+		"a store and capacity of 1e30": func(w: WorldMap):
+			var granary := _granary_of(w)
+			granary.capacity = 1e30
+			granary.store = 1e30,
+		"a capacity of 1e30": func(w: WorldMap): _granary_of(w).capacity = 1e30,
+		"a herd of 1e30 with its census to match": func(w: WorldMap):
+			var herd: Herd = w.herds()[0]
+			w.set_herd_population(herd, 1e30),
+		"two herds of 3e38 whose total overflows float32": func(w: WorldMap):
+			w.set_herd_population(w.herds()[0], 3e38)
+			w.set_herd_population(w.herds()[1], 3e38),
+		"two stores of 3e38 whose total overflows float32": func(w: WorldMap):
+			var granaries: Array[CityNode] = []
+			for node in w.nodes:
+				if node.kind == CityNode.Kind.GRANARY:
+					granaries.append(node)
+			for granary in granaries.slice(0, 2):
+				granary.capacity = 3e38
+				granary.store = 3e38,
+		"a carrier holding 1e30": func(w: WorldMap):
+			var walker: Citizen = w.citizens()[0]
+			walker.capacity = 1e30
+			walker.carrying = 1e30,
+	}
+	for what in damage:
+		var world := _populated_world()
+		assert_gt(world.herds().size(), 1, "the fixture has two herds")
+		damage[what].call(world)
+		var result := WorldSave.decode(WorldSave.encode(world))
+		assert_null(result["world"], "%s gives no world" % what)
+		assert_string_contains(result["refusal"], "too large", "%s is refused for the right reason" % what)
+
+
+func test_the_largest_accepted_quantities_still_load_and_run() -> void:
+	var world := _populated_world()
+	var granary := _granary_of(world)
+	granary.capacity = WorldSave.MAX_MAGNITUDE
+	granary.store = WorldSave.MAX_MAGNITUDE
+	world.set_herd_population(world.herds()[0], WorldSave.MAX_MAGNITUDE)
+	var loaded := _round_trip(world)
+	assert_not_null(loaded, "the limit itself is accepted")
+	assert_eq(_differences(world, loaded), PackedStringArray(), "and comes back unchanged")
+	for i in range(3):
+		loaded.advance_turn()
+	for key in loaded.chronicle._series:
+		for value in loaded.chronicle._series[key]:
+			assert_true(is_finite(value), "the chronicle stays finite beside a limit-sized quantity")
+	assert_gt(loaded.herds()[0].head_count(), 0, "a limit-sized herd can be counted")
+
+
+## The ceiling on agent ids is a place the game itself can reach from a loaded
+## save: the next birth. It must get an id that is still in the range, unique and
+## deterministic, rename nobody already in the world, and leave a world that
+## saves and loads again.
+func test_a_birth_after_the_top_agent_id_stays_in_range_and_saves() -> void:
+	var world := _populated_world()
+	var herd: Herd = world.herds()[0]
+	herd.id = WorldSave.MAX_AGENT_ID
+	var loaded := _round_trip(world)
+	assert_not_null(loaded, "the accepted boundary id loads")
+	var held_before := {}
+	for agent in loaded.agents:
+		held_before[agent.id] = agent
+	var births_on := _plenty_only_at_the_granary(loaded)
+	var before := loaded.agents.size()
+	CityGen.tend_population(loaded)
+	assert_eq(loaded.agents.size(), before + 1, "the birth happened")
+	var born: Citizen = loaded.agents[loaded.agents.size() - 1]
+	var lowest_free := 0
+	while held_before.has(lowest_free):
+		lowest_free += 1
+	assert_eq(born.id, lowest_free, "the newcomer takes the lowest id nobody holds")
+	assert_false(held_before.has(born.id), "and it collides with nobody")
+	assert_lte(born.id, WorldSave.MAX_AGENT_ID, "and is inside the saveable range")
+	assert_eq(born.route.carriers.back(), born.id, "it is the newest on its road, as ever")
+	assert_eq(births_on, born.route.sink, "at the granary that grew")
+	for id in held_before:
+		assert_same(loaded.agents[loaded.agents.find(held_before[id])], held_before[id], "nobody was renumbered")
+		assert_eq(held_before[id].id, id, "ids held before are unchanged")
+	var again := _round_trip(loaded)
+	assert_not_null(again, "the world after the birth saves and loads")
+	assert_eq(_differences(loaded, again), PackedStringArray(), "unchanged")
+	for i in range(50):
+		loaded.advance_turn()
+		again.advance_turn()
+	assert_eq(_differences(loaded, again), PackedStringArray(), "and runs on identically")
+
+
+func test_births_far_from_the_ceiling_keep_the_counter_order() -> void:
+	var world := _round_trip(_populated_world())
+	var highest := -1
+	for agent in world.agents:
+		highest = maxi(highest, agent.id)
+	_plenty_only_at_the_granary(world)
+	CityGen.tend_population(world)
+	var born: Citizen = world.agents[world.agents.size() - 1]
+	assert_eq(born.id, highest + 1, "ordinary births take one past the highest id")
+
+
+## Everything quiet except one granary that has had plenty for long enough; the
+## granary is returned. Only a birth can follow from `tend_population()`.
+func _plenty_only_at_the_granary(world: WorldMap) -> CityNode:
+	for node in world.nodes:
+		node.plentiful_turns = 0
+		node.year_turns = 0
+	var granary := _granary_of(world)
+	granary.plentiful_turns = CityNode.GROWTH_TURNS
+	return granary
 
 
 func test_a_world_larger_than_a_save_holds_is_refused_at_save_time() -> void:

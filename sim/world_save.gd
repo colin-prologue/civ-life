@@ -58,10 +58,20 @@ const VERSION := 1
 ## this build then cannot read back.
 const MAX_TILES := WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT
 
-## The largest agent id a save accepts. Ids come from a counter that only rises
-## (`CityGen._next_agent_id`) and a JSON number holds integers exactly up to 2^53,
-## so the next birth after this id is still written and read back exactly.
-const MAX_AGENT_ID := 9007199254740991
+## The largest agent id a save accepts, and the largest the game hands out
+## (`CityGen.MAX_AGENT_ID`): a JSON number holds integers exactly up to 2^53, and
+## `CityGen._next_agent_id()` falls back to the lowest free id rather than pass it,
+## so every birth after a load is still written and read back exactly.
+const MAX_AGENT_ID := CityGen.MAX_AGENT_ID
+
+## The largest absolute value a stored quantity (a store, a capacity, what a
+## carrier holds, a herd's population, a yield or a flow) may have. Not a balance
+## limit: the reports turn a quantity into a whole number with `floori(value /
+## step)` and `roundi`, which are undefined past a 64-bit integer, and the
+## per-turn totals are summed into 32-bit chronicle rows. 2^62 is the largest
+## power of two a 64-bit integer holds with room, and it keeps any sum short of
+## float32's ceiling unless the world holds some 10^20 agents.
+const MAX_MAGNITUDE := 4611686018427387904.0
 
 ## Every script variable of every class in a world's object graph that is written
 ## to the file. Base-class variables are listed under each subclass, because an
@@ -799,9 +809,10 @@ class _Reader extends RefCounted:
 		if not is_equal_approx(value, readable):
 			_fail("'%s' reads %s but its exact bits say %s — edited by hand?" % [key, readable, value])
 			return 0.0
-		# Reports and the chronicle hold these as 32-bit numbers.
-		if narrowed and not is_finite(PackedFloat32Array([value])[0]):
-			_fail("'%s' is not a finite number once held as a 32-bit one" % key)
+		# Reports turn these into whole numbers and the chronicle sums them into
+		# 32-bit rows; see `MAX_MAGNITUDE`.
+		if narrowed and absf(value) > WorldSave.MAX_MAGNITUDE:
+			_fail("'%s' is %s, too large for the reports and totals that read it" % [key, value])
 			return 0.0
 		return value
 

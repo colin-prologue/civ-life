@@ -324,11 +324,29 @@ static func _add_carrier(world: WorldMap, route: Route, index: int) -> Citizen:
 	return citizen
 
 
+## The largest agent id the game hands out. A save writes ids as JSON numbers,
+## which hold integers exactly up to 2^53, so an id past this could be born and
+## then not read back (`WorldSave`).
+const MAX_AGENT_ID := 9007199254740991
+
+
+## One past the highest id in the world, which is what a counter that only rises
+## gives. Once that would pass `MAX_AGENT_ID` the answer is the lowest id nobody
+## holds: still unique, still deterministic, and nobody already in the world is
+## renumbered. Reaching the fallback needs an agent at the ceiling, which only a
+## hand-edited save has; filling the whole range would take 2^53 agents.
 static func _next_agent_id(world: WorldMap) -> int:
 	var highest := -1
+	var taken := {}
 	for agent in world.agents:
 		highest = maxi(highest, agent.id)
-	return highest + 1
+		taken[agent.id] = true
+	if highest < MAX_AGENT_ID:
+		return highest + 1
+	var free := 0
+	while taken.has(free):
+		free += 1
+	return free
 
 
 ## The city's people, grown and lost by what their granaries hold. Run by the
@@ -389,7 +407,8 @@ static func _served_route(world: WorldMap, node: CityNode, fewest: bool) -> Rout
 ## The newest person on a road stops working it. Whatever they were carrying is
 ## put down in the granary rather than lost with them.
 ##
-## Found by id, which is unique for as long as the world runs (`_next_agent_id`).
+## Found by id, which is unique for as long as the world runs (`_next_agent_id`),
+## including past the top of the id range.
 static func _lose_carrier(world: WorldMap, route: Route) -> void:
 	var leaving := route.carriers.pop_back() as int
 	for agent in world.agents:
