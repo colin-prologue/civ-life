@@ -211,6 +211,106 @@ func test_a_save_that_breaks_a_gameplay_invariant_is_refused() -> void:
 		assert_string_contains(result["refusal"], damage[what][1], "%s is refused for the right reason" % what)
 
 
+## State the running game cannot produce: a fraction where a tile or a count
+## goes, an amount below nothing or above what holds it, a herd below its floor.
+func test_a_save_with_state_the_game_cannot_reach_is_refused() -> void:
+	var good := WorldSave.encode(_populated_world())
+	var damage := {
+		"a node at a fractional tile": [
+			func(d): d["nodes"][0]["coord"][0] = d["nodes"][0]["coord"][0] + 0.5, "whole"],
+		"a herd at a fractional tile": [
+			func(d): _first_of(d, "herd")["coord"][1] = _first_of(d, "herd")["coord"][1] + 0.25, "whole"],
+		"a citizen at a fractional tile": [
+			func(d): _first_of(d, "citizen")["coord"][0] = _first_of(d, "citizen")["coord"][0] - 0.5, "whole"],
+		"a route step at a fractional tile": [
+			func(d): d["routes"][0]["path"][1][0] = d["routes"][0]["path"][1][0] + 0.5, "whole"],
+		"a coordinate too large to be an integer": [
+			func(d): d["nodes"][0]["coord"][0] = 1e30, "whole"],
+		"a store above its capacity": [
+			func(d): d["nodes"][0]["store"] = WorldSave._exact(d["nodes"][0]["capacity"]["value"] + 1.0), "store"],
+		"a negative store": [
+			func(d): d["nodes"][0]["store"] = WorldSave._exact(-1.0), "negative"],
+		"a negative last yield": [
+			func(d): d["nodes"][0]["last_yield"] = WorldSave._exact(-0.5), "negative"],
+		"a negative took-in": [
+			func(d): d["nodes"][0]["took_in"] = WorldSave._exact(-0.5), "negative"],
+		"a negative gave-out": [
+			func(d): d["nodes"][0]["gave_out"] = WorldSave._exact(-0.5), "negative"],
+		"a negative mouth count": [
+			func(d): d["nodes"][0]["mouths"] = -1, "negative"],
+		"a negative unmet": [
+			func(d): d["nodes"][0]["unmet"] = WorldSave._exact(-0.5), "negative"],
+		"a negative plenty run": [
+			func(d): d["nodes"][0]["plentiful_turns"] = -1, "negative"],
+		"a negative year length": [
+			func(d): d["nodes"][0]["year_turns"] = -1, "negative"],
+		"a negative year asked": [
+			func(d): d["nodes"][0]["year_asked"] = WorldSave._exact(-0.5), "negative"],
+		"a negative year unmet": [
+			func(d): d["nodes"][0]["year_unmet"] = WorldSave._exact(-0.5), "negative"],
+		"a year unmet beyond a year asked": [_overdraw_the_year, "exceeds"],
+		"a citizen with a negative sack": [
+			func(d): _first_of(d, "citizen")["capacity"] = WorldSave._exact(-1.0), "negative"],
+		"a citizen carrying more than the sack holds": [
+			func(d): _first_of(d, "citizen")["carrying"] = WorldSave._exact(_first_of(d, "citizen")["capacity"]["value"] + 1.0), "capacity"],
+		"a citizen carrying less than nothing": [
+			func(d): _first_of(d, "citizen")["carrying"] = WorldSave._exact(-1.0), "negative"],
+		"a citizen held up a negative time": [
+			func(d): _first_of(d, "citizen")["held_up"] = -1, "held up"],
+		"a citizen held up past the cap": [
+			func(d): _first_of(d, "citizen")["held_up"] = Citizen.MAX_HELD_UP + 1, "held up"],
+		"a herd below its species' floor": [
+			func(d): _first_of(d, "herd")["population"] = WorldSave._exact(Species.grazer().minimum_population - 0.5), "minimum"],
+		"a herd that planned in a season that does not exist": [
+			func(d): _first_of(d, "herd")["planned_in"] = 99, "season"],
+		"a herd that planned in a season before the first": [
+			func(d): _first_of(d, "herd")["planned_in"] = -2, "season"],
+	}
+	for what in damage:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		damage[what][0].call(copy)
+		var result := WorldSave.decode(copy)
+		assert_null(result["world"], "%s gives no world" % what)
+		assert_string_contains(result["refusal"], damage[what][1], "%s is refused for the right reason" % what)
+
+
+## The edges of what the game can reach are still loadable and come back exactly.
+func test_state_at_its_limits_still_round_trips() -> void:
+	var world := _populated_world()
+	var people := world.citizens()
+	var node: CityNode = world.nodes[0]
+	node.store = node.capacity
+	node.year_unmet = node.year_asked
+	node.mouths = 0
+	var walker: Citizen = people[0]
+	walker.carrying = walker.capacity
+	walker.held_up = Citizen.MAX_HELD_UP
+	var cold: Citizen = people[1]
+	cold.carrying = 0.0
+	cold.held_up = 0
+	var herd: Herd = null
+	for agent in world.agents:
+		if agent is Herd:
+			herd = agent
+	herd.population = herd.species.minimum_population
+	herd._planned_in = -1
+	var loaded := _round_trip(world)
+	assert_not_null(loaded, "the limits themselves are in range")
+	assert_eq(_differences(world, loaded), PackedStringArray(), "and come back unchanged")
+
+
+func _overdraw_the_year(data: Dictionary) -> void:
+	data["nodes"][0]["year_asked"] = WorldSave._exact(1.0)
+	data["nodes"][0]["year_unmet"] = WorldSave._exact(2.0)
+
+
+func _first_of(data: Dictionary, kind: String) -> Dictionary:
+	for entry in data["agents"]:
+		if entry["kind"] == kind:
+			return entry
+	return {}
+
+
 func test_a_world_with_another_species_is_refused_at_save_time() -> void:
 	var world := WorldGen.generate(SEED)
 	world.add_agent(Herd.new(8001, world.agents[0].coord, Species.new("odd", 0.006, 0.07, 0.11, 1, 400, 2.0, 40.0), 10.0))

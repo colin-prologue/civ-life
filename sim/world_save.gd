@@ -385,6 +385,8 @@ static func _exact(value: float) -> Dictionary:
 ## refusal.
 class _Reader extends RefCounted:
 	const MAX_TILES := WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT
+	const MAX_EXACT_INT := 9007199254740992.0
+	const SLACK := 1e-9
 
 	var refusal := ""
 	var _data: Dictionary
@@ -476,17 +478,36 @@ class _Reader extends RefCounted:
 			if capacity < 0.0:
 				_fail("a structure has a negative capacity")
 				return null
+			# Everything below starts at zero and is only ever added to by
+			# non-negative amounts, and `deposit()` never fills past `capacity`.
+			var store := _held(entry, "store", capacity)
+			var last_yield := _non_negative_float(entry, "last_yield")
+			var took_in := _non_negative_float(entry, "took_in")
+			var gave_out := _non_negative_float(entry, "gave_out")
+			var mouths := _non_negative_int(entry, "mouths")
+			var unmet := _non_negative_float(entry, "unmet")
+			var plentiful_turns := _non_negative_int(entry, "plentiful_turns")
+			var year_turns := _non_negative_int(entry, "year_turns")
+			var year_asked := _non_negative_float(entry, "year_asked")
+			var year_unmet := _non_negative_float(entry, "year_unmet")
+			if not refusal.is_empty():
+				return null
+			# `feed()` adds `asked - eaten` to `year_unmet` beside `asked` to
+			# `year_asked`, and `eaten` is never negative.
+			if year_unmet > year_asked + SLACK * maxf(1.0, year_asked):
+				_fail("a structure's unmet hunger for the year exceeds what was asked")
+				return null
 			var node := CityNode.new(node_id, coord, kind, capacity)
-			node.store = _float(entry, "store")
-			node.last_yield = _float(entry, "last_yield")
-			node.took_in = _float(entry, "took_in")
-			node.gave_out = _float(entry, "gave_out")
-			node.mouths = _int(entry, "mouths")
-			node.unmet = _float(entry, "unmet")
-			node.plentiful_turns = _int(entry, "plentiful_turns")
-			node.year_turns = _int(entry, "year_turns")
-			node.year_asked = _float(entry, "year_asked")
-			node.year_unmet = _float(entry, "year_unmet")
+			node.store = store
+			node.last_yield = last_yield
+			node.took_in = took_in
+			node.gave_out = gave_out
+			node.mouths = mouths
+			node.unmet = unmet
+			node.plentiful_turns = plentiful_turns
+			node.year_turns = year_turns
+			node.year_asked = year_asked
+			node.year_unmet = year_unmet
 			world.nodes.append(node)
 
 		for entry in _array(_data, "routes", -1):
@@ -549,10 +570,26 @@ class _Reader extends RefCounted:
 					var coord := _coord(entry, "coord", world)
 					if not refusal.is_empty():
 						return null
-					var herd := Herd.new(_int(entry, "id"), coord, species[which], _float(entry, "population"))
-					herd.start_coord = _coord(entry, "start_coord", world)
-					herd._destination = _coord(entry, "destination", world)
-					herd._planned_in = _int(entry, "planned_in")
+					var herd_id := _int(entry, "id")
+					var population := _float(entry, "population")
+					var start_coord := _coord(entry, "start_coord", world)
+					var destination := _coord(entry, "destination", world)
+					var planned_in := _int(entry, "planned_in")
+					if not refusal.is_empty():
+						return null
+					# `Herd.step()` writes `maxf(scaled, minimum_population)`, so no
+					# herd the game has run is ever smaller than its species' floor.
+					if population < species[which].minimum_population:
+						_fail("a herd is smaller than its species' minimum population")
+						return null
+					# -1 until the herd first plans, then the season it planned in.
+					if planned_in != -1 and not Seasons.Season.values().has(planned_in):
+						_fail("a herd planned in season %d, which is not a season" % planned_in)
+						return null
+					var herd := Herd.new(herd_id, coord, species[which], population)
+					herd.start_coord = start_coord
+					herd._destination = destination
+					herd._planned_in = planned_in
 					world.agents.append(herd)
 				"citizen":
 					var route_at := _index(entry, "route", world.routes.size())
@@ -563,16 +600,24 @@ class _Reader extends RefCounted:
 					if index < 0 or index >= route.path.size():
 						_fail("a citizen stands off the end of its route")
 						return null
-					var citizen := Citizen.new(_int(entry, "id"), route, index, _float(entry, "capacity"))
+					var citizen_id := _int(entry, "id")
+					var capacity := _non_negative_float(entry, "capacity")
 					var stands_at := _coord(entry, "coord", world)
+					var carrying := _held(entry, "carrying", capacity)
+					var held_up := _int(entry, "held_up")
 					if not refusal.is_empty():
 						return null
 					if stands_at != route.path[index]:
 						_fail("a citizen stands somewhere other than its route's step %d" % index)
 						return null
+					# `_held_up_by_traffic()` counts up and drops to zero past the cap.
+					if held_up < 0 or held_up > Citizen.MAX_HELD_UP:
+						_fail("a citizen has been held up %d turns, outside 0..%d" % [held_up, Citizen.MAX_HELD_UP])
+						return null
+					var citizen := Citizen.new(citizen_id, route, index, capacity)
 					citizen.coord = stands_at
-					citizen.carrying = _float(entry, "carrying")
-					citizen.held_up = _int(entry, "held_up")
+					citizen.carrying = carrying
+					citizen.held_up = held_up
 					world.agents.append(citizen)
 				_:
 					_fail("an agent is of a kind this build does not know")
@@ -682,11 +727,39 @@ class _Reader extends RefCounted:
 		return value
 
 	func _int(from, key: String) -> int:
-		var value := _number(from, key)
-		if value != floorf(value):
-			_fail("'%s' is not a whole number" % key)
+		return _whole(_number(from, key), key)
+
+	## A whole number a 64-bit integer holds exactly; the bound keeps `int()` from
+	## being handed something it would wrap.
+	func _whole(value: float, what: String) -> int:
+		if value != floorf(value) or absf(value) > MAX_EXACT_INT:
+			_fail("'%s' is not a whole number" % what)
 			return 0
 		return int(value)
+
+	func _non_negative_int(from, key: String) -> int:
+		var value := _int(from, key)
+		if value < 0:
+			_fail("'%s' is negative" % key)
+			return 0
+		return value
+
+	func _non_negative_float(from, key: String) -> float:
+		var value := _float(from, key)
+		if value < 0.0:
+			_fail("'%s' is negative" % key)
+			return 0.0
+		return value
+
+	## An amount held in something with room for `room`: from nothing up to full.
+	## The top is judged with a hair of slack because `deposit()` adds
+	## `capacity - held` to `held`, which can land an ulp past `capacity`.
+	func _held(from, key: String, room: float) -> float:
+		var value := _non_negative_float(from, key)
+		if value > room + SLACK * maxf(1.0, room):
+			_fail("'%s' holds more than its capacity" % key)
+			return 0.0
+		return value
 
 	func _index(from, key: String, size: int) -> int:
 		var value := _int(from, key)
@@ -725,7 +798,11 @@ class _Reader extends RefCounted:
 		var pair := _numbers_in(value, "coordinate", 2)
 		if pair.size() != 2:
 			return Vector2i.ZERO
-		var coord := Vector2i(int(pair[0]), int(pair[1]))
+		var x := _whole(float(pair[0]), "coordinate")
+		var y := _whole(float(pair[1]), "coordinate")
+		if not refusal.is_empty():
+			return Vector2i.ZERO
+		var coord := Vector2i(x, y)
 		if not world.grid.has_coord(coord):
 			_fail("%s is not on the map" % coord)
 			return Vector2i.ZERO
