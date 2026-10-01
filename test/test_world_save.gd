@@ -142,6 +142,8 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 		"a herd named as a carrier": _crew_a_road_with_a_herd,
 		"a carrier on someone else's road": _crew_a_road_with_a_stranger,
 		"a carrier listed twice": func(d): d["routes"][0]["carriers"].append(d["routes"][0]["carriers"][0]),
+		"a citizen dropped from the carrier list": func(d): d["routes"][0]["carriers"].pop_back(),
+		"a herd taking a citizen's id": _give_a_herd_a_citizens_id,
 	}
 	for what in damage:
 		var result: Dictionary
@@ -155,6 +157,8 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 		assert_ne(result["refusal"], "", "%s says why" % what)
 		if what.contains("carrier"):
 			assert_string_contains(result["refusal"], "carrier", "%s is refused for the crew list" % what)
+		if what.contains("id"):
+			assert_string_contains(result["refusal"], "share the id", "%s is refused for the shared id" % what)
 
 
 func test_an_agent_the_format_does_not_know_is_refused_at_save_time() -> void:
@@ -311,6 +315,13 @@ static func _crew_a_road_with_a_herd(data: Dictionary) -> void:
 
 static func _crew_a_road_with_a_stranger(data: Dictionary) -> void:
 	data["routes"][0]["carriers"][0] = data["routes"][1]["carriers"][0]
+
+
+static func _give_a_herd_a_citizens_id(data: Dictionary) -> void:
+	for agent in data["agents"]:
+		if agent["kind"] == "herd":
+			agent["id"] = data["routes"][0]["carriers"][0]
+			return
 
 
 static func _strand_the_citizens(data: Dictionary) -> void:

@@ -496,22 +496,29 @@ class _Reader extends RefCounted:
 					_fail("an agent is of a kind this build does not know")
 					return null
 
-		# A road's crew list is ids, and `CityGen._lose_carrier` casts whoever it
-		# finds to a `Citizen`, so every id has to name a citizen who is on that
-		# same road, and once. Checked here, after agents exist, because that is
-		# the first moment there is anything to check against.
+		# A road's crew list is ids, and `CityGen._lose_carrier` finds whoever has
+		# the id first and casts them to a `Citizen`. So ids are unique across all
+		# agents, every listed id names a citizen on that same road (once), and
+		# every citizen is on their road's list. Checked here, after agents exist,
+		# because that is the first moment there is anything to check against.
+		var by_id := {}
+		for agent in world.agents:
+			if by_id.has(agent.id):
+				_fail("two agents share the id %d" % agent.id)
+				return null
+			by_id[agent.id] = agent
 		for route in world.routes:
 			var seen := {}
 			for who in route.carriers:
-				var found: Citizen = null
-				for agent in world.agents:
-					if agent.id == who and agent is Citizen:
-						found = agent
-						break
-				if found == null or found.route != route or seen.has(who):
+				var found = by_id.get(who)
+				if not found is Citizen or found.route != route or seen.has(who):
 					_fail("a road's carrier %d is not a citizen walking that road" % who)
 					return null
 				seen[who] = true
+		for agent in world.agents:
+			if agent is Citizen and not agent.route.carriers.has(agent.id):
+				_fail("a road's carrier list omits citizen %d, who walks it" % agent.id)
+				return null
 
 		var chronicle = _data.get("chronicle")
 		if typeof(chronicle) != TYPE_DICTIONARY:
