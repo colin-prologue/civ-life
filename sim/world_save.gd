@@ -436,9 +436,8 @@ class _Reader extends RefCounted:
 		_data = data
 
 	func build() -> WorldMap:
-		var seed_text = _data.get("seed")
-		if typeof(seed_text) != TYPE_STRING or not (seed_text as String).is_valid_int():
-			_fail("the seed is not a whole number")
+		var seed := _signed_int64(_data.get("seed"), "seed")
+		if not refusal.is_empty():
 			return null
 		# The size is judged as the numbers the file holds, before `HexGrid` turns
 		# it into arrays: a save claiming a million tiles a side must be refused,
@@ -457,7 +456,7 @@ class _Reader extends RefCounted:
 		var width := int(width_n)
 		var height := int(height_n)
 
-		var world := WorldMap.new(HexGrid.new(width, height), (seed_text as String).to_int())
+		var world := WorldMap.new(HexGrid.new(width, height), seed)
 		var tiles := world.grid.tile_count()
 		world.turn = turn
 
@@ -847,6 +846,30 @@ class _Reader extends RefCounted:
 
 	func _int(from, key: String) -> int:
 		return _whole(_number(from, key), key)
+	## A signed decimal string within int64. Textual bounds prevent `to_int()`
+	## from saturating on syntactically valid but out-of-range input.
+	func _signed_int64(entry, what: String) -> int:
+		if typeof(entry) != TYPE_STRING:
+			_fail("the %s is not a whole number" % what)
+			return 0
+		var text := entry as String
+		var negative := text.begins_with("-")
+		var digits := text.substr(1) if negative else text
+		if digits.is_empty():
+			_fail("the %s is not a whole number" % what)
+			return 0
+		for c in digits:
+			if c < "0" or c > "9":
+				_fail("the %s is not a whole number" % what)
+				return 0
+		var limit := str(-WorldMap.LAST_TURN - 1) if negative else str(WorldMap.LAST_TURN)
+		var magnitude := limit.substr(1) if negative else limit
+		if digits.length() > magnitude.length() \
+				or (digits.length() == magnitude.length() and digits > magnitude):
+			_fail("the %s is not a whole number the game holds" % what)
+			return 0
+		return text.to_int()
+
 
 	## A whole number a 64-bit integer holds exactly; the bound keeps `int()` from
 	## being handed something it would wrap.

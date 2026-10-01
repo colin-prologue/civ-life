@@ -98,6 +98,22 @@ func test_a_big_seed_survives() -> void:
 	assert_eq(_round_trip(world).world_seed, 9007199254740993, "seed past 2^53")
 
 
+func test_seed_decimal_strings_cover_the_signed_int64_range_without_float_conversion() -> void:
+	var good := WorldSave.encode(_populated_world())
+	for seed in ["9223372036854775807", "-9223372036854775808", "9007199254740993", "-9007199254740993"]:
+		var result := WorldSave.decode(_with_seed(good, seed))
+		assert_eq(result["refusal"], "", "seed %s loads" % seed)
+		assert_eq(result["world"].world_seed, seed.to_int(), "seed %s stays exact" % seed)
+
+
+func test_out_of_range_or_nonintegral_seed_strings_are_refused_without_saturation() -> void:
+	var good := WorldSave.encode(_populated_world())
+	for seed in ["9223372036854775808", "-9223372036854775809", "999999999999999999999999999999999999999999999999999999", "1.5", "-1.5", "", "12a", " 5", "+5", "-"]:
+		var result := WorldSave.decode(_with_seed(good, seed))
+		assert_null(result["world"], "seed %s gives no saturated world" % seed)
+		assert_string_contains(result["refusal"], "seed", "seed %s says why" % seed)
+
+
 # --- AC3: the one that catches unsaved state --------------------------------
 
 func test_a_loaded_world_runs_on_exactly_like_the_original() -> void:
@@ -493,6 +509,12 @@ func _with_turn(good: Dictionary, turn) -> Dictionary:
 	var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
 	copy["turn"] = turn
 	return copy
+func _with_seed(good: Dictionary, seed) -> Dictionary:
+	var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+	copy["seed"] = seed
+	return copy
+
+
 
 
 func test_turns_around_two_to_the_fifty_three_save_and_load_exactly() -> void:
