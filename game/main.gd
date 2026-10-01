@@ -202,6 +202,11 @@ func tick(delta: float) -> int:
 ## Move the world forward one turn and show the result. The UI entry point, the
 ## timer's entry point and the test entry point are all this function.
 func advance_turn() -> int:
+	var refusal := world.advance_refusal()
+	if not refusal.is_empty():
+		message = refusal
+		set_playing(false)
+		return world.turn
 	var turn := world.advance_turn()
 	_view.refresh()
 	_update_status()

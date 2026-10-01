@@ -73,12 +73,10 @@ const MAX_AGENT_ID := CityGen.MAX_AGENT_ID
 ## float32's ceiling unless the world holds some 10^20 agents.
 const MAX_MAGNITUDE := 4611686018427387904.0
 
-## The largest turn a save accepts. `turn` is written as a plain JSON number, exact
-## only to 2^53, and the game adds one each turn, so a save at 2^53 would write a
-## turn it cannot read back after a single advance. 2^52 leaves the loaded world
-## as many turns again before the clock could leave the exact range: not a limit
-## anyone can play to, a margin that keeps "load, advance, save, load" exact.
-const MAX_TURN := 4503599627370496
+## The turn is written as a decimal string, as the seed is: a JSON number is a
+## double, exact only to 2^53, and the clock is a 64-bit integer. Any turn up to
+## `WorldMap.LAST_TURN` saves and loads exactly. A plain whole JSON number (older
+## saves) is still read, within the range a double holds exactly.
 
 ## Every script variable of every class in a world's object graph that is written
 ## to the file. Base-class variables are listed under each subclass, because an
@@ -230,7 +228,7 @@ static func encode(world: WorldMap) -> Dictionary:
 		"format": FORMAT,
 		"version": VERSION,
 		"seed": str(world.world_seed),
-		"turn": world.turn,
+		"turn": str(world.turn),
 		"width": world.grid.width,
 		"height": world.grid.height,
 		"terrain": Array(world._terrain),
@@ -448,13 +446,13 @@ class _Reader extends RefCounted:
 		# player-facing map size), so no save this build wrote can exceed it.
 		var width_n := _number(_data, "width")
 		var height_n := _number(_data, "height")
-		var turn := _int(_data, "turn")
+		var turn := _turn()
 		if not refusal.is_empty():
 			return null
 		if width_n != floorf(width_n) or height_n != floorf(height_n) \
-				or width_n < 1.0 or height_n < 1.0 or turn < 0 or turn > WorldSave.MAX_TURN \
+				or width_n < 1.0 or height_n < 1.0 \
 				or width_n * height_n > float(WorldSave.MAX_TILES):
-			_fail("the map size or turn is out of range (at most %d tiles)" % WorldSave.MAX_TILES)
+			_fail("the map size is out of range (at most %d tiles)" % WorldSave.MAX_TILES)
 			return null
 		var width := int(width_n)
 		var height := int(height_n)
@@ -727,16 +725,6 @@ class _Reader extends RefCounted:
 		census.resize(tiles)
 		for agent in world.agents:
 			census[world.grid.index_of(agent.coord)] += agent.forage_demand()
-		# The reports round a tile's summed demand to a 64-bit integer, and herds
-		# move onto each other's tiles, so it is the whole world's demand that has to
-		# stay under the single-value ceiling, not each tile's: any tile's sum is then
-		# too. Two herds each at `MAX_MAGNITUDE` are individually fine and together not.
-		var total_demand := 0.0
-		for amount in census:
-			total_demand += amount
-		if total_demand > WorldSave.MAX_MAGNITUDE:
-			_fail("the agents together ask for %s, too large for the reports that sum what stands on a tile" % total_demand)
-			return null
 		for i in range(tiles):
 			if absf(world._forage_demand[i] - census[i]) > DEMAND_TOLERANCE * maxf(1.0, census[i]):
 				_fail("the saved forage demand on tile %d is %s but the agents standing there ask for %s" % [i, world._forage_demand[i], census[i]])
@@ -832,6 +820,30 @@ class _Reader extends RefCounted:
 			_fail("'%s' is %s, too large for the reports and totals that read it" % [key, value])
 			return 0.0
 		return value
+
+	## The world's clock: a decimal string for the whole int64 range, or (older
+	## saves) a whole JSON number a double holds exactly. A string never goes
+	## through float.
+	func _turn() -> int:
+		var entry = _value(_data, "turn")
+		if typeof(entry) == TYPE_STRING:
+			var text := entry as String
+			var digits := text.length() > 0
+			for c in text:
+				digits = digits and c >= "0" and c <= "9"
+			# Compared as text against INT64_MAX so a larger value is never
+			# converted (`to_int()` would saturate).
+			var limit := str(WorldMap.LAST_TURN)
+			if not digits or text.length() > limit.length() \
+					or (text.length() == limit.length() and text > limit):
+				_fail("the turn '%s' is not a whole number the clock holds" % text)
+				return 0
+			return text.to_int()
+		var number := _number(_data, "turn")
+		if refusal.is_empty() and (number != floorf(number) or number < 0.0 or number > MAX_EXACT_INT):
+			_fail("the turn is not a whole number the clock holds")
+			return 0
+		return int(number)
 
 	func _int(from, key: String) -> int:
 		return _whole(_number(from, key), key)

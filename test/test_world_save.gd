@@ -406,9 +406,6 @@ func test_quantities_the_reports_cannot_digest_are_refused() -> void:
 			for granary in granaries.slice(0, 2):
 				granary.capacity = 3e38
 				granary.store = 3e38,
-		"two herds each at the single-value limit, whose demand together is past it": func(w: WorldMap):
-			w.set_herd_population(w.herds()[0], WorldSave.MAX_MAGNITUDE)
-			w.set_herd_population(w.herds()[1], WorldSave.MAX_MAGNITUDE),
 		"a carrier holding 1e30": func(w: WorldMap):
 			var walker: Citizen = w.citizens()[0]
 			walker.capacity = 1e30
@@ -440,26 +437,70 @@ func test_the_largest_accepted_quantities_still_load_and_run() -> void:
 	assert_gt(loaded.herds()[0].head_count(), 0, "a limit-sized herd can be counted")
 
 
-## A loaded turn must survive being advanced and saved again: the file holds it as
-## a JSON number, exact only to 2^53.
-func test_a_loaded_turn_can_advance_and_still_round_trip() -> void:
+## The clock is written as a decimal string so it is exact over the whole int64
+## range, not only to 2^53 where a JSON number stops being exact.
+func _with_turn(good: Dictionary, turn) -> Dictionary:
+	var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+	copy["turn"] = turn
+	return copy
+
+
+func test_turns_around_two_to_the_fifty_three_save_and_load_exactly() -> void:
+	var world := _populated_world()
+	for turn in [9007199254740991, 9007199254740992, 9007199254740993, WorldMap.LAST_TURN]:
+		world.turn = turn
+		var data := WorldSave.encode(world)
+		assert_eq(data["turn"], str(turn), "written as text")
+		var loaded := _round_trip(world)
+		assert_eq(loaded.turn, turn, "turn %d comes back exactly" % turn)
+		assert_eq(_differences(world, loaded), PackedStringArray(), "and nothing else moved")
+
+
+func test_a_legacy_numeric_turn_still_loads() -> void:
 	var good := WorldSave.encode(_populated_world())
-	for turn in [float(WorldSave.MAX_TURN), 0.0]:
-		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
-		copy["turn"] = turn
-		var loaded: WorldMap = WorldSave.decode(copy)["world"]
-		assert_not_null(loaded, "turn %d loads" % int(turn))
+	for turn in [0.0, 150.0, 9007199254740991.0]:
+		var loaded = WorldSave.decode(_with_turn(good, turn))["world"]
+		assert_not_null(loaded, "numeric turn %d loads" % int(turn))
+		assert_eq(loaded.turn, int(turn))
+
+
+func test_advancing_across_two_to_the_fifty_three_stays_exact() -> void:
+	var original := _populated_world()
+	original.turn = 9007199254740990
+	var loaded := _round_trip(original)
+	for i in range(6):
+		original.advance_turn()
 		loaded.advance_turn()
-		var again := _round_trip(loaded)
-		assert_not_null(again, "and after one more turn it saves and loads")
-		assert_eq(again.turn, int(turn) + 1, "with the same turn it was saved at")
-		assert_eq(_differences(loaded, again), PackedStringArray(), "and nothing else moved")
-	for turn in [float(WorldSave.MAX_TURN) + 1.0, 9007199254740992.0]:
-		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
-		copy["turn"] = turn
-		var result := WorldSave.decode(copy)
-		assert_null(result["world"], "turn %d is refused" % int(turn))
-		assert_string_contains(result["refusal"], "out of range", "for the right reason")
+	assert_eq(original.turn, 9007199254740996, "the clock crossed 2^53 without losing a turn")
+	assert_eq(loaded.turn, original.turn)
+	assert_eq(_differences(original, loaded), PackedStringArray(), "the loaded world kept pace")
+	var again := _round_trip(loaded)
+	assert_eq(again.turn, original.turn, "and saves exactly after the crossing")
+	assert_eq(_differences(loaded, again), PackedStringArray())
+
+
+func test_an_unrepresentable_turn_is_refused() -> void:
+	var good := WorldSave.encode(_populated_world())
+	var bad := ["9223372036854775808", "99999999999999999999", "18446744073709551616", "-1", "1.5", "",
+			"12a", " 5", "+5", -1.0, 1.5, 1e19, 9007199254740993.0 * 4.0]
+	for turn in bad:
+		var result := WorldSave.decode(_with_turn(good, turn))
+		assert_null(result["world"], "turn %s is refused" % str(turn))
+		assert_string_contains(result["refusal"], "turn", "and the refusal names the turn")
+
+
+func test_the_last_turn_is_terminal_and_a_refused_advance_changes_nothing() -> void:
+	var world := _populated_world()
+	world.turn = WorldMap.LAST_TURN
+	var before := _round_trip(world)
+	assert_ne(world.advance_refusal(), "", "the clock says why it will not advance")
+	var returned := world.advance_turn()
+	assert_eq(returned, WorldMap.LAST_TURN, "the turn is reported unchanged, not wrapped")
+	assert_eq(world.turn, WorldMap.LAST_TURN)
+	assert_eq(_differences(before, world), PackedStringArray(), "the whole world is as it was")
+	world.turn = WorldMap.LAST_TURN - 1
+	assert_eq(world.advance_refusal(), "", "one turn short, it advances")
+	assert_eq(world.advance_turn(), WorldMap.LAST_TURN, "and lands on the last turn")
 
 
 ## The ceiling on agent ids is a place the game itself can reach from a loaded

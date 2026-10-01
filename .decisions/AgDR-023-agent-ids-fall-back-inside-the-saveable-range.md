@@ -33,18 +33,28 @@ for their own size, not for their sum.
 - A population or store cap chosen for play: it would be a product limit invented
   in the decoder.
 
-## Two more places the same rule applies (Codex, head bbd838f)
+## Two more places the same rule applies (revised at gate 8)
 
-- **Turn.** `turn` is a plain JSON number and `advance_turn()` adds one, so a save
-  at 2^53 could not be read back after one advance. A save now refuses a turn past
-  `WorldSave.MAX_TURN` (2^52), which leaves the loaded world as many turns again
-  as it would ever be played. The file format is unchanged.
-- **Aggregate demand.** The reports sum what stands on a tile and round it to a
-  64-bit integer, so two herds each at `MAX_MAGNITUDE` overflow it together, and
-  herds can walk onto one tile after the load. A save is refused when the demand
-  of all its agents together exceeds `MAX_MAGNITUDE`, which bounds every tile's
-  sum. Stores and capacities keep the per-value ceiling: nothing sums them
-  against it.
+An earlier revision capped the clock at 2^52 and the whole world's demand at
+`MAX_MAGNITUDE`. Both were product limits invented in the decoder to avoid a
+representation problem; both are removed.
+
+- **Turn: lossless supported integers, and a deliberate end of the clock.** `turn`
+  is written as a nonnegative decimal string, as `seed` is, so every int64 turn
+  saves and loads exactly. The decoder parses the string as text (digits only,
+  compared with INT64_MAX as text, never through float). Older saves with a plain
+  whole JSON number still load, up to 2^53. `WorldMap.LAST_TURN` (INT64_MAX) can
+  save and load but is terminal: `advance_refusal()` names it, `advance_turn()`
+  returns the unchanged turn before snapshotting or touching anything, and the
+  game stops playing and shows the refusal. This protects the `turn + 1` in the
+  report; it does not promise unbounded progression in a finite type.
+- **Aggregate demand: format safely, do not bound.** The only reader that took an
+  aggregate (several herds' demand on one tile, or a season's forage) down to an
+  integer was `TurnChange.describe()`, through `roundi`. It now writes the
+  magnitude with `%.0f` of a rounded float, so any finite aggregate reads whole and
+  unsigned. A load-time bound would be insufficient anyway, since herds converge
+  after loading. Per-value readers (`_mark_of`, `head_count`) keep the per-value
+  ceiling above.
 
 ## What would make this the wrong call
 

@@ -162,6 +162,8 @@ func _init(p_grid: HexGrid, p_seed: int) -> void:
 ## own memory of its rates, the other is a comparison against a snapshot taken
 ## before the turn ran.
 func advance_turn() -> int:
+	if not advance_refusal().is_empty():
+		return turn
 	var before := TurnReport.snapshot(self)
 	turn += 1
 	_recompute_forage()
@@ -180,6 +182,20 @@ func advance_turn() -> int:
 	_record_turn()
 	report = TurnReport.since(self, before)
 	return turn
+
+
+## The last turn the clock can show: the top of a 64-bit integer. Reaching it is
+## not an error, it is the end of the clock, and the world stops there rather than
+## wrap to a negative turn (`AgDR-023`).
+const LAST_TURN := 9223372036854775807
+
+
+## Why the world cannot advance, or an empty string. Checked before anything is
+## snapshotted or changed, so a refused advance leaves the whole world as it was.
+func advance_refusal() -> String:
+	if turn >= LAST_TURN:
+		return "the world is at its last turn, %d, and the clock cannot count past it" % turn
+	return ""
 
 
 ## Put an agent into the world. Generation calls this; nothing appends to
