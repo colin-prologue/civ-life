@@ -153,6 +153,8 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 			result = WorldSave.decode(copy)
 		assert_null(result["world"], "%s gives no world" % what)
 		assert_ne(result["refusal"], "", "%s says why" % what)
+		if what.contains("carrier"):
+			assert_string_contains(result["refusal"], "carrier", "%s is refused for the crew list" % what)
 
 
 func test_an_agent_the_format_does_not_know_is_refused_at_save_time() -> void:
