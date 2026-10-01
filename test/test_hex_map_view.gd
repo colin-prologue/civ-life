@@ -524,29 +524,51 @@ func test_every_overlay_caption_fits_the_panel_it_is_drawn_in() -> void:
 		)
 
 
-func test_a_second_scalar_is_an_entry_rather_than_a_new_system() -> void:
-	# AC5's real requirement. This builds the vitality overlay #38 will add — not
-	# as a preview of that ticket, but as proof that adding it is an array element
-	# and nothing else. Note the argument: `vitality_data` takes a use, which is
-	# the case a registry of bare method names would not have covered.
+func test_every_land_use_has_its_own_vitality_overlay() -> void:
+	# The overlays are generated from `Land.Use`, so this is what keeps a use
+	# added by #60 from going unseen: it fails if one has no entry.
 	var world := WorldGen.generate(20260815)
-	var entry := {
-		"name": "vitality",
-		"caption": "vitality — how worn the grazing is",
-		"row": "vitality_data",
-		"args": [Land.Use.GRAZE],
-		"min": Land.MIN_VITALITY,
-		"max": Land.MAX_VITALITY,
-		"low": Color(0.62, 0.16, 0.18),
-		"high": Color(0.30, 0.80, 0.36),
-	}
+	var named := {}
+	for entry in HexMapView.OVERLAYS:
+		if String(entry["row"]) == "vitality_data":
+			named[int(entry["args"][0])] = entry
+	for use in Land.Use.values():
+		assert_true(named.has(use), "use %d has a vitality overlay" % use)
+		var entry: Dictionary = named[use]
+		assert_eq(entry["min"], Land.MIN_VITALITY, "scaled from the floor, not from zero")
+		assert_eq(entry["max"], Land.MAX_VITALITY, "to the ceiling")
+		assert_eq(
+			HexMapView.overlay_row(world, entry).size(), world.grid.tile_count(),
+			"one value per tile, from a query taking an argument"
+		)
+	assert_eq(named.size(), Land.Use.size(), "no overlay for a use that does not exist")
 
-	var row := HexMapView.overlay_row(world, entry)
-	assert_eq(row.size(), world.grid.tile_count(), "one value per tile, from a query taking an argument")
-	assert_ne(
-		HexMapView.overlay_fill(entry, Land.MIN_VITALITY),
-		HexMapView.overlay_fill(entry, Land.MAX_VITALITY),
-		"worn ground and fresh ground land on different ends of the ramp"
+
+func test_a_worn_tile_is_painted_differently_and_only_for_its_own_use() -> void:
+	var world := WorldGen.generate(20260815)
+	var land := Vector2i.ZERO
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) != WorldGen.Terrain.WATER:
+			land = coord
+			break
+	var graze := {}
+	var cultivate := {}
+	for entry in HexMapView.OVERLAYS:
+		if String(entry["row"]) == "vitality_data":
+			if int(entry["args"][0]) == Land.Use.GRAZE:
+				graze = entry
+			else:
+				cultivate = entry
+	var i := world.grid.index_of(land)
+	var fresh := HexMapView.overlay_fill(graze, HexMapView.overlay_row(world, graze)[i])
+
+	world.set_vitality(land, Land.Use.GRAZE, Land.MIN_VITALITY)
+	var worn := HexMapView.overlay_fill(graze, HexMapView.overlay_row(world, graze)[i])
+	assert_gt(_separation(fresh, worn), MIN_COLOR_DISTANCE, "worn grazing ground reads as worn")
+	assert_eq(worn, graze["low"], "a floored tile sits at the very end of the ramp, not merely dim")
+	assert_eq(
+		HexMapView.overlay_fill(cultivate, HexMapView.overlay_row(world, cultivate)[i]), fresh,
+		"grazing wear does not show on the cultivation overlay"
 	)
 
 
@@ -612,16 +634,17 @@ func test_the_overlay_redraws_inside_the_same_budget_the_plain_map_has() -> void
 	await wait_frames(2)
 	var view: HexMapView = main.get_node("HexMapView")
 
-	view.set_overlay_named("forage")
-	view.last_draw_usec = 0
-	await wait_frames(2)
-	var overlaid := float(view.last_draw_usec) / 1000.0
+	for entry in HexMapView.OVERLAYS:
+		view.set_overlay_named(String(entry["name"]))
+		view.last_draw_usec = 0
+		await wait_frames(2)
+		var overlaid := float(view.last_draw_usec) / 1000.0
 
-	gut.p("redraw with the forage overlay on: %.1fms (budget %.0fms)" % [
-		overlaid, REDRAW_BUDGET_MSEC,
-	])
-	assert_gt(overlaid, 0.0, "the overlaid frame was actually drawn")
-	assert_lt(overlaid, REDRAW_BUDGET_MSEC, "an overlaid redraw stays inside the frame budget")
+		gut.p("redraw with the %s overlay on: %.1fms (budget %.0fms)" % [
+			entry["name"], overlaid, REDRAW_BUDGET_MSEC,
+		])
+		assert_gt(overlaid, 0.0, "the '%s' frame was actually drawn" % entry["name"])
+		assert_lt(overlaid, REDRAW_BUDGET_MSEC, "'%s' redraw stays inside the frame budget" % entry["name"])
 
 
 # --- direction ---------------------------------------------------------------
