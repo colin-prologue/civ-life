@@ -206,6 +206,7 @@ func advance_turn() -> int:
 	if not refusal.is_empty():
 		message = refusal
 		set_playing(false)
+		_update_prompt()
 		return world.turn
 	var turn := world.advance_turn()
 	_view.refresh()

@@ -864,6 +864,32 @@ func test_the_game_saves_and_loads_through_one_path() -> void:
 	assert_string_contains(main.message, "no save")
 
 
+func test_advancing_a_terminal_world_shows_the_reason_and_stops_play() -> void:
+	var main: Main = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	main.world.turn = WorldMap.LAST_TURN
+	main.set_playing(true)
+	assert_true(main.playing, "play was on")
+
+	var returned := main.advance_turn()
+
+	assert_eq(returned, WorldMap.LAST_TURN, "the clock did not move")
+	assert_eq(main.world.turn, WorldMap.LAST_TURN, "the world did not move")
+	assert_false(main.playing, "play stops")
+	assert_string_contains(main.get_node("Prompt").text, main.world.advance_refusal())
+	assert_string_contains(main.get_node("Prompt").text, "last turn")
+
+
+func test_a_normal_advance_leaves_the_prompt_free_of_a_refusal() -> void:
+	var main: Main = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	main.advance_turn()
+	assert_eq(main.world.turn, 1, "it advanced")
+	assert_string_does_not_contain(main.get_node("Prompt").text, "last turn")
+
+
 # --- helpers ----------------------------------------------------------------
 
 static func _crew_a_road_with_a_herd(data: Dictionary) -> void:
