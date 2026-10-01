@@ -76,3 +76,15 @@ Semantic invariants that do not threaten construction, representation, or
 lossless continuation are separate product decisions. They require an explicit
 rule and regression before becoming decoder refusals; the existing malformed
 format/version and structural refusals remain mandatory.
+
+### Census tolerance evidence (2026-10-01)
+
+The live demand census is a `PackedFloat32Array` updated by ordinary add and
+subtract operations. Adding a herd of population `65536.005` on an empty land
+tile and moving it away leaves a positive residue of about `0.0028125`, above
+the gathering display floor, even though the herd population is supported and
+the move used only `WorldMap` mutators. The save format preserves that live row
+rather than reconstructing it, so tightening empty-tile loader tolerance below
+that residue would reject a supported round trip. Whether cached residue should
+affect gathering is a separate simulation/consumer decision, not a decoder
+authenticity rule.

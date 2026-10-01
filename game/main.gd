@@ -194,9 +194,14 @@ func tick(delta: float) -> int:
 	var due := drain(_accumulator, MAX_TURNS_PER_FRAME)
 	_accumulator = due["accumulator"]
 	var turns := int(due["turns"])
+	var completed := 0
 	for i in range(turns):
+		var before := world.turn
 		advance_turn()
-	return turns
+		if world.turn == before:
+			break
+		completed += 1
+	return completed
 
 
 ## Move the world forward one turn and show the result. The UI entry point, the

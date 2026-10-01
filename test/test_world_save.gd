@@ -352,6 +352,26 @@ func test_a_save_that_would_wrap_overflow_or_collide_is_refused() -> void:
 		assert_string_contains(result["refusal"], damage[what][1], "%s is refused for the right reason" % what)
 
 
+func test_an_ordinary_positive_float32_census_residue_round_trips() -> void:
+	var world := WorldGen.generate(SEED)
+	var empty: Array[Vector2i] = []
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) != WorldGen.Terrain.WATER and world.forage_demand_at(coord) == 0.0:
+			empty.append(coord)
+			if empty.size() == 2:
+				break
+	assert_eq(empty.size(), 2, "the generated world has two empty land tiles")
+	var herd := Herd.new(9001, empty[0], Species.grazer(), 65536.005)
+	world.add_agent(herd)
+	world.move_agent(herd, empty[1])
+	var residue := world.forage_demand_at(empty[0])
+	assert_gt(residue, CityNode.GATHERING_DEMAND_FLOOR,
+		"float32 add then subtract leaves an ordinary positive empty-tile residue")
+	var loaded := _round_trip(world)
+	assert_eq(loaded.forage_demand_at(empty[0]), residue,
+		"the live census is preserved rather than reconstructed or tightened away")
+
+
 func test_the_boundaries_of_the_new_checks_still_load() -> void:
 	var good := WorldSave.encode(_populated_world())
 	var fresh := WorldSave.encode(WorldGen.generate(SEED))

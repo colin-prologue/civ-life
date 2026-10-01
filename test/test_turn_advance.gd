@@ -141,6 +141,39 @@ func test_playing_advances_the_world_through_the_same_entry_point() -> void:
 	assert_string_contains(main.get_node("Status").text, "Turn %d" % main.world.turn)
 
 
+func test_tick_reports_no_turns_when_the_terminal_world_refuses_all_due_work() -> void:
+	var main: Node2D = await _launch()
+	main.speed_index = 1
+	main.world.turn = WorldMap.LAST_TURN
+	main.set_playing(true)
+	var ran: int = main.tick(4.0)
+	assert_eq(ran, 0, "four due turns advanced none")
+	assert_eq(main.world.turn, WorldMap.LAST_TURN, "the terminal clock stayed put")
+	assert_false(main.playing, "the refusal paused play")
+	assert_string_contains(main.get_node("Prompt").text, "last turn", "the reason stayed visible")
+
+
+func test_tick_reports_only_the_turn_before_it_reaches_the_terminal_world() -> void:
+	var main: Node2D = await _launch()
+	main.speed_index = 1
+	main.world.turn = WorldMap.LAST_TURN - 1
+	main.set_playing(true)
+	var ran: int = main.tick(4.0)
+	assert_eq(ran, 1, "only the turn into the terminal clock advanced")
+	assert_eq(main.world.turn, WorldMap.LAST_TURN, "it stopped exactly at the terminal clock")
+	assert_false(main.playing, "the next due turn paused play")
+	assert_string_contains(main.get_node("Prompt").text, "last turn", "the reason stayed visible")
+
+
+func test_tick_reports_all_due_turns_when_none_refuse() -> void:
+	var main: Node2D = await _launch()
+	main.speed_index = 1
+	main.set_playing(true)
+	var ran: int = main.tick(4.0)
+	assert_eq(ran, 4, "all four due turns advanced")
+	assert_eq(main.world.turn, 4, "the returned count matches the world clock")
+
+
 func test_a_paused_world_ignores_the_clock_entirely() -> void:
 	var main: Node2D = await _launch()
 	var before: int = main.world.turn
