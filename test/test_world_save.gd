@@ -460,7 +460,8 @@ func test_a_shortage_year_can_preserve_a_completed_plenty_run_and_round_trip() -
 	assert_eq(granary.year_turns, 0, "the shortage closed its hunger year")
 	assert_eq(granary.plentiful_turns, CityNode.GROWTH_TURNS,
 		"shortage precedence leaves the completed plenty run intact")
-	assert_gt(granary.year_asked, 0.0, "the next year begins with ordinary hunger books")
+	assert_eq(granary.year_asked, 0.0, "end_year cleared the closed hunger book")
+	assert_eq(granary.year_unmet, 0.0, "end_year cleared the closed unmet book")
 	var loaded := _round_trip(world)
 	assert_eq(_differences(world, loaded), PackedStringArray(),
 		"the valid threshold crossing survives a save and load")
