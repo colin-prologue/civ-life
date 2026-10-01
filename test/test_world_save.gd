@@ -145,6 +145,12 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 		"a citizen dropped from the carrier list": func(d): d["routes"][0]["carriers"].pop_back(),
 		"a herd taking a citizen's id": _give_a_herd_a_citizens_id,
 		"a citizen moved off its route step": _move_a_citizen_along_its_road,
+		"a million tiles along each edge": func(d): d["width"] = 1000000; d["height"] = 1000000,
+		"a map one tile over the supported size": func(d): d["width"] = WorldGen.DEFAULT_WIDTH + 1,
+		"a vitality above the ceiling": func(d): d["vitality"][0][5] = 1.5,
+		"a vitality below the floor": func(d): d["vitality"][1][7] = 0.05,
+		"a negative vitality": func(d): d["vitality"][0][0] = -1.0,
+		"a road through water": _lay_a_road_through_water,
 	}
 	for what in damage:
 		var result: Dictionary
@@ -162,6 +168,25 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 			assert_string_contains(result["refusal"], "share the id", "%s is refused for the shared id" % what)
 		if what.contains("route step"):
 			assert_string_contains(result["refusal"], "somewhere other than", "%s is refused for the coordinate" % what)
+		if what.contains("tile"):
+			assert_string_contains(result["refusal"], "out of range", "%s is refused for its size" % what)
+		if what.contains("vitality"):
+			assert_string_contains(result["refusal"], "vitality", "%s is refused for the land" % what)
+		if what.contains("water"):
+			assert_string_contains(result["refusal"], "water", "%s is refused for the terrain" % what)
+
+
+func test_land_at_its_floor_and_ceiling_still_loads() -> void:
+	var world := WorldGen.generate(SEED)
+	world._vitality[0][0] = Land.MIN_VITALITY
+	world._vitality[0][1] = Land.MAX_VITALITY
+	var loaded := _round_trip(world)
+	assert_not_null(loaded, "the bounds themselves are in range")
+	assert_eq(_differences(world, loaded), PackedStringArray(), "and come back unchanged")
+
+
+func test_a_generated_world_is_within_the_size_a_save_allows() -> void:
+	assert_eq(WorldGen.generate(SEED).grid.tile_count(), WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT)
 
 
 func test_an_agent_the_format_does_not_know_is_refused_at_save_time() -> void:
@@ -336,6 +361,12 @@ static func _move_a_citizen_along_its_road(data: Dictionary) -> void:
 				if step != agent["coord"]:
 					agent["coord"] = step
 					return
+
+
+static func _lay_a_road_through_water(data: Dictionary) -> void:
+	var grid := HexGrid.new(int(data["width"]), int(data["height"]))
+	var step: Array = data["routes"][0]["path"][1]
+	data["terrain"][grid.index_of(Vector2i(int(step[0]), int(step[1])))] = WorldGen.Terrain.WATER
 
 
 static func _strand_the_citizens(data: Dictionary) -> void:

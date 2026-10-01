@@ -366,6 +366,8 @@ static func _exact(value: float) -> Dictionary:
 ## being rebuilt assert on bad input, and an assert is a crash rather than a
 ## refusal.
 class _Reader extends RefCounted:
+	const MAX_TILES := WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT
+
 	var refusal := ""
 	var _data: Dictionary
 
@@ -377,14 +379,22 @@ class _Reader extends RefCounted:
 		if typeof(seed_text) != TYPE_STRING or not (seed_text as String).is_valid_int():
 			_fail("the seed is not a whole number")
 			return null
-		var width := _int(_data, "width")
-		var height := _int(_data, "height")
+		# The size is judged as the numbers the file holds, before `HexGrid` turns
+		# it into arrays: a save claiming a million tiles a side must be refused,
+		# not allocated. The limit is what world generation produces (there is no
+		# player-facing map size), so no save this build wrote can exceed it.
+		var width_n := _number(_data, "width")
+		var height_n := _number(_data, "height")
 		var turn := _int(_data, "turn")
 		if not refusal.is_empty():
 			return null
-		if width <= 0 or height <= 0 or turn < 0:
-			_fail("the map size or turn is out of range")
+		if width_n != floorf(width_n) or height_n != floorf(height_n) \
+				or width_n < 1.0 or height_n < 1.0 or turn < 0 \
+				or width_n * height_n > float(MAX_TILES):
+			_fail("the map size or turn is out of range (at most %d tiles)" % MAX_TILES)
 			return null
+		var width := int(width_n)
+		var height := int(height_n)
 
 		var world := WorldMap.new(HexGrid.new(width, height), (seed_text as String).to_int())
 		var tiles := world.grid.tile_count()
@@ -397,7 +407,11 @@ class _Reader extends RefCounted:
 				return null
 		var vitality: Array = _array(_data, "vitality", Land.USE_COUNT)
 		for use in range(mini(vitality.size(), Land.USE_COUNT)):
-			world._vitality[use] = PackedFloat32Array(_numbers_in(vitality[use], "vitality row", tiles))
+			var row := PackedFloat32Array(_numbers_in(vitality[use], "vitality row", tiles))
+			if not _in_vitality_range(row):
+				_fail("a vitality lies outside %s..%s" % [Land.MIN_VITALITY, Land.MAX_VITALITY])
+				return null
+			world._vitality[use] = row
 		world._forage_demand = PackedFloat32Array(_numbers(_data, "forage_demand", tiles))
 		# Empty on a world that has never advanced, a whole row on any other.
 		world._forage_demand_at_turn_start = PackedFloat32Array(
@@ -407,6 +421,8 @@ class _Reader extends RefCounted:
 		for row in [world._forage_demand_at_turn_start, world._grazing_vitality_at_turn_start]:
 			if row.size() != 0 and row.size() != tiles:
 				_fail("a turn-start snapshot does not cover the map")
+		if not _in_vitality_range(world._grazing_vitality_at_turn_start):
+			_fail("a vitality lies outside %s..%s" % [Land.MIN_VITALITY, Land.MAX_VITALITY])
 		# Forage is not in the file: it is recomputed from terrain and season, as
 		# every turn recomputes it (`AgDR-009`).
 		world._recompute_forage()
@@ -447,6 +463,10 @@ class _Reader extends RefCounted:
 				path.append(_coord_of(step, world))
 			if not refusal.is_empty():
 				return null
+			for step in path:
+				if world.terrain_at(step) == WorldGen.Terrain.WATER:
+					_fail("a route's path crosses water at %s" % step)
+					return null
 			if path.size() < 2 or not Route.is_contiguous(path) \
 					or path[0] != world.nodes[source].coord or path[-1] != world.nodes[sink].coord:
 				_fail("a route's path does not run between its two structures")
@@ -534,6 +554,17 @@ class _Reader extends RefCounted:
 			world.chronicle._series[str(key)] = PackedFloat32Array(_numbers(chronicle, key, -1))
 
 		return world if refusal.is_empty() else null
+
+	## Compared as 32-bit floats, the way rows are stored: the floor as a double
+	## is below the floor as a float, which would refuse a legitimate worn tile.
+	## Written as `not (in range)` so NaN is refused too.
+	func _in_vitality_range(row: PackedFloat32Array) -> bool:
+		var floor32 := PackedFloat32Array([Land.MIN_VITALITY])[0]
+		var ceiling32 := PackedFloat32Array([Land.MAX_VITALITY])[0]
+		for value in row:
+			if not (value >= floor32 and value <= ceiling32):
+				return false
+		return true
 
 	func _species(entry) -> Species:
 		if typeof(entry) != TYPE_DICTIONARY or typeof(entry.get("name")) != TYPE_STRING:
