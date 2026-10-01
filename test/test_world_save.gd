@@ -139,6 +139,9 @@ func test_damaged_saves_are_refused_rather_than_half_loaded() -> void:
 		"an unknown agent": func(d): d["agents"][0]["kind"] = "band",
 		"a coordinate off the map": func(d): d["nodes"][0]["coord"] = [500, 500],
 		"a number edited without its bits": func(d): d["nodes"][0]["store"]["value"] = 12345.0,
+		"a herd named as a carrier": _crew_a_road_with_a_herd,
+		"a carrier on someone else's road": _crew_a_road_with_a_stranger,
+		"a carrier listed twice": func(d): d["routes"][0]["carriers"].append(d["routes"][0]["carriers"][0]),
 	}
 	for what in damage:
 		var result: Dictionary
@@ -157,6 +160,47 @@ func test_an_agent_the_format_does_not_know_is_refused_at_save_time() -> void:
 	world.add_agent(Agent.new(77, world.agents[0].coord))
 	assert_ne(WorldSave.unsaveable(world), "", "a plain agent cannot be written")
 	assert_eq(WorldSave.to_text(world), "", "and nothing is produced")
+
+
+func test_a_save_is_written_whole_or_not_at_all() -> void:
+	var world := _populated_world()
+	var path := "user://test_durable_save.json"
+	assert_eq(WorldSave.write_file(world, path), "", "the first save is written")
+	assert_false(FileAccess.file_exists(path + ".tmp"), "no temporary file is left behind")
+	var before := FileAccess.get_file_as_string(path)
+	world.advance_turn()
+	for step in ["open", "store", "flush", "close", "replace"]:
+		var why := WorldSave.write_file(world, path, _FailingSteps.new(step))
+		assert_ne(why, "", "a failing %s is reported" % step)
+		assert_eq(FileAccess.get_file_as_string(path), before, "the earlier save survives a failing %s" % step)
+		assert_eq(WorldSave.read_file(path)["refusal"], "", "and still loads after a failing %s" % step)
+		assert_false(FileAccess.file_exists(path + ".tmp"), "no temporary file after a failing %s" % step)
+	assert_eq(WorldSave.write_file(world, path), "", "a later save replaces it")
+	assert_ne(FileAccess.get_file_as_string(path), before, "with the newer world")
+	DirAccess.remove_absolute(path)
+
+
+class _FailingSteps extends WorldSave.FileSteps:
+	var _step: String
+
+	func _init(step: String) -> void:
+		_step = step
+
+	func open(path: String) -> FileAccess:
+		return null if _step == "open" else super.open(path)
+
+	func store(file: FileAccess, text: String) -> bool:
+		return false if _step == "store" else super.store(file, text)
+
+	func flush(file: FileAccess) -> Error:
+		return FAILED if _step == "flush" else super.flush(file)
+
+	func close(file: FileAccess) -> Error:
+		var result := super.close(file)
+		return FAILED if _step == "close" else result
+
+	func replace(from: String, to: String) -> Error:
+		return FAILED if _step == "replace" else super.replace(from, to)
 
 
 # --- AC6: a new field that is not saved turns this red -----------------------
@@ -255,6 +299,17 @@ func test_the_game_saves_and_loads_through_one_path() -> void:
 
 
 # --- helpers ----------------------------------------------------------------
+
+static func _crew_a_road_with_a_herd(data: Dictionary) -> void:
+	for agent in data["agents"]:
+		if agent["kind"] == "herd":
+			data["routes"][0]["carriers"][0] = agent["id"]
+			return
+
+
+static func _crew_a_road_with_a_stranger(data: Dictionary) -> void:
+	data["routes"][0]["carriers"][0] = data["routes"][1]["carriers"][0]
+
 
 static func _strand_the_citizens(data: Dictionary) -> void:
 	for agent in data["agents"]:

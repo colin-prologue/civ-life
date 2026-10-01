@@ -273,16 +273,63 @@ static func decode(data: Dictionary) -> Dictionary:
 
 
 ## Write a world to a file. Returns an empty string, or why it did not happen.
-static func write_file(world: WorldMap, path: String) -> String:
+##
+## The text is made first, written to a sibling file, and only moved over `path`
+## once every step has succeeded, so a save that fails part-way leaves the
+## previous save exactly as it was. `steps` is the seam a test uses to make a
+## chosen step fail; nothing else passes it.
+static func write_file(world: WorldMap, path: String, steps := FileSteps.new()) -> String:
 	var why := unsaveable(world)
 	if not why.is_empty():
 		return why
-	var file := FileAccess.open(path, FileAccess.WRITE)
+	var text := to_text(world)
+	var temp := path + ".tmp"
+	var file := steps.open(temp)
 	if file == null:
-		return "could not write %s (error %d)" % [path, FileAccess.get_open_error()]
-	file.store_string(to_text(world))
-	file.close()
+		return "could not write %s (error %d)" % [temp, FileAccess.get_open_error()]
+	if not steps.store(file, text):
+		file.close()
+		steps.discard(temp)
+		return "could not write %s (the write failed)" % temp
+	var flushed := steps.flush(file)
+	if flushed != OK:
+		file.close()
+		steps.discard(temp)
+		return "could not write %s (flush failed, error %d)" % [temp, flushed]
+	var closed := steps.close(file)
+	if closed != OK:
+		steps.discard(temp)
+		return "could not write %s (close failed, error %d)" % [temp, closed]
+	var replaced := steps.replace(temp, path)
+	if replaced != OK:
+		steps.discard(temp)
+		return "could not replace %s (error %d); the earlier save is untouched" % [path, replaced]
 	return ""
+
+
+## The file operations `write_file()` performs, one per step, each reporting
+## failure. A test subclasses this to fail exactly one of them.
+class FileSteps extends RefCounted:
+	func open(path: String) -> FileAccess:
+		return FileAccess.open(path, FileAccess.WRITE)
+
+	func store(file: FileAccess, text: String) -> bool:
+		return file.store_string(text)
+
+	func flush(file: FileAccess) -> Error:
+		file.flush()
+		return file.get_error()
+
+	func close(file: FileAccess) -> Error:
+		var failed := file.get_error()
+		file.close()
+		return failed
+
+	func replace(from: String, to: String) -> Error:
+		return DirAccess.rename_absolute(from, to)
+
+	func discard(path: String) -> void:
+		DirAccess.remove_absolute(path)
 
 
 ## Read a world from a file. Same shape of answer as `from_text()`.
@@ -448,6 +495,23 @@ class _Reader extends RefCounted:
 				_:
 					_fail("an agent is of a kind this build does not know")
 					return null
+
+		# A road's crew list is ids, and `CityGen._lose_carrier` casts whoever it
+		# finds to a `Citizen`, so every id has to name a citizen who is on that
+		# same road, and once. Checked here, after agents exist, because that is
+		# the first moment there is anything to check against.
+		for route in world.routes:
+			var seen := {}
+			for who in route.carriers:
+				var found: Citizen = null
+				for agent in world.agents:
+					if agent.id == who and agent is Citizen:
+						found = agent
+						break
+				if found == null or found.route != route or seen.has(who):
+					_fail("a road's carrier %d is not a citizen walking that road" % who)
+					return null
+				seen[who] = true
 
 		var chronicle = _data.get("chronicle")
 		if typeof(chronicle) != TYPE_DICTIONARY:
