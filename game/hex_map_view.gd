@@ -1017,6 +1017,7 @@ func _draw_flows(top: float) -> void:
 	if data.is_empty():
 		return
 	var left := get_viewport_rect().size.x - PANEL_INSET
+	var totals := _flow_total_labels(data)
 	var pos := Vector2(left, top)
 
 	draw_string(font, pos + Vector2(0.0, 11.0),
@@ -1029,7 +1030,7 @@ func _draw_flows(top: float) -> void:
 	_flow_line(font, font_size, pos, "people", "%d  (%d held)" % [
 		int(data["people"]), int(data["held_up"])], 0)
 	pos.y += 18.0
-	_flow_line(font, font_size, pos, "granary", "%d" % roundi(data["granary_store"]),
+	_flow_line(font, font_size, pos, "granary", totals["granary"],
 		int(data["granary_store_trend"]))
 	pos.y += 18.0
 	# In and out on one line and always both, so a zero outflow is stated rather
@@ -1040,8 +1041,23 @@ func _draw_flows(top: float) -> void:
 	_flow_line(font, font_size, pos, "fields", "%.2f /turn" % data["farm_yield"],
 		int(data["farm_yield_trend"]))
 	pos.y += 18.0
-	_flow_line(font, font_size, pos, "animals", "%d" % roundi(data["animals"]),
+	_flow_line(font, font_size, pos, "animals", totals["animals"],
 		int(data["animals_trend"]))
+
+
+## The two stock totals in the flow panel are aggregates. Individual loaded
+## quantities may be within the representation-safe limit while their sum is
+## past int64, so this must not narrow through `roundi` merely to make a label.
+static func _flow_total_labels(data: Dictionary) -> Dictionary:
+	return {
+		"granary": _whole_text(float(data["granary_store"])),
+		"animals": _whole_text(float(data["animals"])),
+	}
+
+
+static func _whole_text(value: float) -> String:
+	return "%.0f" % floorf(absf(value) + 0.5)
+
 
 
 func _flow_line(font: Font, font_size: int, pos: Vector2, label: String, value: String,

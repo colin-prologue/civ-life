@@ -8,8 +8,11 @@ headlessly and cannot be reproduced from a seed.
 
 ## What is here
 
-`main.tscn` is the project's main scene. It generates a world from a fixed seed,
-draws it, moves the clock — a turn at a time with Space, or on its own with `P`,
+`main.tscn` is the project's main scene. It generates a world from a seed —
+`20260815` unless one is named with `godot -- --seed=N`, typed into the seed
+field, or stepped to with `N` — draws it, saves it with `S` and loads it back
+with `L` (one file, `user://world.save.json`; what goes in it is
+`sim/world_save.gd`'s business), moves the clock — a turn at a time with Space, or on its own with `P`,
 at a speed set by `[` and `]` — and lets the player build in it: click a tile to
 select it, `F` or `G` to put a farm or a granary on it, `R` then a second click
 to draw a road between two structures, `Esc` to clear.

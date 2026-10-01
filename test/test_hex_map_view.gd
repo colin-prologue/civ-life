@@ -394,6 +394,41 @@ func test_the_readout_is_the_world_talking_and_not_the_view() -> void:
 	)
 
 
+func test_the_flow_panel_formats_large_accepted_aggregate_totals_without_integer_narrowing() -> void:
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	var view: HexMapView = main.get_node("HexMapView")
+	var world: WorldMap = main.world
+	var herds := world.herds()
+	var granaries: Array[CityNode] = []
+	for node in world.nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			granaries.append(node)
+	assert_true(herds.size() >= 2, "the panel world has two herds to sum")
+	var second: CityNode = null
+	for coord in world.grid.all_coords():
+		if second == null and CityGen.can_place_node(world, coord):
+			second = CityGen.place_node(world, coord, CityNode.Kind.GRANARY)
+	assert_not_null(second, "CityGen can place the second granary the aggregate needs")
+	granaries.append(second)
+	for herd in herds.slice(0, 2):
+		world.set_herd_population(herd, WorldSave.MAX_MAGNITUDE)
+	for granary in granaries.slice(0, 2):
+		granary.capacity = WorldSave.MAX_MAGNITUDE
+		granary.store = WorldSave.MAX_MAGNITUDE
+	var restored := WorldSave.decode(WorldSave.encode(world))
+	assert_eq(restored["refusal"], "", "the accepted aggregate world still loads")
+	view.show_world(restored["world"], main.get_viewport_rect().size)
+	await wait_frames(2)
+	var totals := HexMapView._flow_total_labels(view.readout())
+	assert_eq(totals["animals"], "9223372036854775808", "the panel text keeps two accepted herds whole")
+	assert_eq(totals["granary"], "9223372036854775808", "the panel text keeps two accepted stores whole")
+	var ordinary := HexMapView._flow_total_labels({"animals": 99.25, "granary_store": 12.25})
+	assert_eq(ordinary["animals"], "99", "ordinary animal labels keep their wording")
+	assert_eq(ordinary["granary"], "12", "ordinary granary labels keep their wording")
+
+
 func test_the_granary_reports_an_outflow_of_zero_rather_than_omitting_it() -> void:
 	# AC4. Since #29 people eat from the granary, so the outflow is what they ate
 	# — and a panel that simply left it out would be saying "nothing is leaving"

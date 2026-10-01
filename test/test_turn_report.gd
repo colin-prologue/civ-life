@@ -550,3 +550,44 @@ func _first_of(report: TurnReport, kind: int) -> TurnChange:
 		if change.kind == kind:
 			return change
 	return null
+
+
+# --- the words stay right at any finite size --------------------------------
+
+func test_descriptions_of_ordinary_sizes_keep_their_wording() -> void:
+	var here := Vector2i(1, 1)
+	assert_eq(TurnChange.new(here, TurnChange.Kind.DROPPED, 1.0).describe(), "1 more change not shown")
+	assert_eq(TurnChange.new(here, TurnChange.Kind.DROPPED, 2.0).describe(), "2 more changes not shown")
+	assert_eq(TurnChange.new(here, TurnChange.Kind.HERD_POPULATION, 100.0).describe(), "a herd passed 100 head")
+	assert_eq(TurnChange.new(here, TurnChange.Kind.HERD_POPULATION, -100.0).describe(), "a herd fell back below 100 head")
+	assert_eq(TurnChange.new(here, TurnChange.Kind.ROUTE_BLOCKED, 2.4).describe(), "a carrier is held up — 2 mouths in the road")
+	assert_eq(TurnChange.new(here, TurnChange.Kind.SEASON_TURNED, -3.6).describe(), "the season turned — the land feeds 4 less")
+
+
+func test_descriptions_stay_whole_and_unsigned_around_two_to_the_sixty_three() -> void:
+	var here := Vector2i(1, 1)
+	for pair in [[9223372036854774784.0, "9223372036854774784"], [9223372036854775808.0, "9223372036854775808"],
+			[1.8446744073709552e19, "18446744073709551616"]]:
+		for sign in [1.0, -1.0]:
+			var said := TurnChange.new(here, TurnChange.Kind.GRANARY_STORE, sign * pair[0]).describe()
+			assert_string_contains(said, " " + pair[1] + " grain", "%s read in full" % pair[1])
+			assert_string_contains(said, "passed" if sign > 0.0 else "fell back below")
+	assert_string_contains(TurnChange.new(here, TurnChange.Kind.DROPPED, 1e30).describe(), "changes not shown", "plural")
+
+
+func test_a_hold_up_beside_herds_that_converged_past_two_to_the_sixty_three_is_described_whole() -> void:
+	var world := _flat_world()
+	_lay_road(world)
+	var citizen := world.citizens()[0]
+	for i in range(3):
+		var herd := Herd.new(200 + i, citizen.coord, Species.grazer(), 1.0)
+		world.add_agent(herd)
+		world.set_herd_population(herd, 4611686018427387904.0)
+	var before := TurnReport.snapshot(world)
+	citizen.held_up = 1
+	var change := _first_of(TurnReport.since(world, before), TurnChange.Kind.ROUTE_BLOCKED)
+	assert_not_null(change, "the hold-up is reported")
+	assert_gt(change.magnitude, 9.3e18, "three herds of 2^62 are more than a 64-bit integer holds")
+	var said := change.describe()
+	assert_eq(said, "a carrier is held up — %.0f mouths in the road" % floorf(change.magnitude + 0.5))
+	assert_false(said.contains("-"), "no wrapped, negative count in %s" % said)

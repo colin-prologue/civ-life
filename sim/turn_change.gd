@@ -120,24 +120,33 @@ func kind_name() -> String:
 ## and a report that quietly re-introduces the question in order to write a
 ## nicer sentence has put the branch back in a place nobody greps for.
 func describe() -> String:
-	var size := absi(roundi(magnitude))
+	var size := _whole_text(magnitude)
 	match kind:
 		Kind.SEASON_TURNED:
-			return "the season turned — the land feeds %d %s" % [
+			return "the season turned — the land feeds %s %s" % [
 				size, "more" if magnitude >= 0.0 else "less"
 			]
 		Kind.ROUTE_BLOCKED:
-			return "a carrier is held up — %d mouths in the road" % size
+			return "a carrier is held up — %s mouths in the road" % size
 		Kind.GRANARY_STORE:
-			return "the granary %s %d grain" % [
+			return "the granary %s %s grain" % [
 				"passed" if magnitude >= 0.0 else "fell back below", size
 			]
 		Kind.HERD_POPULATION:
-			return "a herd %s %d head" % [
+			return "a herd %s %s head" % [
 				"passed" if magnitude >= 0.0 else "fell back below", size
 			]
 		Kind.HERD_CROSSED:
-			return "%d head crossed onto new ground" % size
+			return "%s head crossed onto new ground" % size
 		Kind.DROPPED:
-			return "%d more change%s not shown" % [size, "" if size == 1 else "s"]
+			return "%s more change%s not shown" % [size, "" if size == "1" else "s"]
 	return "something happened"
+
+
+## A magnitude as unsigned whole-number text, rounded half away from zero. Not
+## `absi(roundi())`: `roundi` wraps past a 64-bit integer, and a magnitude here is
+## an aggregate of finite quantities (three herds that converge on a tile can sum
+## past 2^63) that nothing bounded when they were loaded. `%.0f` writes any finite
+## float in full.
+static func _whole_text(value: float) -> String:
+	return "%.0f" % floorf(absf(value) + 0.5)
