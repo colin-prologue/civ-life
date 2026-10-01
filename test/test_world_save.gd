@@ -901,7 +901,11 @@ func test_the_seed_comes_from_the_command_line_or_the_default() -> void:
 	assert_eq(Main.seed_from_args(PackedStringArray(), 5), 5, "no argument: default")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=42"]), 5), 42, "--seed=N")
 	assert_eq(Main.seed_from_args(PackedStringArray(["--x", "--seed", "-7"]), 5), -7, "--seed N")
-	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=abc"]), 5), 5, "nonsense: default")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=9223372036854775807"]), 5), WorldMap.LAST_TURN, "CLI accepts int64 max")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed", "-9223372036854775808"]), 5), -WorldMap.LAST_TURN - 1, "CLI accepts int64 min")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=9223372036854775808"]), 5), 5, "one above max falls back")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=-9223372036854775809"]), 5), 5, "one below min falls back")
+	assert_eq(Main.seed_from_args(PackedStringArray(["--seed=abc"]), 5), 5, "malformed falls back")
 	assert_eq(Main.DEFAULT_SEED, 20260815, "the shipped default is the seed captures were taken on")
 
 
@@ -934,6 +938,29 @@ func test_the_game_saves_and_loads_through_one_path() -> void:
 	main.load_world(path)
 	assert_eq(main.world.turn, 30, "a missing file leaves the world alone")
 	assert_string_contains(main.message, "no save")
+
+
+func test_seed_submission_has_the_same_int64_bounds_without_replacing_on_refusal() -> void:
+	var main: Main = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	main._on_seed_submitted("9223372036854775807")
+	assert_eq(main.world.world_seed, WorldMap.LAST_TURN, "UI accepts int64 max")
+	main._on_seed_submitted("-9223372036854775808")
+	assert_eq(main.world.world_seed, -WorldMap.LAST_TURN - 1, "UI accepts int64 min")
+	main.choose_seed(42)
+	var before := main.world
+	main._on_seed_submitted("9223372036854775808")
+	assert_same(main.world, before, "an out-of-range UI seed keeps the current world")
+	assert_string_contains(main.message, "whole number", "UI says why it refused")
+	main._on_seed_submitted("not-a-seed")
+	assert_same(main.world, before, "a malformed UI seed keeps the current world")
+
+
+func test_next_seed_wraps_at_the_signed_int64_endpoint() -> void:
+	assert_eq(Main.next_seed(WorldMap.LAST_TURN), -WorldMap.LAST_TURN - 1, "N wraps max to min")
+	assert_eq(Main.next_seed(-WorldMap.LAST_TURN - 1), -WorldMap.LAST_TURN, "N continues after min")
+	assert_eq(Main.next_seed(41), 42, "ordinary N increments")
 
 
 func test_advancing_a_terminal_world_shows_the_reason_and_stops_play() -> void:

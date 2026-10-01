@@ -35,7 +35,7 @@ extends Node2D
 ## to a new map — and every committed capture was taken on this seed.
 ##
 ## Choose another with `-- --seed=N` on the command line, by typing one into the
-## seed field, or with `N` for the next one along.
+## seed field, or with `N` for the next one along (wrapping max int64 to min).
 const DEFAULT_SEED := 20260815
 
 ## The one save. Choosing this path is the whole of what `game/` does about
@@ -106,11 +106,18 @@ static func seed_from_args(args: PackedStringArray, fallback: int) -> int:
 			value = args[i + 1]
 		else:
 			continue
-		return value.to_int() if value.is_valid_int() else fallback
+		var parsed := WorldSave.signed_int64_decimal(value)
+		return int(parsed["value"]) if parsed["valid"] else fallback
 	return fallback
 
 
 ## Throw the current world away and generate a fresh one from `world_seed`.
+static func next_seed(current: int) -> int:
+	# Avoid overflowing an int64 at the keyboard's endpoint; wrap is stable and
+	# makes every seed reachable by repeated N presses.
+	return -WorldMap.LAST_TURN - 1 if current == WorldMap.LAST_TURN else current + 1
+
+
 func choose_seed(world_seed: int) -> void:
 	_replace_world(WorldGen.generate(world_seed))
 	message = "new world from seed %d" % world_seed
@@ -152,8 +159,9 @@ func _replace_world(next: WorldMap) -> void:
 
 
 func _on_seed_submitted(text: String) -> void:
-	if text.strip_edges().is_valid_int():
-		choose_seed(text.strip_edges().to_int())
+	var parsed := WorldSave.signed_int64_decimal(text.strip_edges())
+	if parsed["valid"]:
+		choose_seed(int(parsed["value"]))
 		return
 	message = "a seed is a whole number"
 	_seed_field.text = str(world.world_seed)
@@ -387,7 +395,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			# here, and it still moves no part of the simulation.
 			_view.cycle_overlay()
 		KEY_N:
-			choose_seed(world.world_seed + 1)
+			choose_seed(next_seed(world.world_seed))
 		KEY_S:
 			save_world()
 		KEY_L:
