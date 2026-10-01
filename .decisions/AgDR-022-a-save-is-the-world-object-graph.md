@@ -73,3 +73,19 @@ no schema is the expensive thing to migrate.
 **The field-list test gets excused into meaninglessness.** If `NOT_SAVED` grows
 entries whose reason is not "a pure function of what is saved", the check is being
 routed around, and the round-trip determinism test is the only thing left holding.
+
+## Addendum: what a save may carry, and what the decoder refuses
+
+**Supported map domain.** A save holds at most `WorldGen.DEFAULT_WIDTH *
+DEFAULT_HEIGHT` tiles, the one size the game generates (no player-facing control
+makes another). `WorldGen.generate()` can build a larger world, but it is outside
+the save API: `encode()` now refuses it (`unsaveable()`), as `decode()` always did,
+so a file this build writes is a file it reads. Raising the limit is a deliberate
+change to `WorldSave.MAX_TILES`, not a side effect of generating a bigger map.
+
+**Decoder rule.** A save is refused when a value crosses a real conversion,
+constructor, allocator or bounded-history rule of the running game (32-bit
+narrowing, `Vector2i` wrap, ids that the next allocation would reuse, a road below
+its laid crew, a demand row that is not the agents' census within float32 drift,
+a chronicle longer than its window). It is not refused for balance or product
+limits, population caps, or unreachable history; those would be invented here.

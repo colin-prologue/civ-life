@@ -292,11 +292,209 @@ func test_state_at_its_limits_still_round_trips() -> void:
 	for agent in world.agents:
 		if agent is Herd:
 			herd = agent
-	herd.population = herd.species.minimum_population
+	world.set_herd_population(herd, herd.species.minimum_population)
 	herd._planned_in = -1
+	var bare: CityNode = world.nodes[1]
+	bare.capacity = 0.0
+	bare.store = 0.0
 	var loaded := _round_trip(world)
 	assert_not_null(loaded, "the limits themselves are in range")
 	assert_eq(_differences(world, loaded), PackedStringArray(), "and come back unchanged")
+
+
+## Corruption that crosses a real conversion, allocator or bounded-history rule:
+## a value that would wrap or become infinite when narrowed, an id the next
+## allocation would reuse, a herd in the sea, a road below its crew, a demand row
+## that is not the agents' census, a chronicle longer than its window.
+func test_a_save_that_would_wrap_overflow_or_collide_is_refused() -> void:
+	var good := WorldSave.encode(_populated_world())
+	var tiles: int = good["terrain"].size()
+	var wrapped_terrain := func(d): d["terrain"][0] = 4294967296.0 + float(d["terrain"][0])
+	var damage := {
+		"terrain that wraps into a real terrain": [wrapped_terrain, "32-bit"],
+		"fractional terrain": [func(d): d["terrain"][0] = 1.5, "32-bit"],
+		"a demand of 1e100": [func(d): d["forage_demand"][0] = 1e100, "finite"],
+		"a demand that is NaN": [func(d): d["forage_demand"][0] = NAN, "finite"],
+		"a demand of +infinity": [func(d): d["forage_demand"][0] = INF, "finite"],
+		"a demand of -infinity": [func(d): d["forage_demand"][0] = -INF, "finite"],
+		"a vitality of 1e100": [func(d): d["vitality"][0][0] = 1e100, "finite"],
+		"a turn-start demand of 1e100": [func(d): d["forage_demand_at_turn_start"][0] = 1e100, "finite"],
+		"a turn-start vitality of NaN": [func(d): d["grazing_vitality_at_turn_start"][0] = NAN, "finite"],
+		"a chronicle reading of 1e100": [func(d): d["chronicle"][d["chronicle"].keys()[0]][0] = 1e100, "finite"],
+		"a chronicle reading of -infinity": [func(d): d["chronicle"][d["chronicle"].keys()[0]][0] = -INF, "finite"],
+		"a store too large for the reports": [func(d): d["nodes"][0]["capacity"] = WorldSave._exact(1e300); d["nodes"][0]["store"] = WorldSave._exact(1e300), "32-bit"],
+		"a herd too large for the reports": [func(d): _first_of(d, "herd")["population"] = WorldSave._exact(1e300), "32-bit"],
+		"a node tile a whole lap of 2^32 away": [func(d): d["nodes"][0]["coord"][0] = d["nodes"][0]["coord"][0] + 4294967296.0, "whole"],
+		"a herd tile a lap away": [func(d): _first_of(d, "herd")["coord"][1] = _first_of(d, "herd")["coord"][1] - 4294967296.0, "whole"],
+		"a citizen tile a lap away": [func(d): _first_of(d, "citizen")["coord"][0] = _first_of(d, "citizen")["coord"][0] + 4294967296.0, "whole"],
+		"a route step a lap away": [func(d): d["routes"][0]["path"][0][0] = d["routes"][0]["path"][0][0] + 4294967296.0, "whole"],
+		"a herd start a lap away": [func(d): _first_of(d, "herd")["start_coord"][0] = 4294967296.0, "whole"],
+		"a herd destination a lap away": [func(d): _first_of(d, "herd")["destination"][1] = -4294967296.0, "whole"],
+		"a structure id equal to the count": [func(d): d["nodes"][0]["id"] = d["nodes"].size(), "outside"],
+		"a negative structure id": [func(d): d["nodes"][0]["id"] = -1, "outside"],
+		"a road id equal to the count": [func(d): d["routes"][0]["id"] = d["routes"].size(), "outside"],
+		"a negative road id": [func(d): d["routes"][0]["id"] = -1, "outside"],
+		"a negative agent id": [func(d): _first_of(d, "herd")["id"] = -1, "outside"],
+		"an agent id past the exact-integer birth boundary": [func(d): _first_of(d, "herd")["id"] = 9007199254740992.0, "outside"],
+		"a carrier id that wraps": [func(d): d["routes"][0]["carriers"][0] = 1e30, "carrier"],
+		"a herd in the sea": [_drown_a_herd, "water"],
+		"a road below its crew": [_thin_a_road, "fewer"],
+		"a demand row of zeros": [func(d): d["forage_demand"] = _zeros(tiles), "forage demand"],
+		"a demand row for another herd": [func(d): _first_of(d, "herd")["population"] = WorldSave._exact(_first_of(d, "herd")["population"]["value"] + 5.0), "forage demand"],
+		"demand left on an empty tile": [func(d): _add_demand_on_an_empty_tile(d, 3.0), "forage demand"],
+		"a chronicle one reading over its window": [_overfill_the_chronicle, "window"],
+	}
+	for what in damage:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		damage[what][0].call(copy)
+		var result := WorldSave.decode(copy)
+		assert_null(result["world"], "%s gives no world" % what)
+		assert_string_contains(result["refusal"], damage[what][1], "%s is refused for the right reason" % what)
+
+
+func test_the_boundaries_of_the_new_checks_still_load() -> void:
+	var good := WorldSave.encode(_populated_world())
+	var fresh := WorldSave.encode(WorldGen.generate(SEED))
+	var tolerated := {
+		"an agent id at the exact-integer limit": func(d): _first_of(d, "herd")["id"] = float(WorldSave.MAX_AGENT_ID),
+		"a small negative residue on an empty tile": func(d): _add_demand_on_an_empty_tile(d, -1e-5),
+		"a chronicle series of exactly the window": func(d): _fill_the_chronicle(d, Chronicle.WINDOW),
+		"an unknown chronicle series": func(d): d["chronicle"]["not_a_series"] = [1.0, 2.0],
+		"a chronicle series left empty": func(d): _fill_the_chronicle(d, 0),
+	}
+	for what in tolerated:
+		var copy: Dictionary = JSON.parse_string(JSON.stringify(good, "", false, true))
+		tolerated[what].call(copy)
+		var result := WorldSave.decode(copy)
+		assert_eq(result["refusal"], "", "%s still loads" % what)
+		assert_not_null(result["world"], "%s gives a world" % what)
+	assert_eq(WorldSave.decode(fresh)["refusal"], "", "a fresh world, with empty chronicle rows, loads")
+
+
+func test_a_world_larger_than_a_save_holds_is_refused_at_save_time() -> void:
+	var big := WorldGen.generate(SEED, WorldGen.DEFAULT_WIDTH + 1, WorldGen.DEFAULT_HEIGHT)
+	assert_string_contains(WorldSave.unsaveable(big), "tiles")
+	assert_eq(WorldSave.to_text(big), "", "nothing is written for it")
+	assert_ne(WorldSave.write_file(big, "user://test_oversize_save.json"), "", "and a file save says why")
+	assert_false(FileAccess.file_exists("user://test_oversize_save.json"), "and leaves no file")
+	var exact := WorldGen.generate(SEED, 30, 40)
+	assert_eq(WorldSave.unsaveable(exact), "", "the same tile count in another shape is within the limit")
+	assert_eq(_differences(exact, _round_trip(exact)), PackedStringArray(), "and round-trips")
+
+
+## A world loaded from a save can keep growing: a placement and a road after the
+## load take the next ids, and that world saves and loads again unchanged.
+func test_placing_and_connecting_after_a_load_keeps_ids_clean() -> void:
+	var loaded := _round_trip(_populated_world())
+	var granary: CityNode = null
+	for node in loaded.nodes:
+		if node.kind == CityNode.Kind.GRANARY:
+			granary = node
+	var placed := false
+	for coord in loaded.grid.all_coords():
+		if not placed and HexGrid.distance(coord, granary.coord) == 3 and CityGen.can_place_node(loaded, coord):
+			var farm := CityGen.place_node(loaded, coord, CityNode.Kind.FARM)
+			placed = CityGen.connect_nodes(loaded, farm, granary) != null
+	assert_true(placed, "there was room to build after the load")
+	for i in range(30):
+		loaded.advance_turn()
+	assert_eq(_differences(loaded, _round_trip(loaded)), PackedStringArray(), "and it saves again unchanged")
+
+
+func test_loaded_and_advanced_worlds_hold_nothing_non_finite() -> void:
+	var world := _round_trip(_populated_world())
+	for i in range(100):
+		world.advance_turn()
+	var rows := [world._forage_demand, world._forage_demand_at_turn_start,
+		world._grazing_vitality_at_turn_start, world._vitality[0], world._vitality[1]]
+	for key in world.chronicle._series:
+		rows.append(world.chronicle._series[key])
+	for row in rows:
+		for value in row:
+			assert_true(is_finite(value), "every row value is finite")
+	for node in world.nodes:
+		assert_true(is_finite(node.store) and is_finite(node.last_yield), "node numbers are finite")
+	for herd in world.herds():
+		assert_true(is_finite(herd.population), "herd populations are finite")
+
+
+## The census check has to hold for worlds the game really produced: several
+## seeds, a thousand turns, saved and loaded at the end. The worst per-tile gap
+## between the row the world maintains and a fresh sum is printed so the tolerance
+## in `WorldSave` can be checked against it.
+func test_the_saved_demand_row_stays_within_tolerance_over_long_runs() -> void:
+	var worst := 0.0
+	for seed_value in [SEED, 1, 2, 3]:
+		var world := WorldGen.generate(seed_value)
+		for i in range(1000):
+			world.advance_turn()
+			if i % 250 != 249:
+				continue
+			var census := PackedFloat64Array()
+			census.resize(world.grid.tile_count())
+			for agent in world.agents:
+				census[world.grid.index_of(agent.coord)] += agent.forage_demand()
+			for t in range(census.size()):
+				worst = maxf(worst, absf(world._forage_demand[t] - census[t]) / maxf(1.0, census[t]))
+			assert_eq(WorldSave.from_text(WorldSave.to_text(world))["refusal"], "",
+				"seed %d at turn %d loads" % [seed_value, world.turn])
+	gut.p("worst relative demand drift over the long runs: %s (tolerance %s)" % [worst, WorldSave._Reader.DEMAND_TOLERANCE])
+	assert_lt(worst, WorldSave._Reader.DEMAND_TOLERANCE / 10.0, "the tolerance has ten times the observed drift")
+
+
+static func _zeros(count: int) -> Array:
+	var out := []
+	out.resize(count)
+	out.fill(0.0)
+	return out
+
+
+static func _drown_a_herd(data: Dictionary) -> void:
+	var grid := HexGrid.new(int(data["width"]), int(data["height"]))
+	for i in range(data["terrain"].size()):
+		if int(data["terrain"][i]) == WorldGen.Terrain.WATER:
+			var coord := grid.coord_at(i)
+			_first_of(data, "herd")["coord"] = [coord.x, coord.y]
+			return
+
+
+# Drops the newest carrier from road 0 and the citizen with it, leaving a crew
+# one short of `CITIZENS_PER_ROUTE`; everything else stays consistent.
+static func _thin_a_road(data: Dictionary) -> void:
+	var carriers: Array = data["routes"][0]["carriers"]
+	while carriers.size() >= CityGen.CITIZENS_PER_ROUTE:
+		var gone = carriers.pop_back()
+		for i in range(data["agents"].size()):
+			if data["agents"][i]["id"] == gone:
+				data["agents"].remove_at(i)
+				break
+
+
+static func _an_empty_tile(data: Dictionary) -> int:
+	var occupied := {}
+	var grid := HexGrid.new(int(data["width"]), int(data["height"]))
+	for agent in data["agents"]:
+		occupied[grid.index_of(Vector2i(int(agent["coord"][0]), int(agent["coord"][1])))] = true
+	for i in range(data["terrain"].size()):
+		if not occupied.has(i):
+			return i
+	return -1
+
+
+static func _add_demand_on_an_empty_tile(data: Dictionary, amount: float) -> void:
+	data["forage_demand"][_an_empty_tile(data)] = amount
+
+
+static func _fill_the_chronicle(data: Dictionary, count: int) -> void:
+	for key in data["chronicle"]:
+		var row := []
+		for i in range(count):
+			row.append(float(i))
+		data["chronicle"][key] = row
+
+
+static func _overfill_the_chronicle(data: Dictionary) -> void:
+	_fill_the_chronicle(data, Chronicle.WINDOW + 1)
 
 
 func _overdraw_the_year(data: Dictionary) -> void:
@@ -304,7 +502,7 @@ func _overdraw_the_year(data: Dictionary) -> void:
 	data["nodes"][0]["year_unmet"] = WorldSave._exact(2.0)
 
 
-func _first_of(data: Dictionary, kind: String) -> Dictionary:
+static func _first_of(data: Dictionary, kind: String) -> Dictionary:
 	for entry in data["agents"]:
 		if entry["kind"] == kind:
 			return entry
@@ -557,7 +755,7 @@ static func _all_land(data: Dictionary, path: Array[Vector2i]) -> bool:
 
 static func _double_a_road(data: Dictionary) -> void:
 	var copy: Dictionary = data["routes"][0].duplicate(true)
-	copy["id"] = 999
+	copy["id"] = data["routes"].size()
 	copy["carriers"] = []
 	data["routes"].append(copy)
 

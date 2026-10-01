@@ -51,6 +51,18 @@ const FORMAT := "civ-life-world"
 ## refused, including older ones — there is no migration path yet.
 const VERSION := 1
 
+## The most tiles a save holds: the size world generation produces, since no
+## player-facing control makes a map any other size. `WorldGen.generate()` will
+## build a larger world when asked, but that world is outside what a save can
+## carry, so `encode()` refuses it as `decode()` would rather than writing a file
+## this build then cannot read back.
+const MAX_TILES := WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT
+
+## The largest agent id a save accepts. Ids come from a counter that only rises
+## (`CityGen._next_agent_id`) and a JSON number holds integers exactly up to 2^53,
+## so the next birth after this id is still written and read back exactly.
+const MAX_AGENT_ID := 9007199254740991
+
 ## Every script variable of every class in a world's object graph that is written
 ## to the file. Base-class variables are listed under each subclass, because an
 ## instance reports them as its own.
@@ -223,6 +235,8 @@ static func encode(world: WorldMap) -> Dictionary:
 ## than written as something the loader will choke on. The day a third kind of
 ## agent exists, this is the line that says so.
 static func unsaveable(world: WorldMap) -> String:
+	if world.grid.tile_count() > MAX_TILES:
+		return "this world has %d tiles and a save holds at most %d" % [world.grid.tile_count(), MAX_TILES]
 	for agent in world.agents:
 		if not (agent is Herd or agent is Citizen):
 			return "agent %d is a kind this save format does not know how to write" % agent.id
@@ -384,9 +398,21 @@ static func _exact(value: float) -> Dictionary:
 ## being rebuilt assert on bad input, and an assert is a crash rather than a
 ## refusal.
 class _Reader extends RefCounted:
-	const MAX_TILES := WorldGen.DEFAULT_WIDTH * WorldGen.DEFAULT_HEIGHT
 	const MAX_EXACT_INT := 9007199254740992.0
+	const INT32_MAX := 2147483647.0
 	const SLACK := 1e-9
+
+	## How far the saved per-tile demand may sit from a fresh sum over the loaded
+	## agents, as a fraction of that sum (never less than one head). The saved row
+	## is kept by float32 adds and subtracts as herds move and breed, so it drifts
+	## from the exact sum by rounding: measured over long multi-seed runs in
+	## `test_the_saved_demand_row_stays_within_tolerance_over_long_runs`, the worst
+	## tile over four seeds and a thousand turns was about 1e-4 of its sum, and the
+	## drift is a random walk that grows with the run, so this leaves two orders of
+	## magnitude. It is still far below one head (a herd is never under its
+	## species' minimum), so a row that is zeroed, shifted, or belongs to other
+	## herds is refused.
+	const DEMAND_TOLERANCE := 1e-2
 
 	var refusal := ""
 	var _data: Dictionary
@@ -410,8 +436,8 @@ class _Reader extends RefCounted:
 			return null
 		if width_n != floorf(width_n) or height_n != floorf(height_n) \
 				or width_n < 1.0 or height_n < 1.0 or turn < 0 \
-				or width_n * height_n > float(MAX_TILES):
-			_fail("the map size or turn is out of range (at most %d tiles)" % MAX_TILES)
+				or width_n * height_n > float(WorldSave.MAX_TILES):
+			_fail("the map size or turn is out of range (at most %d tiles)" % WorldSave.MAX_TILES)
 			return null
 		var width := int(width_n)
 		var height := int(height_n)
@@ -420,29 +446,40 @@ class _Reader extends RefCounted:
 		var tiles := world.grid.tile_count()
 		world.turn = turn
 
-		world._terrain = PackedInt32Array(_numbers(_data, "terrain", tiles))
+		# Every row is judged as the numbers the file holds before it is narrowed
+		# into a packed array: a value outside 32 bits would wrap (terrain) or turn
+		# into infinity (everything else) and be read as something it never was.
+		world._terrain = _int32s(_data, "terrain", tiles)
 		for value in world._terrain:
 			if not WorldGen.Terrain.values().has(value):
 				_fail("a tile has terrain %d, which is not a terrain" % value)
 				return null
 		var vitality: Array = _array(_data, "vitality", Land.USE_COUNT)
+		var vitality_rows: Array[PackedFloat32Array] = []
 		for use in range(mini(vitality.size(), Land.USE_COUNT)):
-			var row := PackedFloat32Array(_numbers_in(vitality[use], "vitality row", tiles))
+			var row := _narrowed(_numbers_in(vitality[use], "vitality row", tiles), "vitality row")
 			if not _in_vitality_range(row):
 				_fail("a vitality lies outside %s..%s" % [Land.MIN_VITALITY, Land.MAX_VITALITY])
 				return null
-			world._vitality[use] = row
-		world._forage_demand = PackedFloat32Array(_numbers(_data, "forage_demand", tiles))
+			vitality_rows.append(row)
+		var demand := _narrowed(_numbers(_data, "forage_demand", tiles), "forage_demand")
 		# Empty on a world that has never advanced, a whole row on any other.
-		world._forage_demand_at_turn_start = PackedFloat32Array(
-				_numbers(_data, "forage_demand_at_turn_start", -1))
-		world._grazing_vitality_at_turn_start = PackedFloat32Array(
-				_numbers(_data, "grazing_vitality_at_turn_start", -1))
-		for row in [world._forage_demand_at_turn_start, world._grazing_vitality_at_turn_start]:
+		var demand_then := _narrowed(_numbers(_data, "forage_demand_at_turn_start", -1), "forage_demand_at_turn_start")
+		var vitality_then := _narrowed(_numbers(_data, "grazing_vitality_at_turn_start", -1), "grazing_vitality_at_turn_start")
+		if not refusal.is_empty():
+			return null
+		for row in [demand_then, vitality_then]:
 			if row.size() != 0 and row.size() != tiles:
 				_fail("a turn-start snapshot does not cover the map")
-		if not _in_vitality_range(world._grazing_vitality_at_turn_start):
+				return null
+		if not _in_vitality_range(vitality_then):
 			_fail("a vitality lies outside %s..%s" % [Land.MIN_VITALITY, Land.MAX_VITALITY])
+			return null
+		for use in range(vitality_rows.size()):
+			world._vitality[use] = vitality_rows[use]
+		world._forage_demand = demand
+		world._forage_demand_at_turn_start = demand_then
+		world._grazing_vitality_at_turn_start = vitality_then
 		# Forage is not in the file: it is recomputed from terrain and season, as
 		# every turn recomputes it (`AgDR-009`).
 		world._recompute_forage()
@@ -454,7 +491,8 @@ class _Reader extends RefCounted:
 			if not refusal.is_empty():
 				return null
 
-		for entry in _array(_data, "nodes", -1):
+		var node_entries := _array(_data, "nodes", -1)
+		for entry in node_entries:
 			if not refusal.is_empty():
 				return null
 			var coord := _coord(entry, "coord", world)
@@ -469,21 +507,27 @@ class _Reader extends RefCounted:
 			if world.node_at(coord) != null:
 				_fail("two structures stand on %s" % coord)
 				return null
+			# `CityGen.place_node()` names a structure by how many there already are
+			# and nothing is ever removed, so ids are exactly 0..count-1. An id at or
+			# past the count would be handed out again by the next placement.
 			var node_id := _int(entry, "id")
+			if node_id < 0 or node_id >= node_entries.size():
+				_fail("a structure's id %d is outside 0..%d" % [node_id, node_entries.size() - 1])
+				return null
 			for earlier in world.nodes:
 				if earlier.id == node_id:
 					_fail("two structures share the id %d" % node_id)
 					return null
-			var capacity := _float(entry, "capacity")
+			var capacity := _float(entry, "capacity", true)
 			if capacity < 0.0:
 				_fail("a structure has a negative capacity")
 				return null
 			# Everything below starts at zero and is only ever added to by
 			# non-negative amounts, and `deposit()` never fills past `capacity`.
 			var store := _held(entry, "store", capacity)
-			var last_yield := _non_negative_float(entry, "last_yield")
-			var took_in := _non_negative_float(entry, "took_in")
-			var gave_out := _non_negative_float(entry, "gave_out")
+			var last_yield := _non_negative_float(entry, "last_yield", true)
+			var took_in := _non_negative_float(entry, "took_in", true)
+			var gave_out := _non_negative_float(entry, "gave_out", true)
 			var mouths := _non_negative_int(entry, "mouths")
 			var unmet := _non_negative_float(entry, "unmet")
 			var plentiful_turns := _non_negative_int(entry, "plentiful_turns")
@@ -510,7 +554,8 @@ class _Reader extends RefCounted:
 			node.year_unmet = year_unmet
 			world.nodes.append(node)
 
-		for entry in _array(_data, "routes", -1):
+		var route_entries := _array(_data, "routes", -1)
+		for entry in route_entries:
 			if not refusal.is_empty():
 				return null
 			var source := _index(entry, "source", world.nodes.size())
@@ -540,7 +585,11 @@ class _Reader extends RefCounted:
 			if path != HexGrid.line(from_node.coord, to_node.coord):
 				_fail("a road does not follow the straight run between its structures")
 				return null
+			# Named by how many roads there are already, as structures are.
 			var route_id := _int(entry, "id")
+			if route_id < 0 or route_id >= route_entries.size():
+				_fail("a road's id %d is outside 0..%d" % [route_id, route_entries.size() - 1])
+				return null
 			for earlier in world.routes:
 				if earlier.id == route_id:
 					_fail("two roads share the id %d" % route_id)
@@ -553,10 +602,7 @@ class _Reader extends RefCounted:
 			# id is a whole number, and a file saying otherwise is refused instead
 			# of producing a road whose crew list is nonsense.
 			for who in _numbers(entry, "carriers", -1):
-				if float(who) != floorf(float(who)):
-					_fail("a route's carrier id is not a whole number")
-					return null
-				route.carriers.append(int(who))
+				route.carriers.append(_whole(float(who), "a road's carrier id"))
 			if not refusal.is_empty():
 				return null
 			world.routes.append(route)
@@ -570,8 +616,13 @@ class _Reader extends RefCounted:
 					var coord := _coord(entry, "coord", world)
 					if not refusal.is_empty():
 						return null
-					var herd_id := _int(entry, "id")
-					var population := _float(entry, "population")
+					# `Herd._best_ground()` and the scatter that places herds both
+					# refuse water.
+					if world.terrain_at(coord) == WorldGen.Terrain.WATER:
+						_fail("a herd stands on water at %s" % coord)
+						return null
+					var herd_id := _agent_id(entry)
+					var population := _float(entry, "population", true)
 					var start_coord := _coord(entry, "start_coord", world)
 					var destination := _coord(entry, "destination", world)
 					var planned_in := _int(entry, "planned_in")
@@ -600,8 +651,8 @@ class _Reader extends RefCounted:
 					if index < 0 or index >= route.path.size():
 						_fail("a citizen stands off the end of its route")
 						return null
-					var citizen_id := _int(entry, "id")
-					var capacity := _non_negative_float(entry, "capacity")
+					var citizen_id := _agent_id(entry)
+					var capacity := _non_negative_float(entry, "capacity", true)
 					var stands_at := _coord(entry, "coord", world)
 					var carrying := _held(entry, "carrying", capacity)
 					var held_up := _int(entry, "held_up")
@@ -646,13 +697,37 @@ class _Reader extends RefCounted:
 			if agent is Citizen and not agent.route.carriers.has(agent.id):
 				_fail("a road's carrier list omits citizen %d, who walks it" % agent.id)
 				return null
+		# `tend_population()` never takes a road below the crew it was laid with.
+		for route in world.routes:
+			if route.carriers.size() < CityGen.CITIZENS_PER_ROUTE:
+				_fail("a road has %d carriers, fewer than the %d every road is laid with" % [route.carriers.size(), CityGen.CITIZENS_PER_ROUTE])
+				return null
+
+		# The saved demand row is kept as it was, rounding included, but it has to
+		# be the census of the agents just loaded: a row that disagrees would feed
+		# every herd decision from agents who are not there.
+		var census := PackedFloat64Array()
+		census.resize(tiles)
+		for agent in world.agents:
+			census[world.grid.index_of(agent.coord)] += agent.forage_demand()
+		for i in range(tiles):
+			if absf(world._forage_demand[i] - census[i]) > DEMAND_TOLERANCE * maxf(1.0, census[i]):
+				_fail("the saved forage demand on tile %d is %s but the agents standing there ask for %s" % [i, world._forage_demand[i], census[i]])
+				return null
 
 		var chronicle = _data.get("chronicle")
 		if typeof(chronicle) != TYPE_DICTIONARY:
 			_fail("the chronicle is missing")
 			return null
 		for key in chronicle:
-			world.chronicle._series[str(key)] = PackedFloat32Array(_numbers(chronicle, key, -1))
+			var series := _numbers(chronicle, key, -1)
+			# `Chronicle.record()` drops from the front past `WINDOW`.
+			if series.size() > Chronicle.WINDOW:
+				_fail("the chronicle series '%s' holds %d readings, more than its window of %d" % [key, series.size(), Chronicle.WINDOW])
+				return null
+			world.chronicle._series[str(key)] = _narrowed(series, "chronicle")
+		if not refusal.is_empty():
+			return null
 
 		return world if refusal.is_empty() else null
 
@@ -709,7 +784,7 @@ class _Reader extends RefCounted:
 
 	## A float written by `WorldSave._exact()`: the bits are the value, and the
 	## readable number has to agree with them.
-	func _float(from, key: String) -> float:
+	func _float(from, key: String, narrowed := false) -> float:
 		var entry = _value(from, key)
 		if typeof(entry) != TYPE_DICTIONARY or typeof(entry.get("bits")) != TYPE_STRING \
 				or (entry["bits"] as String).length() != 16 or not (entry["bits"] as String).is_valid_hex_number():
@@ -724,6 +799,10 @@ class _Reader extends RefCounted:
 		if not is_equal_approx(value, readable):
 			_fail("'%s' reads %s but its exact bits say %s — edited by hand?" % [key, readable, value])
 			return 0.0
+		# Reports and the chronicle hold these as 32-bit numbers.
+		if narrowed and not is_finite(PackedFloat32Array([value])[0]):
+			_fail("'%s' is not a finite number once held as a 32-bit one" % key)
+			return 0.0
 		return value
 
 	func _int(from, key: String) -> int:
@@ -731,11 +810,43 @@ class _Reader extends RefCounted:
 
 	## A whole number a 64-bit integer holds exactly; the bound keeps `int()` from
 	## being handed something it would wrap.
-	func _whole(value: float, what: String) -> int:
-		if value != floorf(value) or absf(value) > MAX_EXACT_INT:
-			_fail("'%s' is not a whole number" % what)
+	func _whole(value: float, what: String, limit := MAX_EXACT_INT) -> int:
+		if value != floorf(value) or absf(value) > limit:
+			_fail("'%s' is not a whole number in range" % what)
 			return 0
 		return int(value)
+
+	## An agent's id: whole, and one a later birth can follow and be saved exactly.
+	func _agent_id(entry) -> int:
+		var value := _int(entry, "id")
+		if value < 0 or value > WorldSave.MAX_AGENT_ID:
+			_fail("an agent's id %d is outside 0..%d" % [value, WorldSave.MAX_AGENT_ID])
+			return 0
+		return value
+
+	## Whole numbers that fit a 32-bit integer array, so none is wrapped into one
+	## it was not.
+	func _int32s(from, key: String, size: int) -> PackedInt32Array:
+		var row := PackedInt32Array()
+		for item in _numbers(from, key, size):
+			var value := float(item)
+			if value != floorf(value) or absf(value) > INT32_MAX:
+				_fail("'%s' holds %s, which is not a whole 32-bit number" % [key, value])
+				return PackedInt32Array()
+			row.append(int(value))
+		return row
+
+	## Numbers narrowed to 32-bit floats; one that is not finite, or that only
+	## becomes infinite when narrowed, is refused.
+	func _narrowed(values: Array, what: String) -> PackedFloat32Array:
+		var row := PackedFloat32Array()
+		for item in values:
+			var narrow := PackedFloat32Array([float(item)])[0]
+			if not is_finite(narrow):
+				_fail("'%s' holds %s, which is not a finite 32-bit number" % [what, item])
+				return PackedFloat32Array()
+			row.append(narrow)
+		return row
 
 	func _non_negative_int(from, key: String) -> int:
 		var value := _int(from, key)
@@ -744,8 +855,8 @@ class _Reader extends RefCounted:
 			return 0
 		return value
 
-	func _non_negative_float(from, key: String) -> float:
-		var value := _float(from, key)
+	func _non_negative_float(from, key: String, narrowed := false) -> float:
+		var value := _float(from, key, narrowed)
 		if value < 0.0:
 			_fail("'%s' is negative" % key)
 			return 0.0
@@ -755,7 +866,7 @@ class _Reader extends RefCounted:
 	## The top is judged with a hair of slack because `deposit()` adds
 	## `capacity - held` to `held`, which can land an ulp past `capacity`.
 	func _held(from, key: String, room: float) -> float:
-		var value := _non_negative_float(from, key)
+		var value := _non_negative_float(from, key, true)
 		if value > room + SLACK * maxf(1.0, room):
 			_fail("'%s' holds more than its capacity" % key)
 			return 0.0
@@ -798,8 +909,8 @@ class _Reader extends RefCounted:
 		var pair := _numbers_in(value, "coordinate", 2)
 		if pair.size() != 2:
 			return Vector2i.ZERO
-		var x := _whole(float(pair[0]), "coordinate")
-		var y := _whole(float(pair[1]), "coordinate")
+		var x := _whole(float(pair[0]), "coordinate", INT32_MAX)
+		var y := _whole(float(pair[1]), "coordinate", INT32_MAX)
 		if not refusal.is_empty():
 			return Vector2i.ZERO
 		var coord := Vector2i(x, y)
