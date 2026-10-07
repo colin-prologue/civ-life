@@ -30,8 +30,12 @@ Frame order:
 
 Verification:
   At this exact head, GODOT=/home/colin/.local/bin/godot ./test.sh completed
-  successfully: 346 tests passed. The hex-map display measurement reported
-  hard-worn 0.260%, worn 3.058%, worked 9.662%, healthy 87.020% over this run.
+  successfully. The hex-map display measurement (seed 20260815, turns
+  300-420, grazing) counts land only: the denominator is non-WATER tile-frames,
+  exactly the tiles the renderer bands; water is excluded. It reported
+  hard-worn 0.411%, worn 4.822%, worked 15.235%, healthy 79.532%, so about
+  20.5% of ordinary ground is visibly not-healthy. An earlier measurement that
+  included water in the denominator (healthy 87.020%) is obsolete.
 
 Human scope:
   These frames are evidence for the still-pending human AC8 readability check.
