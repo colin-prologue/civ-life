@@ -14,23 +14,25 @@ already ratified — a no is a finding about the design, and in no case is it a
 licence to add scarcity, remove abundance, or tune a constant until the feeling
 changes.
 
-## Before you start: one thing cannot be judged yet
+## Before you start: switch the vitality overlay on
 
-**Land wear is invisible in the build.** `AgDR-014` gave every tile a vitality
-per use, the whole land-vitality arc (#38, #41, #42) is merged, and the gates say
-the world no longer settles — but the only overlay is `forage`, which draws
-`forage_data()`: the raw terrain-and-season curve, *unscaled by wear*. Nothing on
-screen shows how worn a tile is. `hex_map_view.gd:233` mentions the vitality
-overlay only as a comment describing how one would be added.
+**Land wear is only visible through a vitality overlay.** `AgDR-014` gave every
+tile a vitality per use, and the whole land-vitality arc (#38, #41, #42) is merged.
+The `forage` overlay draws `forage_data()`: the raw terrain-and-season curve,
+*unscaled by wear*, so it cannot show how worn a tile is. #65 added one vitality
+overlay per land use (`graze` and `cultivate`), scaled from the lowest to the
+highest vitality a tile can have, worn to fresh.
 
-So **question C1 below cannot be answered honestly today**, and the practices
-spec predicted exactly this, calling the overlay "a dependency in practice even
-though it is out of scope here — per-practice vitality is invisible without an
-overlay, and a system nobody can see is a system nobody can judge."
+Press `O` to cycle: `forage`, then `graze — how worn`, then `cultivate — how worn`,
+then off. **For the long-run questions in C, cycle `O` to a vitality overlay, not
+`forage`.**
 
-The overlay registry is data, and the comment already sketches the entry, so this
-is a small ticket rather than a feature: **#65**. Worth landing before the
-long-run questions are attempted.
+The practices spec called this overlay "a dependency in practice even though it is
+out of scope here — per-practice vitality is invisible without an overlay, and a
+system nobody can see is a system nobody can judge." An overlay is a diagnostic:
+if rotation shows up only as a false-colour map and never in the world itself,
+write that down rather than counting it as solved. The judgement itself is yours;
+no agent can make it.
 
 ## Running it
 
@@ -47,7 +49,7 @@ The main scene is `game/main.tscn`. On screen:
 | The map, with a ring and a label on every tile this turn's report named | centre |
 | Totals, and what changed this turn | status line, top |
 | Flows over the last several turns | panel, lower right |
-| The forage overlay | press `O` to cycle it on and off |
+| Map overlays: forage, then a vitality overlay per land use | press `O` to cycle through them and off |
 
 Controls: `click` select a tile · `F` farm · `G` granary · `R` route · `Esc`
 clear · `space` one turn · `P` play/pause · `[` and `]` slower/faster · `O`
@@ -134,8 +136,8 @@ interesting question** — how often the wild world actually touches the built o
 back — rather than as slow decline, or as flicker?** (#42 AC10, and `AgDR-014`'s
 third refutation clause)
 
-**Blocked until the vitality overlay exists (#65).** The number to set beside your
-judgement when it does: the periodicity gate finds 200 distinct year-states out
+**Cycle `O` to a vitality overlay (`graze` first) and watch a long run.** The
+number to set beside your judgement: the periodicity gate finds 200 distinct year-states out
 of 200 on every seed, and every herd's best reachable ground changed in 34–39 of
 40 years.
 
@@ -150,7 +152,8 @@ A no splits two ways, and they have different consequences:
 **C2 — Are the three clocks in proportion?** (`AgDR-014` refutation 2) Season
 length is 6 turns, the vitality half-life is 12. Land that wears faster than a
 season makes the map twitch; slower than a working lifetime and nobody feels it.
-Also blocked on the overlay.
+Judge it on a vitality overlay, watching how fast tiles darken and recover against
+the season indicator.
 
 ## D. Not buildable yet — record these for when they are
 

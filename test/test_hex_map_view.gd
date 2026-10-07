@@ -524,30 +524,276 @@ func test_every_overlay_caption_fits_the_panel_it_is_drawn_in() -> void:
 		)
 
 
-func test_a_second_scalar_is_an_entry_rather_than_a_new_system() -> void:
-	# AC5's real requirement. This builds the vitality overlay #38 will add — not
-	# as a preview of that ticket, but as proof that adding it is an array element
-	# and nothing else. Note the argument: `vitality_data` takes a use, which is
-	# the case a registry of bare method names would not have covered.
+func test_every_land_use_has_its_own_vitality_overlay() -> void:
+	# The overlays are generated from `Land.Use`, so this is what keeps a use
+	# added by #60 from going unseen: it fails if one has no entry.
 	var world := WorldGen.generate(20260815)
-	var entry := {
-		"name": "vitality",
-		"caption": "vitality — how worn the grazing is",
-		"row": "vitality_data",
-		"args": [Land.Use.GRAZE],
-		"min": Land.MIN_VITALITY,
-		"max": Land.MAX_VITALITY,
-		"low": Color(0.62, 0.16, 0.18),
-		"high": Color(0.30, 0.80, 0.36),
-	}
+	var named := {}
+	for entry in HexMapView.OVERLAYS:
+		if String(entry["row"]) == "vitality_data":
+			named[int(entry["args"][0])] = entry
+	for use in Land.Use.values():
+		assert_true(named.has(use), "use %d has a vitality overlay" % use)
+		var entry: Dictionary = named[use]
+		assert_eq(entry["min"], Land.MIN_VITALITY, "scaled from the floor, not from zero")
+		assert_eq(entry["max"], Land.MAX_VITALITY, "to the ceiling")
+		assert_eq(
+			HexMapView.overlay_row(world, entry).size(), world.grid.tile_count(),
+			"one value per tile, from a query taking an argument"
+		)
+	assert_eq(named.size(), Land.Use.size(), "no overlay for a use that does not exist")
 
-	var row := HexMapView.overlay_row(world, entry)
-	assert_eq(row.size(), world.grid.tile_count(), "one value per tile, from a query taking an argument")
-	assert_ne(
-		HexMapView.overlay_fill(entry, Land.MIN_VITALITY),
-		HexMapView.overlay_fill(entry, Land.MAX_VITALITY),
-		"worn ground and fresh ground land on different ends of the ramp"
+
+func test_a_worn_tile_is_painted_differently_and_only_for_its_own_use() -> void:
+	var world := WorldGen.generate(20260815)
+	var land := Vector2i.ZERO
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) != WorldGen.Terrain.WATER:
+			land = coord
+			break
+	var graze := {}
+	var cultivate := {}
+	for entry in HexMapView.OVERLAYS:
+		if String(entry["row"]) == "vitality_data":
+			if int(entry["args"][0]) == Land.Use.GRAZE:
+				graze = entry
+			else:
+				cultivate = entry
+	var i := world.grid.index_of(land)
+	var fresh := HexMapView.overlay_fill(graze, HexMapView.overlay_row(world, graze)[i])
+
+	world.set_vitality(land, Land.Use.GRAZE, Land.MIN_VITALITY)
+	var worn := HexMapView.overlay_fill(graze, HexMapView.overlay_row(world, graze)[i])
+	assert_gt(_separation(fresh, worn), MIN_COLOR_DISTANCE, "worn grazing ground reads as worn")
+	assert_eq(worn, graze["bands"][0]["fill"], "a floored tile sits in the worst band, not merely dim")
+	assert_eq(
+		HexMapView.overlay_fill(cultivate, HexMapView.overlay_row(world, cultivate)[i]), fresh,
+		"grazing wear does not show on the cultivation overlay"
 	)
+
+
+func _vitality_entry(use: int) -> Dictionary:
+	for entry in HexMapView.OVERLAYS:
+		if String(entry["row"]) == "vitality_data" and int(entry["args"][0]) == use:
+			return entry
+	return {}
+
+
+func _relative_luminance(c: Color) -> float:
+	var lin := func(v: float) -> float:
+		return v / 12.92 if v <= 0.04045 else pow((v + 0.055) / 1.055, 2.4)
+	return 0.2126 * lin.call(c.r) + 0.7152 * lin.call(c.g) + 0.0722 * lin.call(c.b)
+
+
+func _contrast_ratio(a: Color, b: Color) -> float:
+	var la := _relative_luminance(a)
+	var lb := _relative_luminance(b)
+	return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
+
+
+func test_vitality_bands_change_exactly_at_their_thresholds() -> void:
+	# Presentation thresholds: 0.90, 0.95, 0.99. Values arrive from the world as
+	# float32, so the boundaries are tested through the same path, not as doubles.
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var cases := [
+		[Land.MIN_VITALITY, 0], [0.8999, 0], [0.90, 1], [0.9499, 1],
+		[0.95, 2], [0.9899, 2], [0.99, 3], [Land.MAX_VITALITY, 3],
+	]
+	for case in cases:
+		var stored: float = PackedFloat32Array([case[0]])[0]
+		assert_eq(
+			HexMapView.overlay_band(entry, stored), case[1],
+			"%s lands in band %d" % [case[0], case[1]]
+		)
+	assert_eq(HexMapView.overlay_band(entry, 0.0), 0, "a value below the floor is the worst band")
+	assert_eq(HexMapView.overlay_band(entry, 2.0), 3, "a value above the ceiling is the best band")
+
+
+func test_the_observed_grazing_range_is_not_all_one_colour() -> void:
+	# The reason for the bands: the shipped run's grazing minimum (0.84) used to
+	# sit 81% up a full-range ramp and read healthy. It must now read as worn,
+	# and ordinary 0.97 ground must be told apart from untouched ground.
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var full := HexMapView.overlay_fill(entry, 1.0)
+	assert_gt(_separation(HexMapView.overlay_fill(entry, 0.97), full), MIN_COLOR_DISTANCE)
+	assert_gt(_separation(HexMapView.overlay_fill(entry, 0.9201), full), MIN_COLOR_DISTANCE)
+	assert_eq(HexMapView.overlay_band(entry, 0.8389), 0, "the observed grazing minimum is hard-worn")
+
+
+func test_bands_differ_by_luminance_and_hue_and_stay_apart_from_the_sea() -> void:
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var bands: Array = entry["bands"]
+	var sea: Color = HexMapView.TERRAIN_COLORS[WorldGen.Terrain.WATER]
+	for i in range(bands.size()):
+		var fill: Color = bands[i]["fill"]
+		assert_gt(
+			_contrast_ratio(fill, sea), 1.4,
+			"band %d is not the sea's lightness" % i
+		)
+		assert_gt(_separation(fill, sea), MIN_COLOR_DISTANCE, "band %d is not the sea's colour" % i)
+		for j in range(i + 1, bands.size()):
+			var other: Color = bands[j]["fill"]
+			assert_gt(
+				_contrast_ratio(fill, other) , 1.2 if j == i + 1 else 1.5,
+				"bands %d and %d differ in luminance, not only hue" % [i, j]
+			)
+			assert_gt(
+				absf(fill.get_luminance() - other.get_luminance()), 0.07,
+				"bands %d and %d survive greyscale" % [i, j]
+			)
+			assert_gt(_separation(fill, other), MIN_COLOR_DISTANCE, "bands %d and %d differ in colour" % [i, j])
+		if i + 1 < bands.size():
+			assert_lt(
+				fill.get_luminance(), bands[i + 1]["fill"].get_luminance(),
+				"luminance rises with health, band %d to %d" % [i, i + 1]
+			)
+
+
+func test_only_the_worst_band_is_hatched() -> void:
+	var main: Node2D = MainScene.instantiate()
+	add_child_autofree(main)
+	await wait_frames(2)
+	var view: HexMapView = main.get_node("HexMapView")
+	var world: WorldMap = main.world
+	var land: Array[Vector2i] = []
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) != WorldGen.Terrain.WATER:
+			land.append(coord)
+	var values := [Land.MIN_VITALITY, 0.899, 0.93, 0.97, 1.0]
+	for k in range(values.size()):
+		world.set_vitality(land[k], Land.Use.GRAZE, values[k])
+	view.set_overlay_named("vitality-graze")
+	await wait_frames(2)
+	assert_eq(view.tile_band(land[0]), 0)
+	assert_eq(view.tile_band(land[1]), 0)
+	assert_eq(view.tile_band(land[2]), 1)
+	assert_eq(view.tile_band(land[3]), 2)
+	assert_eq(view.tile_band(land[4]), 3)
+	# Two hard-worn tiles, hatched; nothing else is. The stroke count has to be a
+	# whole multiple per tile, and zero when no tile is that worn.
+	var strokes := view.hatch_line_count()
+	assert_gt(strokes, 0, "hard-worn ground carries a texture")
+	assert_eq(strokes % 2, 0, "the same stroke pattern on each hard-worn tile")
+	for k in range(2, values.size()):
+		world.set_vitality(land[k], Land.Use.GRAZE, 1.0)
+	world.set_vitality(land[0], Land.Use.GRAZE, 1.0)
+	world.set_vitality(land[1], Land.Use.GRAZE, 1.0)
+	view.refresh()
+	assert_lt(view.hatch_line_count(), strokes, "healing removes the texture again")
+
+
+func test_hatch_strokes_stay_inside_their_hex_and_contrast_with_the_worst_fill() -> void:
+	var centre := Vector2(200.0, 150.0)
+	var radius := 14.0
+	var lines := HexMapView.hatch_lines(centre, radius)
+	assert_gt(lines.size(), 4, "a tile of this size takes several strokes")
+	for p in lines:
+		assert_lt(p.distance_to(centre), radius, "a stroke end is inside the hex")
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	assert_gt(
+		_contrast_ratio(HexMapView.HATCH_COLOR, entry["bands"][0]["fill"]), 4.0,
+		"the hatch reads against the ground it marks"
+	)
+
+
+func test_herd_markers_read_over_every_band_and_the_sea() -> void:
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var sea: Color = HexMapView.TERRAIN_COLORS[WorldGen.Terrain.WATER]
+	var grounds: Array[Color] = [sea]
+	for band in entry["bands"]:
+		grounds.append(band["fill"])
+	assert_gt(
+		_contrast_ratio(HexMapView._HERD_FILL, HexMapView.HERD_HALO), 2.0,
+		"the herd dot stands out of its halo"
+	)
+	for ground in grounds:
+		var best := maxf(
+			_contrast_ratio(HexMapView.HERD_HALO, ground),
+			_contrast_ratio(HexMapView.HERD_HALO_EDGE, ground)
+		)
+		assert_gt(best, 3.0, "the halo or its edge is found against %s" % ground)
+
+
+func test_the_band_key_names_every_band_without_overreaching() -> void:
+	var font := ThemeDB.fallback_font
+	var font_size := ThemeDB.fallback_font_size
+	for entry in HexMapView.OVERLAYS:
+		if not entry.has("bands"):
+			continue
+		# Band lines sit beside a swatch 18 px wide plus an 8 px gap; the footnote
+		# starts at the panel's left edge.
+		var lines := {HexMapView.BAND_FOOTNOTE: 0.0}
+		for band in entry["bands"]:
+			lines[HexMapView.band_key_text(band)] = 26.0
+			var text := HexMapView.band_key_text(band).to_lower()
+			assert_false(text.contains("deplet"), "ordinary wear is never called depleted")
+		for line: String in lines:
+			var width: float = font.get_string_size(
+				line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size
+			).x
+			assert_lt(
+				width + float(lines[line]), HexMapView.PANEL_INSET,
+				"key line '%s' fits in its panel" % line
+			)
+		assert_eq(
+			HexMapView.band_key_text(entry["bands"][1]), "worn  0.90 to 0.95",
+			"the key states the real thresholds"
+		)
+
+
+func test_the_shipped_run_spreads_across_the_bands_rather_than_sitting_in_one() -> void:
+	# The bands were placed from a measurement of seed 20260815, turns 300 to 420
+	# (grazing 0.84-1.0). This re-measures it through the display, so a retuned sim
+	# that moved ordinary grazing out of the bands — or a threshold that drifted
+	# off the data — is caught here instead of in someone's eyes. It says nothing
+	# about whether the result reads as rotation; that is a human's call.
+	var world := WorldGen.generate(20260815)
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var counts := [0, 0, 0, 0]
+	var total := 0
+	var sampled_turns := 0
+	# The sea is left unbanded by the renderer and sits at full vitality, so it
+	# must not be counted: it would swell the healthy share and let this pass on
+	# ocean alone. Count exactly the tiles `_rebuild()` bands.
+	var land: Array[int] = []
+	var sea_tiles := 0
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) == WorldGen.Terrain.WATER:
+			sea_tiles += 1
+		else:
+			land.append(world.grid.index_of(coord))
+	while world.turn < 420:
+		world.advance_turn()
+		if world.turn < 300:
+			continue
+		var row := HexMapView.overlay_row(world, entry)
+		sampled_turns += 1
+		for idx in land:
+			counts[HexMapView.overlay_band(entry, row[idx])] += 1
+			total += 1
+	var shares := []
+	for n in counts:
+		shares.append(float(n) / float(total))
+	gut.p("graze band shares, turns 300-420: hard-worn %.3f%% worn %.3f%% worked %.3f%% healthy %.3f%%" % [
+		shares[0] * 100.0, shares[1] * 100.0, shares[2] * 100.0, shares[3] * 100.0,
+	])
+	assert_gt(sea_tiles, 0, "the shipped world has sea to exclude")
+	assert_eq(total, land.size() * sampled_turns, "land tiles times sampled turns, and no sea")
+	assert_eq(counts[0] + counts[1] + counts[2] + counts[3], total, "every counted tile is in a band")
+	assert_gt(counts[3], 0, "most ground is healthy")
+	assert_gt(shares[2] + shares[1] + shares[0], 0.01, "ordinary grazing leaves visible wear")
+	assert_gt(counts[2], counts[0], "the milder bands are the common ones")
+
+
+func test_the_same_value_paints_the_same_band_after_a_rebuild() -> void:
+	# Stateless: no hysteresis, so wobbling across a threshold is shown as it is
+	# and redrawing, rebuilding or loading the same world cannot change it.
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	for v in [0.8995, 0.9, 0.9501, 0.9899, 0.99]:
+		var first := HexMapView.overlay_band(entry, v)
+		HexMapView.overlay_band(entry, 0.2)
+		HexMapView.overlay_band(entry, 1.0)
+		assert_eq(HexMapView.overlay_band(entry, v), first, "%s is the same band every time" % v)
 
 
 func test_turning_the_overlay_on_repaints_the_land_and_leaves_the_sea() -> void:
@@ -612,16 +858,17 @@ func test_the_overlay_redraws_inside_the_same_budget_the_plain_map_has() -> void
 	await wait_frames(2)
 	var view: HexMapView = main.get_node("HexMapView")
 
-	view.set_overlay_named("forage")
-	view.last_draw_usec = 0
-	await wait_frames(2)
-	var overlaid := float(view.last_draw_usec) / 1000.0
+	for entry in HexMapView.OVERLAYS:
+		view.set_overlay_named(String(entry["name"]))
+		view.last_draw_usec = 0
+		await wait_frames(2)
+		var overlaid := float(view.last_draw_usec) / 1000.0
 
-	gut.p("redraw with the forage overlay on: %.1fms (budget %.0fms)" % [
-		overlaid, REDRAW_BUDGET_MSEC,
-	])
-	assert_gt(overlaid, 0.0, "the overlaid frame was actually drawn")
-	assert_lt(overlaid, REDRAW_BUDGET_MSEC, "an overlaid redraw stays inside the frame budget")
+		gut.p("redraw with the %s overlay on: %.1fms (budget %.0fms)" % [
+			entry["name"], overlaid, REDRAW_BUDGET_MSEC,
+		])
+		assert_gt(overlaid, 0.0, "the '%s' frame was actually drawn" % entry["name"])
+		assert_lt(overlaid, REDRAW_BUDGET_MSEC, "'%s' redraw stays inside the frame budget" % entry["name"])
 
 
 # --- direction ---------------------------------------------------------------
