@@ -741,6 +741,34 @@ func test_the_band_key_names_every_band_without_overreaching() -> void:
 		)
 
 
+func test_the_shipped_run_spreads_across_the_bands_rather_than_sitting_in_one() -> void:
+	# The bands were placed from a measurement of seed 20260815, turns 300 to 420
+	# (grazing 0.84-1.0). This re-measures it through the display, so a retuned sim
+	# that moved ordinary grazing out of the bands — or a threshold that drifted
+	# off the data — is caught here instead of in someone's eyes. It says nothing
+	# about whether the result reads as rotation; that is a human's call.
+	var world := WorldGen.generate(20260815)
+	var entry := _vitality_entry(Land.Use.GRAZE)
+	var counts := [0, 0, 0, 0]
+	var total := 0
+	while world.turn < 420:
+		world.advance_turn()
+		if world.turn < 300:
+			continue
+		for value in HexMapView.overlay_row(world, entry):
+			counts[HexMapView.overlay_band(entry, value)] += 1
+			total += 1
+	var shares := []
+	for n in counts:
+		shares.append(float(n) / float(total))
+	gut.p("graze band shares, turns 300-420: hard-worn %.3f%% worn %.3f%% worked %.3f%% healthy %.3f%%" % [
+		shares[0] * 100.0, shares[1] * 100.0, shares[2] * 100.0, shares[3] * 100.0,
+	])
+	assert_gt(counts[3], 0, "most ground is healthy")
+	assert_gt(shares[2] + shares[1] + shares[0], 0.01, "ordinary grazing leaves visible wear")
+	assert_gt(counts[2], counts[0], "the milder bands are the common ones")
+
+
 func test_the_same_value_paints_the_same_band_after_a_rebuild() -> void:
 	# Stateless: no hysteresis, so wobbling across a threshold is shown as it is
 	# and redrawing, rebuilding or loading the same world cannot change it.
