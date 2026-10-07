@@ -751,12 +751,25 @@ func test_the_shipped_run_spreads_across_the_bands_rather_than_sitting_in_one() 
 	var entry := _vitality_entry(Land.Use.GRAZE)
 	var counts := [0, 0, 0, 0]
 	var total := 0
+	var sampled_turns := 0
+	# The sea is left unbanded by the renderer and sits at full vitality, so it
+	# must not be counted: it would swell the healthy share and let this pass on
+	# ocean alone. Count exactly the tiles `_rebuild()` bands.
+	var land: Array[int] = []
+	var sea_tiles := 0
+	for coord in world.grid.all_coords():
+		if world.terrain_at(coord) == WorldGen.Terrain.WATER:
+			sea_tiles += 1
+		else:
+			land.append(world.grid.index_of(coord))
 	while world.turn < 420:
 		world.advance_turn()
 		if world.turn < 300:
 			continue
-		for value in HexMapView.overlay_row(world, entry):
-			counts[HexMapView.overlay_band(entry, value)] += 1
+		var row := HexMapView.overlay_row(world, entry)
+		sampled_turns += 1
+		for idx in land:
+			counts[HexMapView.overlay_band(entry, row[idx])] += 1
 			total += 1
 	var shares := []
 	for n in counts:
@@ -764,6 +777,9 @@ func test_the_shipped_run_spreads_across_the_bands_rather_than_sitting_in_one() 
 	gut.p("graze band shares, turns 300-420: hard-worn %.3f%% worn %.3f%% worked %.3f%% healthy %.3f%%" % [
 		shares[0] * 100.0, shares[1] * 100.0, shares[2] * 100.0, shares[3] * 100.0,
 	])
+	assert_gt(sea_tiles, 0, "the shipped world has sea to exclude")
+	assert_eq(total, land.size() * sampled_turns, "land tiles times sampled turns, and no sea")
+	assert_eq(counts[0] + counts[1] + counts[2] + counts[3], total, "every counted tile is in a band")
 	assert_gt(counts[3], 0, "most ground is healthy")
 	assert_gt(shares[2] + shares[1] + shares[0], 0.01, "ordinary grazing leaves visible wear")
 	assert_gt(counts[2], counts[0], "the milder bands are the common ones")
