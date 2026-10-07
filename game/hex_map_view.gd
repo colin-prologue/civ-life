@@ -234,21 +234,79 @@ const _DORMANCY_MAX := 0.70
 ## normalise against, and the two ends of a colour ramp. Drawing one is a single
 ## function that knows none of those things specifically.
 ##
-## Forage is written out. Vitality is one entry per `Land.Use`, generated from the
-## enum, so a use added later (#60) gets its overlay without anyone touching this
-## file. `test_hex_map_view.gd` holds that to account.
+## Forage is written out, on a continuous ramp. Vitality is one entry per
+## `Land.Use`, generated from the enum, so a use added later (#60) gets its overlay
+## without anyone touching this file; its entries carry display `bands` instead of
+## a ramp, because the range that matters is a narrow slice of the supported one.
+## `test_hex_map_view.gd` holds that to account.
 ##
 ## Reading a whole row in one call, rather than a value per tile, is why this
 ## stays inside the redraw budget: `forage_data()` is one array copy for the
 ## entire map.
 const OVERLAY_FORAGE := 0
 
-## Worn ground is bare earth, fresh ground is green. Not forage's red-to-green:
-## two overlays on the same ramp would differ only by their caption.
-const _WORN := Color(0.58, 0.34, 0.12)
-const _FRESH := Color(0.22, 0.72, 0.30)
+## The display bands a vitality overlay paints with, worst ground first. Each one
+## starts at `floor` and runs up to the next band's floor.
+##
+## These are *presentation* thresholds, not simulation states and not a balance
+## claim. They sit where the shipped run actually lives — seed 20260815, turns
+## 300 to 420, grazing spends its time between 0.84 and 1.0 and under 7% of
+## tile-frames below 0.97 — because a ramp across the whole supported range
+## (`Land.MIN_VITALITY` to `Land.MAX_VITALITY`) is truthful but leaves ordinary
+## grazing looking uniformly healthy. They are fixed rather than stretched to
+## whatever the map currently holds, so uniformly poor land still reads as poor.
+## Nothing here is named "depleted": that word belongs near the real floor.
+##
+## Luminance falls with wear (so the bands survive greyscale and phone
+## compression) and hue moves green, yellow, orange, red-brown; the worst band
+## also carries a hatch, which survives colour-vision limits. `floor` values are
+## stored at float32 precision because the world hands vitality over as float32,
+## and a value set to exactly 0.95 has to land in the 0.95 band.
+const _VITALITY_BAND_FLOORS := [Land.MIN_VITALITY, 0.90, 0.95, 0.99]
+const _VITALITY_BAND_FILLS := [
+	Color(0.34, 0.14, 0.10),
+	Color(0.66, 0.38, 0.14),
+	Color(0.84, 0.66, 0.18),
+	Color(0.50, 0.86, 0.46),
+]
+const _VITALITY_BAND_HATCHED := [true, false, false, false]
+
+## What each band is called in the key. "Worn" reads the number; nothing here says
+## depleted, which is reserved for ground near the real floor.
+const _VITALITY_BAND_NAMES := ["hard-worn", "worn", "worked", "healthy"]
+const BAND_FOOTNOTE := "bands of a smooth value"
+const HATCH_COLOR := Color(0.96, 0.90, 0.76, 0.85)
+
+## The halo under a herd marker while a banded overlay is on: pale where the
+## ground is dark, edged dark where the ground is pale, so the marker is found on
+## every band. Renderer-only — it is not drawn on the plain map.
+const HERD_HALO := Color(0.98, 0.96, 0.90)
+const HERD_HALO_EDGE := Color(0.05, 0.04, 0.04, 0.95)
+const _HERD_HALO_WIDTH_SCALE := 0.14
 
 static var OVERLAYS: Array[Dictionary] = _build_overlays()
+
+
+static func _vitality_bands() -> Array[Dictionary]:
+	var bands: Array[Dictionary] = []
+	var count: int = _VITALITY_BAND_FLOORS.size()
+	for i in range(count):
+		var floor_value: float = PackedFloat32Array([_VITALITY_BAND_FLOORS[i]])[0]
+		var label: String
+		if i == 0:
+			label = "under %.2f" % _VITALITY_BAND_FLOORS[1]
+		elif i == count - 1:
+			label = "%.2f and up" % _VITALITY_BAND_FLOORS[i]
+		else:
+			label = "%.2f to %.2f" % [_VITALITY_BAND_FLOORS[i], _VITALITY_BAND_FLOORS[i + 1]]
+		bands.append({
+			"floor": floor_value,
+			"name": _VITALITY_BAND_NAMES[i],
+			"fill": _VITALITY_BAND_FILLS[i],
+			"hatch": _VITALITY_BAND_HATCHED[i],
+			"label": label,
+		})
+	return bands
 
 
 static func _build_overlays() -> Array[Dictionary]:
@@ -273,8 +331,7 @@ static func _build_overlays() -> Array[Dictionary]:
 			"args": [Land.Use[use_name]],
 			"min": Land.MIN_VITALITY,
 			"max": Land.MAX_VITALITY,
-			"low": _WORN,
-			"high": _FRESH,
+			"bands": _vitality_bands(),
 		})
 	return entries
 
@@ -310,6 +367,8 @@ var _origin := Vector2.ZERO
 var _polygons: Array[PackedVector2Array] = []
 var _outlines: Array[PackedVector2Array] = []
 var _fills: PackedColorArray = PackedColorArray()
+var _bands: PackedInt32Array = PackedInt32Array()
+var _hatch_lines: PackedVector2Array = PackedVector2Array()
 
 ## What to outline, as last stated by the controller. Not owned here — see the
 ## note at the top of the file — and not read out of the world, because what a
@@ -360,6 +419,23 @@ func tile_fill(coord: Vector2i) -> Color:
 	if i < 0 or i >= _fills.size():
 		return Color(0, 0, 0, 0)
 	return _fills[i]
+
+
+## The display band the last rebuild put one tile in, or -1 when it is not under a
+## banded overlay (or is off the map). Like `tile_fill`, this is what was painted.
+func tile_band(coord: Vector2i) -> int:
+	if _world == null:
+		return -1
+	var i := _world.grid.index_of(coord)
+	if i < 0 or i >= _bands.size():
+		return -1
+	return _bands[i]
+
+
+## How many hatch strokes the last rebuild laid down, for a test to tell "no
+## texture anywhere" from "texture on the worst ground only".
+func hatch_line_count() -> int:
+	return _hatch_lines.size() / 2
 
 
 ## The radius in pixels the map was last fitted to.
@@ -445,6 +521,9 @@ func _rebuild() -> void:
 	_polygons.resize(count)
 	_outlines.resize(count)
 	_fills.resize(count)
+	_bands.resize(count)
+	_bands.fill(-1)
+	_hatch_lines.clear()
 
 	var entry := active_overlay()
 	var scalars := PackedFloat32Array() if entry.is_empty() else overlay_row(_world, entry)
@@ -468,7 +547,12 @@ func _rebuild() -> void:
 			if scalars.is_empty() or terrain == WorldGen.Terrain.WATER:
 				_fills[i] = tile_color(terrain, _world.forage_at(coord))
 			else:
-				_fills[i] = overlay_fill(entry, scalars[_world.grid.index_of(coord)])
+				var value := scalars[_world.grid.index_of(coord)]
+				_fills[i] = overlay_fill(entry, value)
+				if entry.has("bands"):
+					_bands[i] = overlay_band(entry, value)
+					if entry["bands"][_bands[i]]["hatch"]:
+						_hatch_lines.append_array(hatch_lines(centre, _radius))
 			i += 1
 
 
@@ -514,6 +598,58 @@ static func overlay_row(world: WorldMap, entry: Dictionary) -> PackedFloat32Arra
 	return world.callv(String(entry["row"]), entry["args"])
 
 
+## Which display band a scalar falls in: the last one whose floor it has reached.
+## Stateless — the same value is the same band on every redraw, load and replay.
+static func overlay_band(entry: Dictionary, value: float) -> int:
+	var bands: Array = entry["bands"]
+	var found := 0
+	for i in range(bands.size()):
+		if value >= float(bands[i]["floor"]):
+			found = i
+	return found
+
+
+## Diagonal strokes across one hex, as `draw_multiline` point pairs: the texture a
+## hard-worn tile carries so it is told apart without colour.
+##
+## Each stroke is a line of constant `x + y` clipped to a slightly shrunken hex, so
+## the hatch of neighbouring tiles does not run together into one dark field.
+static func hatch_lines(centre: Vector2, radius: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var inner := _corners(centre, radius * 0.84)
+	var spacing := maxf(3.0, radius * 0.42)
+	var along := Vector2(1.0, -1.0)
+	# A hex corner sits up to 1.37 radius along x + y from the centre.
+	var reach := radius * 1.2
+	var stop := (centre.x + centre.y) + reach
+	var c := (centre.x + centre.y) - reach + spacing * 0.5
+	while c < stop:
+		var low_point := Vector2.ZERO
+		var high_point := Vector2.ZERO
+		var low_t := INF
+		var high_t := -INF
+		for k in range(6):
+			var a := inner[k]
+			var b := inner[(k + 1) % 6]
+			var da := a.x + a.y - c
+			var db := b.x + b.y - c
+			if da * db > 0.0 or is_equal_approx(da, db):
+				continue
+			var hit := a + (b - a) * (da / (da - db))
+			var t := hit.dot(along)
+			if t < low_t:
+				low_t = t
+				low_point = hit
+			if t > high_t:
+				high_t = t
+				high_point = hit
+		if high_t - low_t > 1.0:
+			out.append(low_point)
+			out.append(high_point)
+		c += spacing
+	return out
+
+
 ## Where one scalar lands on one overlay's ramp.
 ##
 ## Normalised against the entry's own declared range rather than against the
@@ -521,6 +657,8 @@ static func overlay_row(world: WorldMap, entry: Dictionary) -> PackedFloat32Arra
 ## poor instead of being stretched to look varied. That is the same argument
 ## `tile_color()` makes for measuring forage against the global maximum.
 static func overlay_fill(entry: Dictionary, value: float) -> Color:
+	if entry.has("bands"):
+		return entry["bands"][overlay_band(entry, value)]["fill"]
 	var low := float(entry["min"])
 	var high := float(entry["max"])
 	var share := clampf((value - low) / maxf(0.0001, high - low), 0.0, 1.0)
@@ -568,6 +706,8 @@ func _draw() -> void:
 	for i in range(_polygons.size()):
 		draw_colored_polygon(_polygons[i], _fills[i])
 		draw_polyline(_outlines[i], _EDGE_COLOR, 1.0)
+	if not _hatch_lines.is_empty():
+		draw_multiline(_hatch_lines, HATCH_COLOR, maxf(1.0, _radius * 0.09))
 	# Roads under everything the roads connect, herds under the people who have
 	# to walk around them, and the structures on top: the draw order is the
 	# reading order.
@@ -596,9 +736,14 @@ func _draw() -> void:
 ## cache that can be wrong about the only thing on screen that is going
 ## anywhere.
 func _draw_herds() -> void:
+	var haloed := active_overlay().has("bands")
 	for herd in _world.herds():
 		var centre := center_of(herd.coord)
 		var radius := _radius * herd_marker_scale(herd.population)
+		if haloed:
+			var halo := radius + maxf(1.5, _radius * _HERD_HALO_WIDTH_SCALE)
+			draw_circle(centre, halo, HERD_HALO)
+			draw_arc(centre, halo, 0.0, TAU, 24, HERD_HALO_EDGE, maxf(1.0, _radius * 0.07))
 		draw_circle(centre, radius, _HERD_FILL)
 		draw_arc(centre, radius, 0.0, TAU, 18, _HERD_EDGE, maxf(1.0, radius * 0.14))
 
@@ -982,6 +1127,9 @@ func _draw_overlay_key(top: float) -> float:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.62, 0.64, 0.68))
 		return top + 24.0
 
+	if entry.has("bands"):
+		return _draw_band_key(font, font_size, left, top, entry)
+
 	# The ramp itself, in the same colours the tiles are getting, so the key
 	# cannot describe a gradient the map is not using.
 	var bar := Vector2(160.0, 9.0)
@@ -996,6 +1144,34 @@ func _draw_overlay_key(top: float) -> float:
 	draw_string(font, Vector2(left, top + bar.y + 14.0), String(entry["caption"]),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.92, 0.92, 0.92))
 	return top + bar.y + 28.0
+
+
+## The key for a banded overlay: one swatch per band, best ground first, painted
+## from the same band data the tiles use, hatch included. The last line says the
+## bands are a way of reading a smooth value, not categories the world has.
+func _draw_band_key(font: Font, font_size: int, left: float, top: float,
+		entry: Dictionary) -> float:
+	draw_string(font, Vector2(left, top + 11.0), String(entry["caption"]),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.92, 0.92, 0.92))
+	var pos := Vector2(left, top + 20.0)
+	var swatch := Vector2(18.0, 12.0)
+	var bands: Array = entry["bands"]
+	for k in range(bands.size() - 1, -1, -1):
+		var band: Dictionary = bands[k]
+		draw_rect(Rect2(pos, swatch), band["fill"])
+		if band["hatch"]:
+			draw_multiline(hatch_lines(pos + swatch * 0.5, swatch.y * 0.9), HATCH_COLOR, 1.0)
+		draw_string(font, pos + Vector2(swatch.x + 8.0, 11.0), band_key_text(band),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.92, 0.92, 0.92))
+		pos.y += swatch.y + 4.0
+	draw_string(font, pos + Vector2(0.0, 11.0), BAND_FOOTNOTE,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.62, 0.64, 0.68))
+	return pos.y + 28.0
+
+
+## One line of the band key: the band's name and the range it covers.
+static func band_key_text(band: Dictionary) -> String:
+	return "%s  %s" % [band["name"], band["label"]]
 
 
 ## Everything on this panel that is a rate or a direction rather than a level.
